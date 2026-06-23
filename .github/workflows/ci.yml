@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Detect which parts changed so we only run relevant jobs.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      libs: ${{ steps.filter.outputs.libs }}
+      identity: ${{ steps.filter.outputs.identity }}
+      bff: ${{ steps.filter.outputs.bff }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            libs:
+              - 'libs/**'
+            identity:
+              - 'services/identity/**'
+              - 'libs/**'
+            bff:
+              - 'services/bff/**'
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - name: Ruff lint
+        run: ruff check libs services
+      - name: Ruff format check
+        run: ruff format --check libs services
+
+  identity-tests:
+    needs: changes
+    if: needs.changes.outputs.identity == 'true'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: identity
+          POSTGRES_PASSWORD: identity-dev-pass
+          POSTGRES_DB: identity_db
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U identity"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      IDENTITY_DB_NAME: identity_db
+      IDENTITY_DB_USER: identity
+      IDENTITY_DB_PASSWORD: identity-dev-pass
+      REDIS_URL: redis://localhost:6379/0
+      IDENTITY_DEBUG: "true"
+      RABBITMQ_URL: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install shared libs + service deps
+        working-directory: services/identity
+        run: |
+          pip install ../../libs/tara_common ../../libs/tara_events \
+                      ../../libs/tara_resilience ../../libs/tara_observability
+          pip install -r requirements-dev.txt
+      - name: Run tests
+        working-directory: services/identity
+        run: pytest
+
+  bff-tests:
+    needs: changes
+    if: needs.changes.outputs.bff == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        working-directory: services/bff
+        run: pip install -r requirements-dev.txt
+      - name: Run tests
+        working-directory: services/bff
+        run: pytest
+
+  docker-build:
+    needs: [lint]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build identity image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/identity/Dockerfile
+          push: false
+          tags: tara/identity:ci
+      - name: Build bff image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/bff
+          file: services/bff/Dockerfile
+          push: false
+          tags: tara/bff:ci

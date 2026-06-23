@@ -1,0 +1,24 @@
+# Root tooling config shared by all Python packages in the monorepo.
+# (Each service/lib still has its own packaging metadata.)
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["**/migrations/**", "**/.venv/**"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "DJ", "C4", "S"]
+ignore = [
+    "S101",   # asserts are fine in tests
+    "B008",   # FastAPI/DRF dependency-injection default-call pattern
+    "DJ008",  # not every model needs __str__
+    "B904",   # raise-without-from is acceptable in some re-raise sites
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S105", "S106", "S311"]  # test fixtures may use dummy secrets/random
+"**/conftest.py" = ["S105", "S106"]
+"**/management/commands/seed_dev_data.py" = ["S105", "S106"]  # synthetic dev creds
+
+[tool.ruff.lint.isort]
+known-first-party = ["tara_common", "tara_events", "tara_resilience", "tara_observability"]

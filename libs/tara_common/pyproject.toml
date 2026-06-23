@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tara-common"
+version = "0.1.0"
+description = "Tara shared kernel: error format, pagination, JWKS auth, health, middleware."
+requires-python = ">=3.12"
+dependencies = [
+    "djangorestframework>=3.15",
+    "PyJWT[crypto]>=2.8",
+    "cryptography>=42",
+    "requests>=2.31",
+]
+
+[tool.setuptools.packages.find]
+include = ["tara_common*"]

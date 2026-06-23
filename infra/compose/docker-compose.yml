@@ -1,0 +1,257 @@
+# Tara — local development stack.
+# Usage (from repo root): make up  (core profile)  /  make up-full
+# Each service is its own container (true microservices); Compose profiles let
+# you run only what you need.  See docs/architecture/phase-0/06-infrastructure-plan.md
+name: tara
+
+x-identity-env: &identity-env
+  env_file:
+    - ../../.env
+  environment:
+    POSTGRES_HOST: postgres
+    REDIS_URL: redis://redis:6379/0
+    RABBITMQ_URL: ${RABBITMQ_URL}
+    EMAIL_HOST: mailpit
+    EMAIL_PORT: "1025"
+    IDENTITY_JWT_KEY_DIR: /app/.keys
+
+services:
+  # ---- Backing services ----------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["core"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
+      IDENTITY_DB_NAME: ${IDENTITY_DB_NAME}
+      IDENTITY_DB_USER: ${IDENTITY_DB_USER}
+      IDENTITY_DB_PASSWORD: ${IDENTITY_DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["core"]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    profiles: ["core"]
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+    volumes:
+      - rabbitmqdata:/var/lib/rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    profiles: ["core"]
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - miniodata:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:latest
+    profiles: ["core"]
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  # ---- Edge ----------------------------------------------------------------
+  traefik:
+    image: traefik:v3.1
+    profiles: ["core"]
+    command:
+      - --api.dashboard=true
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+    ports:
+      - "8080:80"     # edge
+      - "8081:8080"   # dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - identity
+      - bff
+
+  # ---- Application services -------------------------------------------------
+  identity:
+    build:
+      context: ../..
+      dockerfile: services/identity/Dockerfile
+    image: tara/identity:dev
+    profiles: ["core"]
+    <<: *identity-env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      EMAIL_HOST: mailpit
+      EMAIL_PORT: "1025"
+      IDENTITY_JWT_KEY_DIR: /app/.keys
+      RUN_MIGRATIONS: "true"
+    volumes:
+      - identity-keys:/app/.keys
+    expose:
+      - "8000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.identity.rule=PathPrefix(`/api`) || PathPrefix(`/.well-known`) || PathPrefix(`/admin`) || PathPrefix(`/healthz`) || PathPrefix(`/readyz`) || PathPrefix(`/metrics`) || PathPrefix(`/static`)"
+      - traefik.http.routers.identity.entrypoints=web
+      - traefik.http.services.identity.loadbalancer.server.port=8000
+
+  identity-worker:
+    image: tara/identity:dev
+    profiles: ["core"]
+    command: ["celery", "-A", "config", "worker", "-l", "info", "--concurrency", "2"]
+    <<: *identity-env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      RUN_MIGRATIONS: "false"
+      IDENTITY_JWT_KEY_DIR: /app/.keys
+    volumes:
+      - identity-keys:/app/.keys
+    depends_on:
+      identity:
+        condition: service_healthy
+
+  identity-beat:
+    image: tara/identity:dev
+    profiles: ["core"]
+    command: ["celery", "-A", "config", "beat", "-l", "info"]
+    <<: *identity-env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/0
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      RUN_MIGRATIONS: "false"
+      IDENTITY_JWT_KEY_DIR: /app/.keys
+    volumes:
+      - identity-keys:/app/.keys
+    depends_on:
+      identity:
+        condition: service_healthy
+
+  bff:
+    build:
+      context: ../../services/bff
+      dockerfile: Dockerfile
+    image: tara/bff:dev
+    profiles: ["core"]
+    env_file:
+      - ../../.env
+    environment:
+      BFF_IDENTITY_BASE_URL: http://identity:8000
+      BFF_JWKS_URL: http://identity:8000/.well-known/jwks.json
+    ports:
+      - "8090:8090"
+    depends_on:
+      identity:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.bff.rule=PathPrefix(`/bff`)"
+      - traefik.http.routers.bff.entrypoints=web
+      - traefik.http.services.bff.loadbalancer.server.port=8090
+
+  # ---- Observability (profile: observability) -------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    profiles: ["observability"]
+    volumes:
+      - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheusdata:/prometheus
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:latest
+    profiles: ["observability"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${MINIO_ROOT_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    profiles: ["observability"]
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ../observability/otel-collector-config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+
+volumes:
+  pgdata:
+  redisdata:
+  rabbitmqdata:
+  miniodata:
+  identity-keys:
+  prometheusdata:
+  grafanadata:

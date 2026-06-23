@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tara-observability"
+version = "0.1.0"
+description = "Tara observability baseline: structured JSON logging, OTel tracing, Prometheus."
+requires-python = ">=3.12"
+dependencies = [
+    "python-json-logger>=2.0",
+]
+
+[project.optional-dependencies]
+otel = [
+    "opentelemetry-sdk>=1.25",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.25",
+    "opentelemetry-instrumentation-django>=0.46b0",
+]
+
+[tool.setuptools.packages.find]
+include = ["tara_observability*"]
