@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-config
+data:
+  # Realtime gateway has NO database — Redis channel layer + event-bus bridge only.
+  REALTIME_DEBUG: "false"
+  REALTIME_ALLOWED_HOSTS: "realtime.tara.svc.cluster.local,api.tara.example"
+  REDIS_URL: "redis://redis.tara.svc.cluster.local:6379/0"
+  RABBITMQ_URL: "amqp://rabbitmq.tara.svc.cluster.local:5672//"
+  TARA_JWKS_URL: "https://api.tara.example/.well-known/jwks.json"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"

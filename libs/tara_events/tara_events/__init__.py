@@ -7,7 +7,8 @@ for the firehose later), and the relay that drains the outbox.
 See docs/architecture/phase-0/04-event-contracts.md.
 """
 
+from .dispatch import on_event, registered_event_types
 from .envelope import EventEnvelope, uuid7
 
-__all__ = ["EventEnvelope", "uuid7", "__version__"]
+__all__ = ["EventEnvelope", "on_event", "registered_event_types", "uuid7", "__version__"]
 __version__ = "0.1.0"

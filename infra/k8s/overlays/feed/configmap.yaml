@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-config
+data:
+  FEED_DEBUG: "false"
+  FEED_ALLOWED_HOSTS: "feed.tara.svc.cluster.local,api.tara.example"
+  FEED_CORS_ORIGINS: "https://app.tara.example"
+  POSTGRES_HOST: "feed-db.tara.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  FEED_DB_NAME: "feed_db"
+  FEED_DB_USER: "feed"
+  REDIS_URL: "redis://redis.tara.svc.cluster.local:6379/0"
+  RABBITMQ_URL: "amqp://rabbitmq.tara.svc.cluster.local:5672//"
+  TARA_JWKS_URL: "https://api.tara.example/.well-known/jwks.json"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  ADS_INTERNAL_URL: "http://ads.tara.svc.cluster.local:8000"

@@ -14,3 +14,13 @@ class IdentityConfig(AppConfig):
             setup_tracing("identity")
         except Exception:  # noqa: S110,BLE001 - observability must never block boot
             pass
+
+        # Enforce production-safety on `manage.py check --deploy` (blocks dev
+        # secrets / wildcard hosts when DEBUG=False). Every service registers
+        # this the same way; see libs/tara_common/tara_common/checks.py.
+        try:
+            from tara_common.checks import register_checks
+
+            register_checks()
+        except Exception:  # noqa: S110,BLE001 - never block boot on check wiring
+            pass

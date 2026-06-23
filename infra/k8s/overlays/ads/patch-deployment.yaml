@@ -1,0 +1,16 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          command: ["gunicorn"]
+          args:
+            - "config.wsgi:application"
+            - "--bind=0.0.0.0:8000"
+            - "--workers=3"
+            - "--timeout=60"
+            - "--access-logfile=-"

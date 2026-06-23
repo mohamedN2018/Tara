@@ -1,0 +1,415 @@
+# =============================================================================
+# Tara — production stack for Dokploy (single domain, fully automated).
+#
+# What is automatic:
+#   - Postgres creates every per-service database/role on first boot
+#     (infra/postgres/init).
+#   - Each web service waits for Postgres, generates JWT keys, runs
+#     makemigrations + migrate, then serves (entrypoint, RUN_MIGRATIONS=true).
+#   - MinIO bucket is created by minio-init.
+#   - Healthchecks + `restart: unless-stopped` make the stack self-heal; the
+#     nginx edge resolves backends at request time so a restarted container is
+#     picked up without a reload.
+#
+# Exposed to the internet: only the `web` container (nginx), via Dokploy's
+# Traefik on `${DOMAIN}`. Everything else is internal on the `tara` network.
+#
+# Set env in Dokploy's "Environment" panel (or a .env file) — see
+# scripts/gen-dokploy-env.sh and docs/deploy/DOKPLOY.md.
+# =============================================================================
+name: tara
+
+# ---- shared building blocks -------------------------------------------------
+x-svc-env: &svc-env
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  REDIS_URL: redis://redis:6379/0
+  RABBITMQ_URL: amqp://${RABBITMQ_USER:-tara}:${RABBITMQ_PASS}@rabbitmq:5672//
+  TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
+  GRAPH_INTERNAL_URL: http://graph:8000
+  ADS_INTERNAL_URL: http://ads:8000
+  EMAIL_HOST: mailpit
+  EMAIL_PORT: "1025"
+  TARA_STORAGE_BACKEND: s3
+  S3_ENDPOINT_URL: http://minio:9000
+  S3_PUBLIC_BASE: http://minio:9000
+  S3_BUCKET: ${S3_BUCKET:-tara-media}
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_USE_SSL: "false"
+  AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-tara}
+  AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+  SEARCH_USE_OPENSEARCH: "false"
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: json
+
+x-svc: &svc
+  restart: unless-stopped
+  env_file: [.env]
+  networks: [tara]
+  depends_on:
+    postgres: {condition: service_healthy}
+    redis: {condition: service_healthy}
+    rabbitmq: {condition: service_healthy}
+
+x-web: &web
+  <<: *svc
+  healthcheck:
+    test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz/"]
+    interval: 15s
+    timeout: 5s
+    retries: 12
+    start_period: 60s
+
+services:
+  # ======== backing services ================================================
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks: [tara]
+    env_file: [.env]
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:-tara}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
+      POSTGRES_DB: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_SUPERUSER:-tara}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [tara]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    restart: unless-stopped
+    networks: [tara]
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-tara}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
+    volumes: [rabbitmqdata:/var/lib/rabbitmq]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    networks: [tara]
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-tara}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes: [miniodata:/data]
+
+  minio-init:
+    image: minio/mc
+    networks: [tara]
+    depends_on: [minio]
+    restart: "no"
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-tara} ${MINIO_ROOT_PASSWORD}; do echo waiting-for-minio; sleep 2; done;
+      mc mb -p local/${S3_BUCKET:-tara-media} || true;
+      mc anonymous set download local/${S3_BUCKET:-tara-media} || true;
+      echo minio-init-done"
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    networks: [tara]
+
+  # ======== web (HTTP) services =============================================
+  identity:
+    <<: *web
+    build: {context: ., dockerfile: services/identity/Dockerfile}
+    image: tara/identity
+    environment:
+      <<: *svc-env
+      IDENTITY_JWT_KEY_DIR: /app/.keys
+      RUN_MIGRATIONS: "true"
+    volumes: [identity-keys:/app/.keys]
+
+  profile:
+    <<: *web
+    build: {context: ., dockerfile: services/profile/Dockerfile}
+    image: tara/profile
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
+
+  graph:
+    <<: *web
+    build: {context: ., dockerfile: services/graph/Dockerfile}
+    image: tara/graph
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
+
+  media:
+    <<: *web
+    build: {context: ., dockerfile: services/media/Dockerfile}
+    image: tara/media
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
+
+  post:
+    <<: *web
+    build: {context: ., dockerfile: services/post/Dockerfile}
+    image: tara/post
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
+
+  feed:
+    <<: *web
+    build: {context: ., dockerfile: services/feed/Dockerfile}
+    image: tara/feed
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
+
+  chat:
+    <<: *web
+    build: {context: ., dockerfile: services/chat/Dockerfile}
+    image: tara/chat
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
+
+  marketplace:
+    <<: *web
+    build: {context: ., dockerfile: services/marketplace/Dockerfile}
+    image: tara/marketplace
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
+
+  notification:
+    <<: *web
+    build: {context: ., dockerfile: services/notification/Dockerfile}
+    image: tara/notification
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
+
+  search:
+    <<: *web
+    build: {context: ., dockerfile: services/search/Dockerfile}
+    image: tara/search
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
+
+  moderation:
+    <<: *web
+    build: {context: ., dockerfile: services/moderation/Dockerfile}
+    image: tara/moderation
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
+
+  admin:
+    <<: *web
+    build: {context: ., dockerfile: services/admin/Dockerfile}
+    image: tara/admin
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
+
+  ads:
+    <<: *web
+    build: {context: ., dockerfile: services/ads/Dockerfile}
+    image: tara/ads
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
+
+  # Realtime gateway: ASGI/WebSocket, no database (Redis + RabbitMQ only).
+  realtime:
+    <<: *svc
+    build: {context: ., dockerfile: services/realtime/Dockerfile}
+    image: tara/realtime
+    command: ["daphne", "-b", "0.0.0.0", "-p", "8000", "config.asgi:application"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz/"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+  # ======== async workers (outbox relay: celery worker + embedded beat) =====
+  identity-worker:
+    <<: *svc
+    image: tara/identity
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {identity: {condition: service_healthy}}
+
+  profile-worker:
+    <<: *svc
+    image: tara/profile
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {profile: {condition: service_healthy}}
+
+  graph-worker:
+    <<: *svc
+    image: tara/graph
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {graph: {condition: service_healthy}}
+
+  media-worker:
+    <<: *svc
+    image: tara/media
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {media: {condition: service_healthy}}
+
+  post-worker:
+    <<: *svc
+    image: tara/post
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {post: {condition: service_healthy}}
+
+  feed-worker:
+    <<: *svc
+    image: tara/feed
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {feed: {condition: service_healthy}}
+
+  chat-worker:
+    <<: *svc
+    image: tara/chat
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {chat: {condition: service_healthy}}
+
+  marketplace-worker:
+    <<: *svc
+    image: tara/marketplace
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {marketplace: {condition: service_healthy}}
+
+  notification-worker:
+    <<: *svc
+    image: tara/notification
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {notification: {condition: service_healthy}}
+
+  moderation-worker:
+    <<: *svc
+    image: tara/moderation
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {moderation: {condition: service_healthy}}
+
+  ads-worker:
+    <<: *svc
+    image: tara/ads
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {ads: {condition: service_healthy}}
+
+  # ======== event consumers (consume_events) ================================
+  profile-consumer:
+    <<: *svc
+    image: tara/profile
+    command: ["python", "manage.py", "consume_events"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {profile: {condition: service_healthy}}
+
+  graph-consumer:
+    <<: *svc
+    image: tara/graph
+    command: ["python", "manage.py", "consume_events"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {graph: {condition: service_healthy}}
+
+  post-consumer:
+    <<: *svc
+    image: tara/post
+    command: ["python", "manage.py", "consume_events"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {post: {condition: service_healthy}}
+
+  feed-consumer:
+    <<: *svc
+    image: tara/feed
+    command: ["python", "manage.py", "consume_events"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {feed: {condition: service_healthy}}
+
+  chat-consumer:
+    <<: *svc
+    image: tara/chat
+    command: ["python", "manage.py", "consume_events"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {chat: {condition: service_healthy}}
+
+  marketplace-consumer:
+    <<: *svc
+    image: tara/marketplace
+    command: ["python", "manage.py", "consume_events"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {marketplace: {condition: service_healthy}}
+
+  notification-consumer:
+    <<: *svc
+    image: tara/notification
+    command: ["python", "manage.py", "consume_events"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {notification: {condition: service_healthy}}
+
+  search-consumer:
+    <<: *svc
+    image: tara/search
+    command: ["python", "manage.py", "consume_events"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {search: {condition: service_healthy}}
+
+  moderation-consumer:
+    <<: *svc
+    image: tara/moderation
+    command: ["python", "manage.py", "consume_events"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {moderation: {condition: service_healthy}}
+
+  # Realtime event→socket bridge (no DB).
+  realtime-bridge:
+    <<: *svc
+    image: tara/realtime
+    command: ["python", "manage.py", "consume_events"]
+    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    depends_on: {realtime: {condition: service_healthy}}
+
+  # ======== single-origin edge (SPA + API/WS reverse proxy) =================
+  web:
+    build:
+      context: frontend/web
+      args:
+        VITE_API_BASE: /api/v1
+        VITE_WS_URL: ""
+    image: tara/web
+    restart: unless-stopped
+    networks: [tara, dokploy-network]
+    depends_on:
+      - identity
+      - realtime
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=dokploy-network
+      - "traefik.http.routers.tara-web.rule=Host(`${DOMAIN}`)"
+      - traefik.http.routers.tara-web.entrypoints=websecure
+      - traefik.http.routers.tara-web.tls.certresolver=letsencrypt
+      - traefik.http.services.tara-web.loadbalancer.server.port=80
+
+networks:
+  tara:
+    driver: bridge
+  dokploy-network:
+    external: true
+
+volumes:
+  pgdata:
+  redisdata:
+  rabbitmqdata:
+  miniodata:
+  identity-keys:

@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-config
+data:
+  ADS_DEBUG: "false"
+  ADS_ALLOWED_HOSTS: "ads.tara.svc.cluster.local,api.tara.example"
+  ADS_CORS_ORIGINS: "https://app.tara.example"
+  POSTGRES_HOST: "ads-db.tara.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  ADS_DB_NAME: "ads_db"
+  ADS_DB_USER: "ads"
+  REDIS_URL: "redis://redis.tara.svc.cluster.local:6379/0"
+  RABBITMQ_URL: "amqp://rabbitmq.tara.svc.cluster.local:5672//"
+  TARA_JWKS_URL: "https://api.tara.example/.well-known/jwks.json"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  ADS_AUTO_APPROVE: "false"

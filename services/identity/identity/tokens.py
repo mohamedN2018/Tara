@@ -156,8 +156,10 @@ def build_jwks() -> dict:
     """Return the JWKS document advertising our RS256 public key."""
     if not settings.JWT_PUBLIC_KEY:
         return {"keys": []}
+    from cryptography.hazmat.primitives.serialization import load_pem_public_key
     from jwt.algorithms import RSAAlgorithm
 
-    jwk = RSAAlgorithm.to_jwk(RSAAlgorithm.prepare_key(settings.JWT_PUBLIC_KEY), as_dict=True)
+    public_key = load_pem_public_key(settings.JWT_PUBLIC_KEY.encode())
+    jwk = RSAAlgorithm.to_jwk(public_key, as_dict=True)
     jwk.update({"use": "sig", "alg": "RS256", "kid": settings.JWT_KEY_ID})
     return {"keys": [jwk]}

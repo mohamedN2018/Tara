@@ -38,10 +38,14 @@ class TokenUser:
     def __init__(self, claims: dict[str, Any]) -> None:
         self.claims = claims
         self.id = claims.get("sub")
+        self.pk = claims.get("sub")  # DRF throttles/permissions read request.user.pk
         self.account_id = claims.get("sub")
         self.handle = claims.get("handle")
         self.email = claims.get("email")
         self.scopes = set(claims.get("scope", "").split()) if claims.get("scope") else set()
+        # RBAC roles (e.g. "moderator", "admin"); embedded in the access token by
+        # Identity from the Admin role registry. Empty for ordinary users.
+        self.roles = set(claims.get("roles", []) or [])
 
     def __str__(self) -> str:  # pragma: no cover - debug aid
         return f"TokenUser(id={self.id})"

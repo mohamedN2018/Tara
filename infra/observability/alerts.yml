@@ -1,0 +1,95 @@
+# Prometheus alerting rules for the Tara platform.
+# Metric names follow django-prometheus (django_http_*) and the standard
+# `up` target metric. Validate with: promtool check rules alerts.yml
+groups:
+  - name: tara-availability
+    rules:
+      - alert: ServiceDown
+        expr: up{job!="prometheus"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.service }} is down"
+          description: "Target {{ $labels.instance }} (job {{ $labels.job }}) has been unreachable for >1m."
+
+      - alert: TargetFlapping
+        expr: changes(up{job!="prometheus"}[10m]) > 4
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Service {{ $labels.service }} is flapping"
+          description: "{{ $labels.instance }} has changed up/down state more than 4 times in 10m."
+
+  - name: tara-errors-latency
+    rules:
+      - alert: HighHttpErrorRate
+        expr: |
+          sum by (service) (rate(django_http_responses_total_by_status_total{status=~"5.."}[5m]))
+            /
+          sum by (service) (rate(django_http_responses_total_by_status_total[5m]))
+            > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High 5xx rate on {{ $labels.service }}"
+          description: "{{ $labels.service }} is returning >5% 5xx responses over the last 5m."
+
+      - alert: HighRequestLatencyP95
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, service) (rate(django_http_requests_latency_seconds_by_view_method_bucket[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P95 latency >1s on {{ $labels.service }}"
+          description: "95th percentile request latency for {{ $labels.service }} has exceeded 1s for 10m."
+
+  - name: tara-events-pipeline
+    rules:
+      # The outbox relay should keep pending events near zero. A growing backlog
+      # means the relay or broker is unhealthy (events not reaching RabbitMQ).
+      - alert: OutboxBacklogGrowing
+        expr: max by (service) (tara_outbox_pending_events) > 500
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Outbox backlog on {{ $labels.service }}"
+          description: "{{ $labels.service }} has >500 unpublished outbox events for 10m; check the relay/RabbitMQ."
+
+  - name: tara-runtime-kubernetes
+    rules:
+      - alert: PodCrashLooping
+        expr: increase(kube_pod_container_status_restarts_total{namespace="tara"}[15m]) > 3
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Pod {{ $labels.pod }} is crash-looping"
+          description: "{{ $labels.pod }} in namespace tara has restarted >3 times in 15m."
+
+      - alert: DeploymentReplicasUnavailable
+        expr: kube_deployment_status_replicas_unavailable{namespace="tara"} > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Deployment {{ $labels.deployment }} has unavailable replicas"
+          description: "{{ $labels.deployment }} has had unavailable replicas for 10m."
+
+      - alert: HpaMaxedOut
+        expr: |
+          kube_horizontalpodautoscaler_status_current_replicas{namespace="tara"}
+            >= kube_horizontalpodautoscaler_spec_max_replicas{namespace="tara"}
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "HPA {{ $labels.horizontalpodautoscaler }} at max replicas"
+          description: "{{ $labels.horizontalpodautoscaler }} has been pinned at max replicas for 15m; consider raising the ceiling."

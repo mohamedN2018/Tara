@@ -3,6 +3,9 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+rule_files:
+  - /etc/prometheus/alerts.yml
+
 scrape_configs:
   - job_name: prometheus
     static_configs:
@@ -15,6 +18,82 @@ scrape_configs:
         labels:
           service: identity
 
-  # Future services register here as they come online, e.g.:
-  # - job_name: profile
-  #   static_configs: [{ targets: ["profile:8000"], labels: { service: profile } }]
+  - job_name: profile
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["profile:8000"]
+        labels:
+          service: profile
+
+  - job_name: graph
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["graph:8000"]
+        labels:
+          service: graph
+
+  - job_name: media
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["media:8000"]
+        labels: {service: media}
+
+  - job_name: post
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["post:8000"]
+        labels: {service: post}
+
+  - job_name: feed
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["feed:8000"]
+        labels: {service: feed}
+
+  - job_name: chat
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["chat:8000"]
+        labels: {service: chat}
+
+  - job_name: realtime
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["realtime:8000"]
+        labels: {service: realtime}
+
+  - job_name: marketplace
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["marketplace:8000"]
+        labels: {service: marketplace}
+
+  - job_name: notification
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["notification:8000"]
+        labels: {service: notification}
+
+  - job_name: search
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["search:8000"]
+        labels: {service: search}
+
+  - job_name: moderation
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["moderation:8000"]
+        labels: {service: moderation}
+
+  - job_name: admin
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["admin:8000"]
+        labels: {service: admin}
+
+  - job_name: ads
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["ads:8000"]
+        labels: {service: ads}

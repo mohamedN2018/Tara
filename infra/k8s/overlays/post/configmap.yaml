@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-config
+data:
+  POST_DEBUG: "false"
+  POST_ALLOWED_HOSTS: "post.tara.svc.cluster.local,api.tara.example"
+  POST_CORS_ORIGINS: "https://app.tara.example"
+  POSTGRES_HOST: "post-db.tara.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  POST_DB_NAME: "post_db"
+  POST_DB_USER: "post"
+  REDIS_URL: "redis://redis.tara.svc.cluster.local:6379/0"
+  RABBITMQ_URL: "amqp://rabbitmq.tara.svc.cluster.local:5672//"
+  TARA_JWKS_URL: "https://api.tara.example/.well-known/jwks.json"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"

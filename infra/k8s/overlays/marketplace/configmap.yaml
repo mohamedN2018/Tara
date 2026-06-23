@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-config
+data:
+  MARKETPLACE_DEBUG: "false"
+  MARKETPLACE_ALLOWED_HOSTS: "marketplace.tara.svc.cluster.local,api.tara.example"
+  MARKETPLACE_CORS_ORIGINS: "https://app.tara.example"
+  POSTGRES_HOST: "marketplace-db.tara.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  MARKET_DB_NAME: "market_db"
+  MARKET_DB_USER: "market"
+  REDIS_URL: "redis://redis.tara.svc.cluster.local:6379/0"
+  RABBITMQ_URL: "amqp://rabbitmq.tara.svc.cluster.local:5672//"
+  TARA_JWKS_URL: "https://api.tara.example/.well-known/jwks.json"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  MARKETPLACE_AUTO_APPROVE: "false"

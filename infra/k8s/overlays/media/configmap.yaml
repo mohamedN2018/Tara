@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-config
+data:
+  MEDIA_DEBUG: "false"
+  MEDIA_ALLOWED_HOSTS: "media.tara.svc.cluster.local,api.tara.example"
+  MEDIA_CORS_ORIGINS: "https://app.tara.example"
+  POSTGRES_HOST: "media-db.tara.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  MEDIA_DB_NAME: "media_db"
+  MEDIA_DB_USER: "media"
+  REDIS_URL: "redis://redis.tara.svc.cluster.local:6379/0"
+  RABBITMQ_URL: "amqp://rabbitmq.tara.svc.cluster.local:5672//"
+  TARA_JWKS_URL: "https://api.tara.example/.well-known/jwks.json"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  TARA_STORAGE_BACKEND: "s3"
+  S3_BUCKET: "tara-media-prod"

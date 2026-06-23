@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-config
+data:
+  SEARCH_DEBUG: "false"
+  SEARCH_ALLOWED_HOSTS: "search.tara.svc.cluster.local,api.tara.example"
+  SEARCH_CORS_ORIGINS: "https://app.tara.example"
+  POSTGRES_HOST: "search-db.tara.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  SEARCH_DB_NAME: "search_db"
+  SEARCH_DB_USER: "search"
+  REDIS_URL: "redis://redis.tara.svc.cluster.local:6379/0"
+  RABBITMQ_URL: "amqp://rabbitmq.tara.svc.cluster.local:5672//"
+  TARA_JWKS_URL: "https://api.tara.example/.well-known/jwks.json"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  SEARCH_USE_OPENSEARCH: "true"
+  OPENSEARCH_URL: "https://opensearch.internal:9200"

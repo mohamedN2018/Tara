@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tara
+  labels:
+    app.kubernetes.io/part-of: tara
+    # Lets other namespaces' NetworkPolicies target this one by name.
+    kubernetes.io/metadata.name: tara

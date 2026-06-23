@@ -1,0 +1,96 @@
+"""Notification consumers + API tests."""
+
+import uuid
+
+import pytest
+from django.urls import reverse
+
+from notifications.handlers import on_post_reacted, on_user_followed
+from notifications.models import Notification, OutboxEvent
+from notifications.services import notify
+from tara_events.envelope import EventEnvelope
+
+pytestmark = pytest.mark.django_db
+
+
+def _acct() -> str:
+    return str(uuid.uuid4())
+
+
+def test_post_reacted_creates_notification_and_emits():
+    author, reactor = _acct(), _acct()
+    on_post_reacted(
+        EventEnvelope(
+            event_type="post.reacted",
+            subject_id="p1",
+            producer="post-service",
+            payload={
+                "post_id": "p1",
+                "author_id": author,
+                "reactor": reactor,
+                "reaction_type": "like",
+            },
+        )
+    )
+    assert Notification.objects.filter(recipient_id=author, kind="post.reaction").count() == 1
+    assert OutboxEvent.objects.filter(event_type="notification.created").exists()
+
+
+def test_no_self_notification():
+    me = _acct()
+    on_user_followed(
+        EventEnvelope(
+            event_type="user.followed",
+            subject_id="f1",
+            producer="graph-service",
+            payload={"follower": me, "target": me, "target_type": "user"},
+        )
+    )
+    assert Notification.objects.count() == 0
+
+
+def test_list_unread_and_mark_read(client_for):
+    me = _acct()
+    notify(me, "post.reaction", actor_id=_acct(), body="x")
+    notify(me, "follow", actor_id=_acct(), body="y")
+    client = client_for(me)
+
+    listing = client.get(reverse("notifications:list"), {"unread": "1"})
+    assert listing.status_code == 200
+    assert len(listing.json()["data"]) == 2
+
+    assert client.get(reverse("notifications:unread-count")).json()["data"]["unread"] == 2
+
+    marked = client.post(reverse("notifications:read"), {"all": True}, format="json")
+    assert marked.json()["data"]["marked_read"] == 2
+    assert client.get(reverse("notifications:unread-count")).json()["data"]["unread"] == 0
+
+
+def test_only_own_notifications_visible(client_for):
+    me, other = _acct(), _acct()
+    notify(other, "follow", actor_id=_acct(), body="not yours")
+    listing = client_for(me).get(reverse("notifications:list"))
+    assert listing.json()["data"] == []
+
+
+def test_push_token_registration(client_for):
+    me = _acct()
+    resp = client_for(me).post(
+        reverse("notifications:push-token"),
+        {"platform": "ios", "token": "device-token-123"},
+        format="json",
+    )
+    assert resp.status_code == 201
+
+
+def test_preferences_mute_suppresses_notification(client_for):
+    me = _acct()
+    client = client_for(me)
+    # Mute the "follow" kind for in-app.
+    client.patch(
+        reverse("notifications:preferences"),
+        {"prefs": {"follow": {"in_app": False}}},
+        format="json",
+    )
+    notify(me, "follow", actor_id=_acct(), body="should be suppressed")
+    assert Notification.objects.filter(recipient_id=me, kind="follow").count() == 0

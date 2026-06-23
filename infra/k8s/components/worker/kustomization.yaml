@@ -1,0 +1,7 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+# Adds a Celery worker (with embedded beat) that drains the outbox to RabbitMQ.
+# Include from an overlay via:  components: [../../components/worker]
+resources:
+  - worker-deployment.yaml

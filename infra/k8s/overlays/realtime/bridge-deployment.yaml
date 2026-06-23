@@ -1,0 +1,57 @@
+# Realtime event→socket bridge: consumes platform events and fans them to the
+# Channels layer (Redis). Single replica: unlike DB consumers this forwards to
+# live sockets, so a competing-consumer split is unnecessary and keeps delivery
+# simple. No DB; idempotency is not required here.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bridge
+  labels:
+    app.kubernetes.io/component: bridge
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: bridge
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: bridge
+    spec:
+      serviceAccountName: service
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bridge
+          image: tara/service:latest
+          command: ["python", "manage.py", "consume_events"]
+          envFrom:
+            - configMapRef:
+                name: service-config
+            - secretRef:
+                name: service-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 384Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

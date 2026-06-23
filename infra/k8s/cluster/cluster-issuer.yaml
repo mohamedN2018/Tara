@@ -1,0 +1,33 @@
+# cert-manager ClusterIssuers (Let's Encrypt). The ingresses are annotated with
+# `cert-manager.io/cluster-issuer: letsencrypt-prod`; cert-manager's ingress-shim
+# then issues the `tara-api-tls` certificate referenced in each Ingress `tls`
+# block automatically. Requires cert-manager installed in the cluster.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: ops@tara.example
+    privateKeySecretRef:
+      name: letsencrypt-staging-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: nginx
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: ops@tara.example
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      - http01:
+          ingress:
+            ingressClassName: nginx

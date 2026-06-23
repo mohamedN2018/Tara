@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-config
+data:
+  MODERATION_DEBUG: "false"
+  MODERATION_ALLOWED_HOSTS: "moderation.tara.svc.cluster.local,api.tara.example"
+  MODERATION_CORS_ORIGINS: "https://app.tara.example"
+  POSTGRES_HOST: "moderation-db.tara.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  MODERATION_DB_NAME: "moderation_db"
+  MODERATION_DB_USER: "moderation"
+  REDIS_URL: "redis://redis.tara.svc.cluster.local:6379/0"
+  RABBITMQ_URL: "amqp://rabbitmq.tara.svc.cluster.local:5672//"
+  TARA_JWKS_URL: "https://api.tara.example/.well-known/jwks.json"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"

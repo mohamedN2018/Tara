@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: tara
+namePrefix: marketplace-
+
+commonLabels:
+  app.kubernetes.io/name: marketplace
+  app.kubernetes.io/part-of: tara
+
+resources:
+  - ../../base
+  - configmap.yaml
+  - secret.example.yaml
+  - migrate-job.yaml
+  - ingress.yaml
+
+components:
+  - ../../components/worker
+  - ../../components/consumer
+
+images:
+  - name: tara/service
+    newName: ghcr.io/your-org/tara-marketplace
+    newTag: "1.0.0"
+
+patches:
+  - path: patch-deployment.yaml
+    target:
+      kind: Deployment

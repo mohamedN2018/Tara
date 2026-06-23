@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-config
+data:
+  # Non-secret, environment-specific config. Secrets live in service-secrets.
+  IDENTITY_DEBUG: "false"
+  IDENTITY_ALLOWED_HOSTS: "api.tara.example,identity.tara.svc.cluster.local"
+  IDENTITY_CORS_ORIGINS: "https://app.tara.example"
+  POSTGRES_HOST: "identity-db.tara.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  IDENTITY_DB_NAME: "identity_db"
+  IDENTITY_DB_USER: "identity"
+  REDIS_URL: "redis://redis.tara.svc.cluster.local:6379/0"
+  RABBITMQ_URL: "amqp://rabbitmq.tara.svc.cluster.local:5672//"
+  JWT_ISSUER: "tara-identity"
+  JWT_AUDIENCE: "tara"
+  ACCESS_TOKEN_TTL_SECONDS: "900"
+  REFRESH_TOKEN_TTL_SECONDS: "2592000"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"

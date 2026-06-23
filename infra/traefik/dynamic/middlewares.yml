@@ -1,0 +1,36 @@
+# Traefik dynamic configuration (file provider).
+# These middlewares are attached to the `web` entrypoint in the Traefik static
+# config (see docker-compose.yml `command:`), so every routed request passes
+# through them — no per-service wiring needed.
+http:
+  middlewares:
+    # Baseline security response headers for all edge traffic.
+    tara-secure-headers:
+      headers:
+        contentTypeNosniff: true
+        browserXssFilter: true
+        frameDeny: true
+        referrerPolicy: strict-origin-when-cross-origin
+        permissionsPolicy: "geolocation=(), microphone=(), camera=()"
+        # HSTS only takes effect once TLS terminates at the edge (prod).
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        customResponseHeaders:
+          X-Tara-Gateway: "edge"
+          Server: ""  # strip server fingerprint
+
+    # Coarse per-source rate limit. Generous for dev; tighten per route in prod.
+    # (Auth endpoints are additionally throttled inside the identity service.)
+    tara-ratelimit:
+      rateLimit:
+        average: 100
+        burst: 50
+        period: 1s
+
+    # Convenience chain if a router wants both via a single reference.
+    tara-edge:
+      chain:
+        middlewares:
+          - tara-secure-headers
+          - tara-ratelimit

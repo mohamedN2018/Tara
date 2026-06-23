@@ -26,6 +26,42 @@ services:
       IDENTITY_DB_NAME: ${IDENTITY_DB_NAME}
       IDENTITY_DB_USER: ${IDENTITY_DB_USER}
       IDENTITY_DB_PASSWORD: ${IDENTITY_DB_PASSWORD}
+      PROFILE_DB_NAME: ${PROFILE_DB_NAME}
+      PROFILE_DB_USER: ${PROFILE_DB_USER}
+      PROFILE_DB_PASSWORD: ${PROFILE_DB_PASSWORD}
+      GRAPH_DB_NAME: ${GRAPH_DB_NAME}
+      GRAPH_DB_USER: ${GRAPH_DB_USER}
+      GRAPH_DB_PASSWORD: ${GRAPH_DB_PASSWORD}
+      MEDIA_DB_NAME: ${MEDIA_DB_NAME}
+      MEDIA_DB_USER: ${MEDIA_DB_USER}
+      MEDIA_DB_PASSWORD: ${MEDIA_DB_PASSWORD}
+      POST_DB_NAME: ${POST_DB_NAME}
+      POST_DB_USER: ${POST_DB_USER}
+      POST_DB_PASSWORD: ${POST_DB_PASSWORD}
+      FEED_DB_NAME: ${FEED_DB_NAME}
+      FEED_DB_USER: ${FEED_DB_USER}
+      FEED_DB_PASSWORD: ${FEED_DB_PASSWORD}
+      CHAT_DB_NAME: ${CHAT_DB_NAME}
+      CHAT_DB_USER: ${CHAT_DB_USER}
+      CHAT_DB_PASSWORD: ${CHAT_DB_PASSWORD}
+      MARKET_DB_NAME: ${MARKET_DB_NAME}
+      MARKET_DB_USER: ${MARKET_DB_USER}
+      MARKET_DB_PASSWORD: ${MARKET_DB_PASSWORD}
+      NOTIF_DB_NAME: ${NOTIF_DB_NAME}
+      NOTIF_DB_USER: ${NOTIF_DB_USER}
+      NOTIF_DB_PASSWORD: ${NOTIF_DB_PASSWORD}
+      SEARCH_DB_NAME: ${SEARCH_DB_NAME}
+      SEARCH_DB_USER: ${SEARCH_DB_USER}
+      SEARCH_DB_PASSWORD: ${SEARCH_DB_PASSWORD}
+      MODERATION_DB_NAME: ${MODERATION_DB_NAME}
+      MODERATION_DB_USER: ${MODERATION_DB_USER}
+      MODERATION_DB_PASSWORD: ${MODERATION_DB_PASSWORD}
+      ADMIN_DB_NAME: ${ADMIN_DB_NAME}
+      ADMIN_DB_USER: ${ADMIN_DB_USER}
+      ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD}
+      ADS_DB_NAME: ${ADS_DB_NAME}
+      ADS_DB_USER: ${ADS_DB_USER}
+      ADS_DB_PASSWORD: ${ADS_DB_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ../postgres/init:/docker-entrypoint-initdb.d:ro
@@ -102,12 +138,17 @@ services:
       - --api.insecure=true
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
       - --entrypoints.web.address=:80
+      # Apply security headers + rate limiting to ALL routed traffic at the edge.
+      - --entrypoints.web.http.middlewares=tara-secure-headers@file,tara-ratelimit@file
     ports:
       - "8080:80"     # edge
       - "8081:8080"   # dashboard
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ../traefik/dynamic:/etc/traefik/dynamic:ro
     depends_on:
       - identity
       - bff
@@ -148,7 +189,7 @@ services:
       retries: 10
     labels:
       - traefik.enable=true
-      - "traefik.http.routers.identity.rule=PathPrefix(`/api`) || PathPrefix(`/.well-known`) || PathPrefix(`/admin`) || PathPrefix(`/healthz`) || PathPrefix(`/readyz`) || PathPrefix(`/metrics`) || PathPrefix(`/static`)"
+      - "traefik.http.routers.identity.rule=PathPrefix(`/api/v1/auth`) || PathPrefix(`/api/v1/me`) || PathPrefix(`/.well-known`) || PathPrefix(`/admin`) || PathPrefix(`/healthz`) || PathPrefix(`/readyz`) || PathPrefix(`/metrics`) || PathPrefix(`/static`) || PathPrefix(`/api/v1/docs`) || PathPrefix(`/api/v1/schema`)"
       - traefik.http.routers.identity.entrypoints=web
       - traefik.http.services.identity.loadbalancer.server.port=8000
 
@@ -213,12 +254,676 @@ services:
       - traefik.http.routers.bff.entrypoints=web
       - traefik.http.services.bff.loadbalancer.server.port=8090
 
+  # ---- Profile service (Phase 2) -------------------------------------------
+  profile:
+    build:
+      context: ../..
+      dockerfile: services/profile/Dockerfile
+    image: tara/profile:dev
+    profiles: ["core"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/1
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
+      GRAPH_INTERNAL_URL: http://graph:8000
+      RUN_MIGRATIONS: "true"
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.profile.rule=PathPrefix(`/api/v1/users`) || PathPrefix(`/api/v1/profile`) || PathPrefix(`/api/v1/pages`)"
+      - traefik.http.routers.profile.entrypoints=web
+      - traefik.http.services.profile.loadbalancer.server.port=8000
+
+  profile-relay:
+    image: tara/profile:dev
+    profiles: ["core"]
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/1
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      profile:
+        condition: service_healthy
+
+  profile-consumer:
+    image: tara/profile:dev
+    profiles: ["core"]
+    command: ["python", "manage.py", "consume_events"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/1
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      profile:
+        condition: service_healthy
+
+  # ---- Social Graph service (Phase 2) --------------------------------------
+  graph:
+    build:
+      context: ../..
+      dockerfile: services/graph/Dockerfile
+    image: tara/graph:dev
+    profiles: ["core"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/2
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
+      RUN_MIGRATIONS: "true"
+    ports:
+      - "8002:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.graph.rule=PathPrefix(`/api/v1/friends`) || PathPrefix(`/api/v1/follows`) || PathPrefix(`/api/v1/blocks`) || PathPrefix(`/api/v1/social`)"
+      - traefik.http.routers.graph.entrypoints=web
+      - traefik.http.services.graph.loadbalancer.server.port=8000
+
+  graph-relay:
+    image: tara/graph:dev
+    profiles: ["core"]
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/2
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      graph:
+        condition: service_healthy
+
+  graph-consumer:
+    image: tara/graph:dev
+    profiles: ["core"]
+    command: ["python", "manage.py", "consume_events"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/2
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      graph:
+        condition: service_healthy
+
+  # ---- Media service (Phase 3) ---------------------------------------------
+  media:
+    build:
+      context: ../..
+      dockerfile: services/media/Dockerfile
+    image: tara/media:dev
+    profiles: ["core"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/3
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
+      S3_ENDPOINT_URL: http://minio:9000
+      RUN_MIGRATIONS: "true"
+    ports:
+      - "8003:8000"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.media.rule=PathPrefix(`/api/v1/media`)"
+      - traefik.http.routers.media.entrypoints=web
+      - traefik.http.services.media.loadbalancer.server.port=8000
+
+  media-relay:
+    image: tara/media:dev
+    profiles: ["core"]
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/3
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      S3_ENDPOINT_URL: http://minio:9000
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      media: {condition: service_healthy}
+
+  # ---- Post service (Phase 3) ----------------------------------------------
+  post:
+    build:
+      context: ../..
+      dockerfile: services/post/Dockerfile
+    image: tara/post:dev
+    profiles: ["core"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/4
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
+      GRAPH_INTERNAL_URL: http://graph:8000
+      RUN_MIGRATIONS: "true"
+    ports:
+      - "8004:8000"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.post.rule=PathPrefix(`/api/v1/posts`) || PathPrefix(`/api/v1/comments`) || PathPrefix(`/api/v1/saved`)"
+      - traefik.http.routers.post.entrypoints=web
+      - traefik.http.services.post.loadbalancer.server.port=8000
+
+  post-relay:
+    image: tara/post:dev
+    profiles: ["core"]
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/4
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      post: {condition: service_healthy}
+
+  post-consumer:
+    image: tara/post:dev
+    profiles: ["core"]
+    command: ["python", "manage.py", "consume_events"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/4
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      post: {condition: service_healthy}
+
+  # ---- Feed service (Phase 3) ----------------------------------------------
+  feed:
+    build:
+      context: ../..
+      dockerfile: services/feed/Dockerfile
+    image: tara/feed:dev
+    profiles: ["core"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/5
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
+      GRAPH_INTERNAL_URL: http://graph:8000
+      RUN_MIGRATIONS: "true"
+    ports:
+      - "8005:8000"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.feed.rule=PathPrefix(`/api/v1/feed`)"
+      - traefik.http.routers.feed.entrypoints=web
+      - traefik.http.services.feed.loadbalancer.server.port=8000
+
+  feed-relay:
+    image: tara/feed:dev
+    profiles: ["core"]
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/5
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      feed: {condition: service_healthy}
+
+  feed-consumer:
+    image: tara/feed:dev
+    profiles: ["core"]
+    command: ["python", "manage.py", "consume_events"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/5
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      GRAPH_INTERNAL_URL: http://graph:8000
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      feed: {condition: service_healthy}
+
+  # ---- Chat service (Phase 4) ----------------------------------------------
+  chat:
+    build:
+      context: ../..
+      dockerfile: services/chat/Dockerfile
+    image: tara/chat:dev
+    profiles: ["core"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/6
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
+      RUN_MIGRATIONS: "true"
+    ports:
+      - "8006:8000"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.chat.rule=PathPrefix(`/api/v1/conversations`) || PathPrefix(`/api/v1/messages`)"
+      - traefik.http.routers.chat.entrypoints=web
+      - traefik.http.services.chat.loadbalancer.server.port=8000
+
+  chat-relay:
+    image: tara/chat:dev
+    profiles: ["core"]
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/6
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      chat: {condition: service_healthy}
+
+  chat-consumer:
+    image: tara/chat:dev
+    profiles: ["core"]
+    command: ["python", "manage.py", "consume_events"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/6
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      chat: {condition: service_healthy}
+
+  # ---- Realtime gateway (Phase 4) — ASGI/WebSocket, no DB -------------------
+  realtime:
+    build:
+      context: ../..
+      dockerfile: services/realtime/Dockerfile
+    image: tara/realtime:dev
+    profiles: ["core"]
+    env_file:
+      - ../../.env
+    environment:
+      REDIS_URL: redis://redis:6379/7
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
+    ports:
+      - "8010:8000"
+    depends_on:
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.realtime.rule=PathPrefix(`/ws`)"
+      - traefik.http.routers.realtime.entrypoints=web
+      - traefik.http.services.realtime.loadbalancer.server.port=8000
+
+  realtime-bridge:
+    image: tara/realtime:dev
+    profiles: ["core"]
+    command: ["python", "manage.py", "consume_events"]
+    env_file:
+      - ../../.env
+    environment:
+      REDIS_URL: redis://redis:6379/7
+      RABBITMQ_URL: ${RABBITMQ_URL}
+    depends_on:
+      realtime: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+
+  # ---- Marketplace service (Phase 5) ---------------------------------------
+  marketplace:
+    build:
+      context: ../..
+      dockerfile: services/marketplace/Dockerfile
+    image: tara/marketplace:dev
+    profiles: ["core"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/8
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
+      RUN_MIGRATIONS: "true"
+    ports:
+      - "8007:8000"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.marketplace.rule=PathPrefix(`/api/v1/marketplace`)"
+      - traefik.http.routers.marketplace.entrypoints=web
+      - traefik.http.services.marketplace.loadbalancer.server.port=8000
+
+  marketplace-relay:
+    image: tara/marketplace:dev
+    profiles: ["core"]
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/8
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      marketplace: {condition: service_healthy}
+
+  marketplace-consumer:
+    image: tara/marketplace:dev
+    profiles: ["core"]
+    command: ["python", "manage.py", "consume_events"]
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/8
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      marketplace: {condition: service_healthy}
+
+  # ---- Notification service (Phase 6) --------------------------------------
+  notification:
+    build: {context: ../.., dockerfile: services/notification/Dockerfile}
+    image: tara/notification:dev
+    profiles: ["core"]
+    env_file: [../../.env]
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/9
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
+      RUN_MIGRATIONS: "true"
+    ports: ["8008:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.notification.rule=PathPrefix(`/api/v1/notifications`) || PathPrefix(`/api/v1/devices`)"
+      - traefik.http.routers.notification.entrypoints=web
+      - traefik.http.services.notification.loadbalancer.server.port=8000
+
+  notification-relay:
+    image: tara/notification:dev
+    profiles: ["core"]
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    env_file: [../../.env]
+    environment: {POSTGRES_HOST: postgres, REDIS_URL: "redis://redis:6379/9", RABBITMQ_URL: "${RABBITMQ_URL}", RUN_MIGRATIONS: "false"}
+    depends_on: {notification: {condition: service_healthy}}
+
+  notification-consumer:
+    image: tara/notification:dev
+    profiles: ["core"]
+    command: ["python", "manage.py", "consume_events"]
+    env_file: [../../.env]
+    environment: {POSTGRES_HOST: postgres, REDIS_URL: "redis://redis:6379/9", RABBITMQ_URL: "${RABBITMQ_URL}", RUN_MIGRATIONS: "false"}
+    depends_on: {notification: {condition: service_healthy}}
+
+  # ---- Search service (Phase 6) --------------------------------------------
+  search:
+    build: {context: ../.., dockerfile: services/search/Dockerfile}
+    image: tara/search:dev
+    profiles: ["core"]
+    env_file: [../../.env]
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/10
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
+      RUN_MIGRATIONS: "true"
+    ports: ["8009:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.search.rule=PathPrefix(`/api/v1/search`)"
+      - traefik.http.routers.search.entrypoints=web
+      - traefik.http.services.search.loadbalancer.server.port=8000
+
+  search-indexer:
+    image: tara/search:dev
+    profiles: ["core"]
+    command: ["python", "manage.py", "consume_events"]
+    env_file: [../../.env]
+    environment: {POSTGRES_HOST: postgres, REDIS_URL: "redis://redis:6379/10", RABBITMQ_URL: "${RABBITMQ_URL}", RUN_MIGRATIONS: "false"}
+    depends_on: {search: {condition: service_healthy}}
+
+  # ---- Moderation service (Phase 6) ----------------------------------------
+  moderation:
+    build: {context: ../.., dockerfile: services/moderation/Dockerfile}
+    image: tara/moderation:dev
+    profiles: ["core"]
+    env_file: [../../.env]
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/11
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
+      RUN_MIGRATIONS: "true"
+    ports: ["8011:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.moderation.rule=PathPrefix(`/api/v1/moderation`)"
+      - traefik.http.routers.moderation.entrypoints=web
+      - traefik.http.services.moderation.loadbalancer.server.port=8000
+
+  moderation-relay:
+    image: tara/moderation:dev
+    profiles: ["core"]
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    env_file: [../../.env]
+    environment: {POSTGRES_HOST: postgres, REDIS_URL: "redis://redis:6379/11", RABBITMQ_URL: "${RABBITMQ_URL}", RUN_MIGRATIONS: "false"}
+    depends_on: {moderation: {condition: service_healthy}}
+
+  moderation-consumer:
+    image: tara/moderation:dev
+    profiles: ["core"]
+    command: ["python", "manage.py", "consume_events"]
+    env_file: [../../.env]
+    environment: {POSTGRES_HOST: postgres, REDIS_URL: "redis://redis:6379/11", RABBITMQ_URL: "${RABBITMQ_URL}", RUN_MIGRATIONS: "false"}
+    depends_on: {moderation: {condition: service_healthy}}
+
+  # ---- Admin service (Phase 6) ---------------------------------------------
+  admin:
+    build: {context: ../.., dockerfile: services/admin/Dockerfile}
+    image: tara/admin:dev
+    profiles: ["core"]
+    env_file: [../../.env]
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/12
+      TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
+      RUN_MIGRATIONS: "true"
+    ports: ["8012:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.admin.rule=PathPrefix(`/api/v1/admin`)"
+      - traefik.http.routers.admin.entrypoints=web
+      - traefik.http.services.admin.loadbalancer.server.port=8000
+
+  # ---- OpenSearch (optional; enable with --profile search + SEARCH_USE_OPENSEARCH=true)
+  opensearch:
+    image: opensearchproject/opensearch:2.13.0
+    profiles: ["search"]
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - opensearchdata:/usr/share/opensearch/data
+
+  # ---- Advertisement service (Phase 7) -------------------------------------
+  ads:
+    build: {context: ../.., dockerfile: services/ads/Dockerfile}
+    image: tara/ads:dev
+    profiles: ["core"]
+    env_file: [../../.env]
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/13
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
+      RUN_MIGRATIONS: "true"
+    ports: ["8013:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.ads.rule=PathPrefix(`/api/v1/ads`)"
+      - traefik.http.routers.ads.entrypoints=web
+      - traefik.http.services.ads.loadbalancer.server.port=8000
+
+  ads-relay:
+    image: tara/ads:dev
+    profiles: ["core"]
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    env_file: [../../.env]
+    environment: {POSTGRES_HOST: postgres, REDIS_URL: "redis://redis:6379/13", RABBITMQ_URL: "${RABBITMQ_URL}", RUN_MIGRATIONS: "false"}
+    depends_on: {ads: {condition: service_healthy}}
+
   # ---- Observability (profile: observability) -------------------------------
   prometheus:
     image: prom/prometheus:latest
     profiles: ["observability"]
     volumes:
       - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheusdata:/prometheus
     ports:
       - "9090:9090"
@@ -255,3 +960,4 @@ volumes:
   identity-keys:
   prometheusdata:
   grafanadata:
+  opensearchdata:

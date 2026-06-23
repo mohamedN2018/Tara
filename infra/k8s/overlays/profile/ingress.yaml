@@ -1,0 +1,45 @@
+# Edge ingress (NGINX): TLS redirect + security headers + rate limit,
+# mirroring the Traefik gateway middlewares used in compose.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.tara.example
+      secretName: tara-api-tls
+  rules:
+    - host: api.tara.example
+      http:
+        paths:
+          - path: /api/v1/users
+            pathType: Prefix
+            backend:
+              service:
+                name: service
+                port:
+                  number: 80
+          - path: /api/v1/profile
+            pathType: Prefix
+            backend:
+              service:
+                name: service
+                port:
+                  number: 80
+          - path: /api/v1/pages
+            pathType: Prefix
+            backend:
+              service:
+                name: service
+                port:
+                  number: 80

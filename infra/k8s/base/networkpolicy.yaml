@@ -1,0 +1,57 @@
+# Default-deny both directions. Ingress: only Tara pods (gateway + siblings) and
+# the monitoring namespace (Prometheus scrape). Egress: DNS, sibling Tara pods,
+# the monitoring namespace (OTEL traces), the managed data stores (PG/Redis/AMQP/
+# OpenSearch), and HTTPS (S3 / secret manager / ACME). Everything else is denied.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: service
+  labels:
+    app.kubernetes.io/name: service
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: tara
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 8000
+          protocol: TCP
+  egress:
+    # DNS resolution
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Sibling Tara services (e.g. JWKS, internal APIs) — all ports
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: tara
+    # Monitoring namespace (OTEL collector)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+    # Managed data stores + outbound HTTPS (S3 / secret manager / ACME)
+    - ports:
+        - port: 5432
+          protocol: TCP
+        - port: 6379
+          protocol: TCP
+        - port: 5672
+          protocol: TCP
+        - port: 9200
+          protocol: TCP
+        - port: 443
+          protocol: TCP

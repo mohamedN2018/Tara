@@ -1,0 +1,22 @@
+# Realtime is an ASGI/Channels app: run daphne, and use the cheap liveness probe
+# for readiness too (no DB to gate on; Redis is the only dependency).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          command: ["daphne"]
+          args:
+            - "-b"
+            - "0.0.0.0"
+            - "-p"
+            - "8000"
+            - "config.asgi:application"
+          readinessProbe:
+            httpGet:
+              path: /healthz/
+              port: http

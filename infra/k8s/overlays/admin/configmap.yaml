@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: service-config
+data:
+  ADMIN_DEBUG: "false"
+  ADMIN_ALLOWED_HOSTS: "admin.tara.svc.cluster.local,api.tara.example"
+  ADMIN_CORS_ORIGINS: "https://app.tara.example"
+  POSTGRES_HOST: "admin-db.tara.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  ADMIN_DB_NAME: "admin_db"
+  ADMIN_DB_USER: "adminsvc"
+  REDIS_URL: "redis://redis.tara.svc.cluster.local:6379/0"
+  RABBITMQ_URL: "amqp://rabbitmq.tara.svc.cluster.local:5672//"
+  TARA_JWKS_URL: "https://api.tara.example/.well-known/jwks.json"
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"

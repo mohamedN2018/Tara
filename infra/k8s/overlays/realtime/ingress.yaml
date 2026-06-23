@@ -1,0 +1,29 @@
+# WebSocket ingress for the realtime gateway. Long read timeout keeps sockets
+# alive; NGINX upgrades Connection/Upgrade headers automatically.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.tara.example
+      secretName: tara-api-tls
+  rules:
+    - host: api.tara.example
+      http:
+        paths:
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: service
+                port:
+                  number: 80

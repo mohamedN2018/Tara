@@ -87,3 +87,17 @@ openapi: ## Dump the Identity OpenAPI schema to stdout
 .PHONY: seed
 seed: ## Load synthetic development data (no fake "production" data)
 	$(COMPOSE) exec identity python manage.py seed_dev_data
+
+# ---- Phase 9: production readiness -----------------------------------------
+.PHONY: check-deploy
+check-deploy: ## Run Django's --deploy checks (incl. tara production-safety gate)
+	$(COMPOSE) exec -e IDENTITY_DEBUG=false identity python manage.py check --deploy --fail-level WARNING
+
+.PHONY: k8s-build
+k8s-build: ## Render the identity Kustomize overlay (validate manifests)
+	kubectl kustomize infra/k8s/overlays/identity
+
+.PHONY: prom-check
+prom-check: ## Validate Prometheus rules/config with dockerized promtool
+	docker run --rm -v "$(PWD)/infra/observability:/work:ro" --entrypoint promtool \
+		prom/prometheus:latest check rules /work/alerts.yml

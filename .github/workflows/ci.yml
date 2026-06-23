@@ -18,6 +18,8 @@ jobs:
       libs: ${{ steps.filter.outputs.libs }}
       identity: ${{ steps.filter.outputs.identity }}
       bff: ${{ steps.filter.outputs.bff }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      infra: ${{ steps.filter.outputs.infra }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -31,6 +33,11 @@ jobs:
               - 'libs/**'
             bff:
               - 'services/bff/**'
+            frontend:
+              - 'frontend/web/**'
+            infra:
+              - 'infra/**'
+              - '.github/workflows/ci.yml'
 
   lint:
     runs-on: ubuntu-latest
@@ -123,3 +130,46 @@ jobs:
           file: services/bff/Dockerfile
           push: false
           tags: tara/bff:ci
+
+  # Phase 8: type-check + production build of the Vue web client.
+  frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/web/package-lock.json
+      - name: Install
+        working-directory: frontend/web
+        run: npm ci
+      - name: Type-check + build
+        working-directory: frontend/web
+        run: npm run build   # vue-tsc --noEmit && vite build
+
+  # Phase 9: validate deployment artifacts (compose, K8s manifests, alert rules).
+  manifests:
+    needs: changes
+    if: needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-kubectl@v4
+      - name: Validate docker-compose config
+        run: |
+          cp .env.example .env
+          docker compose -f infra/compose/docker-compose.yml --env-file .env config -q
+          echo "compose OK"
+      - name: Validate Kustomize overlays + cluster
+        run: |
+          for d in infra/k8s/overlays/*/ infra/k8s/cluster/; do
+            kubectl kustomize "$d" >/dev/null && echo "kustomize OK: $d"
+          done
+      - name: Validate Prometheus rules + config
+        run: |
+          docker run --rm -v "$PWD/infra/observability:/etc/prometheus:ro" \
+            --entrypoint promtool prom/prometheus:latest \
+            check config /etc/prometheus/prometheus.yml

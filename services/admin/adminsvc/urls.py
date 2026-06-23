@@ -1,0 +1,17 @@
+from django.urls import path
+
+from . import views
+
+app_name = "adminsvc"
+
+urlpatterns = [
+    path("admin/feature-flags/", views.FeatureFlagsView.as_view(), name="feature-flags"),
+    path(
+        "admin/feature-flags/<str:key>/",
+        views.FeatureFlagDetailView.as_view(),
+        name="feature-flag-detail",
+    ),
+    path("admin/roles/", views.RolesView.as_view(), name="roles"),
+    path("admin/roles/<uuid:account_id>/", views.AccountRolesView.as_view(), name="account-roles"),
+    path("admin/service-health/", views.ServiceHealthView.as_view(), name="service-health"),
+]

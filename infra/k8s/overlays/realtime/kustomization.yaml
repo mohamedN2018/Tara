@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: tara
+namePrefix: realtime-
+
+commonLabels:
+  app.kubernetes.io/name: realtime
+  app.kubernetes.io/part-of: tara
+
+# No migrate-job: the realtime gateway has no database.
+resources:
+  - ../../base
+  - configmap.yaml
+  - secret.example.yaml
+  - ingress.yaml
+  - bridge-deployment.yaml
+
+images:
+  - name: tara/service
+    newName: ghcr.io/your-org/tara-realtime
+    newTag: "1.0.0"
+
+patches:
+  - path: patch-deployment.yaml
+    target:
+      kind: Deployment

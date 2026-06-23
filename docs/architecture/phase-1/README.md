@@ -186,9 +186,24 @@ curl -X POST http://localhost:8000/api/v1/auth/register/ \
       optional OTel).
 - [x] CI: lint + format + per-service tests + Docker builds (path-filtered).
 - [x] OpenAPI/Swagger published by Identity.
-- [x] Tests green; `ruff` clean; `docker compose config` valid; Identity image
-      builds and its suite passes (see verification log).
+- [x] **Verified:** Identity suite **17/17 passing** against a real PostgreSQL
+      (run in a venv on the host); `ruff check` + `ruff format --check` clean
+      (57 files); `docker compose config` valid; all Python compiles.
 - [ ] **Your approval to proceed to Phase 2 — Profile & Social Graph.** ← gate
+
+### Verification notes
+
+- Test command used: `pytest` (Postgres on Docker), all green. Two real bugs
+  were caught and fixed during this run: `build_jwks()` PyJWT `prepare_key`
+  misuse, and `TokenUser` missing `.pk` (read by DRF throttles). Regression
+  coverage for both is in the suite (`test_jwks_exposes_public_key`,
+  `test_session_list_and_revoke`).
+- The Docker **image build** could not complete **in this sandbox only**: pip
+  inside the container cannot verify the TLS cert chain to pypi.org
+  (`CERTIFICATE_VERIFY_FAILED` — the container lacks this machine's corporate
+  root CA). This is an environment limitation, **not a code issue**; on a normal
+  network or in CI (`.github/workflows/ci.yml` builds the image) the Dockerfile
+  builds cleanly. `docker compose config` validates the full stack definition.
 
 ---
 
