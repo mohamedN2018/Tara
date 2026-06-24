@@ -2,6 +2,7 @@
 import { Bell, Heart, MessageSquare, ShoppingBag, UserPlus } from "lucide-vue-next";
 import { computed } from "vue";
 
+import UserAvatar from "@/components/common/UserAvatar.vue";
 import { relativeTime } from "@/lib/format";
 import type { Notification } from "@/types";
 
@@ -26,8 +27,17 @@ const icon = computed(() => {
     :class="!notification.read_at ? 'bg-brand-50/50 dark:bg-brand-950/30' : ''"
     @click="$emit('read', notification.id)"
   >
-    <span class="mt-0.5 rounded-full bg-brand-100 p-1.5 text-brand-600 dark:bg-brand-900/50">
-      <component :is="icon" class="h-4 w-4" />
+    <span class="relative mt-0.5 shrink-0">
+      <UserAvatar v-if="notification.actor_id" :name="notification.actor_id" :size="40" />
+      <span v-else class="flex h-10 w-10 items-center justify-center rounded-full bg-brand-100 text-brand-600 dark:bg-brand-900/50">
+        <component :is="icon" class="h-5 w-5" />
+      </span>
+      <span
+        v-if="notification.actor_id"
+        class="absolute -end-0.5 -bottom-0.5 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white bg-brand-600 text-white dark:border-gray-900"
+      >
+        <component :is="icon" class="h-2.5 w-2.5" />
+      </span>
     </span>
     <span class="min-w-0 flex-1">
       <span class="block text-sm">{{ notification.body }}</span>

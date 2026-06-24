@@ -20,7 +20,8 @@ export const useNotificationStore = defineStore("notifications", () => {
   function bind() {
     if (bound) return;
     bound = true;
-    realtime.on("notification", () => {
+    // Gateway emits `notification.created` (see realtime bridge).
+    realtime.on("notification.created", () => {
       unread.value += 1;
     });
   }

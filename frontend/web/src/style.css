@@ -6,32 +6,38 @@
   color-scheme: light dark;
 }
 
+/* Inter for Latin, Cairo for Arabic (loaded in index.html). */
 html {
   font-family: "Inter", system-ui, sans-serif;
 }
-
 html[dir="rtl"] {
   font-family: "Cairo", "Tahoma", sans-serif;
 }
 
+/* Soft light-gray canvas; white surfaces come from .card. */
 body {
-  @apply bg-gray-50 text-gray-900 antialiased dark:bg-gray-950 dark:text-gray-100;
+  @apply bg-gray-100 text-gray-900 antialiased dark:bg-gray-950 dark:text-gray-100;
 }
 
 @layer components {
+  /* White card, medium-large radius, subtle shadow, hairline border. */
   .card {
-    @apply rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900;
+    @apply rounded-2xl border border-gray-200/80 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900;
   }
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-brand-400 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-brand-300 focus:ring-offset-1 focus:ring-offset-transparent disabled:cursor-not-allowed disabled:opacity-50;
   }
   .btn-primary {
-    @apply btn bg-brand-600 text-white hover:bg-brand-700;
+    @apply btn bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800;
   }
   .btn-ghost {
     @apply btn text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800;
   }
+  /* Soft-blue secondary button. */
+  .btn-soft {
+    @apply btn bg-brand-50 text-brand-700 hover:bg-brand-100 dark:bg-brand-950/60 dark:text-brand-300 dark:hover:bg-brand-950;
+  }
   .input {
-    @apply w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900;
+    @apply w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900;
   }
 }

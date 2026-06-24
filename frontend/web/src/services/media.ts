@@ -27,8 +27,24 @@ interface SignResult {
   expires_in: number;
 }
 
-// Cache resolved display URLs by media id (they are presigned but long-lived).
-const urlCache = new Map<string, string>();
+// Cache resolved display URLs by media id. Presigned URLs expire (~15 min), so
+// entries carry a timestamp and are re-resolved after a TTL safely below that.
+const urlCache = new Map<string, { url: string; at: number }>();
+const URL_TTL_MS = 10 * 60 * 1000;
+
+// Presigned storage URLs are signed for the internal host `minio:9000`, which
+// the browser can't resolve. In dev, route them through the Vite proxy (/__s3)
+// which forwards to localhost:9000 with the signed Host header preserved. In a
+// production build the absolute URL is returned unchanged.
+function viaStorageProxy(url: string | null): string | null {
+  if (!url || !import.meta.env.DEV || url.startsWith("/")) return url;
+  try {
+    const u = new URL(url);
+    return `/__s3${u.pathname}${u.search}`;
+  } catch {
+    return url;
+  }
+}
 
 export const mediaService = {
   /**
@@ -46,8 +62,8 @@ export const mediaService = {
     const s = signed.data;
 
     // The presigned URL carries its own auth — use bare fetch so the gateway
-    // JWT/baseURL are NOT attached.
-    const put = await fetch(s.upload_url, {
+    // JWT/baseURL are NOT attached. Route through the storage proxy in dev.
+    const put = await fetch(viaStorageProxy(s.upload_url) ?? s.upload_url, {
       method: "PUT",
       headers: { "Content-Type": mime },
       body: file,
@@ -65,16 +81,17 @@ export const mediaService = {
     return data.data;
   },
 
-  /** Resolve a media id to a displayable URL (cached). null while not ready. */
+  /** Resolve a media id to a displayable URL (cached with TTL). null while not ready. */
   async resolveUrl(id: string): Promise<string | null> {
     const cached = urlCache.get(id);
-    if (cached) return cached;
+    if (cached && Date.now() - cached.at < URL_TTL_MS) return cached.url;
     try {
       const asset = await this.detail(id);
-      if (asset.url) urlCache.set(id, asset.url);
-      return asset.url;
+      const url = viaStorageProxy(asset.url);
+      if (url) urlCache.set(id, { url, at: Date.now() });
+      return url ?? cached?.url ?? null;
     } catch {
-      return null;
+      return cached?.url ?? null;
     }
   },
 };

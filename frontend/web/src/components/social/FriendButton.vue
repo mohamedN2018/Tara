@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Check, UserMinus, UserPlus, UserX } from "lucide-vue-next";
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { type FriendState, graphService } from "@/services/graph";
@@ -9,6 +9,11 @@ const props = defineProps<{ userId: string; state: FriendState; requestId?: stri
 
 const { t } = useI18n();
 const current = ref<FriendState>(props.state);
+// Friend state may resolve asynchronously on the profile; keep in sync.
+watch(
+  () => props.state,
+  (v) => (current.value = v),
+);
 const busy = ref(false);
 
 async function run(fn: () => Promise<void>, next: FriendState) {

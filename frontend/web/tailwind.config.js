@@ -9,11 +9,17 @@ export default {
         arabic: ["Cairo", "Tahoma", "sans-serif"],
       },
       colors: {
+        // Primary: deep blue. 50-200 double as the soft-blue secondary accents.
         brand: {
-          50: "#eef6ff", 100: "#d9eaff", 200: "#bcd9ff", 300: "#8ec0ff",
-          400: "#599cff", 500: "#3577f5", 600: "#205ae0", 700: "#1b48c0",
-          800: "#1c3d9b", 900: "#1c377a", 950: "#11214a",
+          50: "#eff5ff", 100: "#dbe8fe", 200: "#bfd7fe", 300: "#93bbfd",
+          400: "#609afa", 500: "#3b76f6", 600: "#1d4ed8", 700: "#1e40af",
+          800: "#1e3a8a", 900: "#1b346f", 950: "#172554",
         },
+      },
+      borderRadius: {
+        // Medium-to-large default radii for cards/controls.
+        xl: "0.9rem",
+        "2xl": "1.15rem",
       },
     },
   },

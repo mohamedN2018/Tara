@@ -66,7 +66,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ../postgres/init:/docker-entrypoint-initdb.d:ro
     ports:
-      - "5432:5432"
+      - "5435:5432"   # host 5435 (5432 is used by another local project)
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
       interval: 5s
@@ -80,7 +80,7 @@ services:
     volumes:
       - redisdata:/data
     ports:
-      - "6379:6379"
+      - "6381:6379"   # host 6381 (6379 is used by another local project)
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -270,8 +270,8 @@ services:
       TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
       GRAPH_INTERNAL_URL: http://graph:8000
       RUN_MIGRATIONS: "true"
-    ports:
-      - "8001:8000"
+    # No host port published: the gateway reaches profile internally as profile:8000.
+    # (Host 8001 is used by another local project.)
     depends_on:
       postgres:
         condition: service_healthy
@@ -401,6 +401,11 @@ services:
       TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
       S3_ENDPOINT_URL: http://minio:9000
       RUN_MIGRATIONS: "true"
+      # All services share one default Celery queue on RabbitMQ, so the
+      # media-only `process_media` task was round-robined to workers that don't
+      # have it registered and dropped. Run media processing inline so uploads
+      # become "ready" reliably without depending on the shared-queue lottery.
+      CELERY_TASK_ALWAYS_EAGER: "true"
     ports:
       - "8003:8000"
     depends_on:

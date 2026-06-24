@@ -1,7 +1,24 @@
 import { api } from "@/lib/api";
 import type { CursorPage, Notification } from "@/types";
 
+export interface NotificationPreferences {
+  prefs: Record<string, boolean>;
+  quiet_hours: { start?: string; end?: string };
+}
+
 export const notificationService = {
+  async getPreferences(): Promise<NotificationPreferences> {
+    const { data } = await api.get<{ data: NotificationPreferences }>("/notifications/preferences/");
+    return { prefs: data.data?.prefs ?? {}, quiet_hours: data.data?.quiet_hours ?? {} };
+  },
+  async updatePreferences(payload: Partial<NotificationPreferences>): Promise<NotificationPreferences> {
+    const { data } = await api.patch<{ data: NotificationPreferences }>(
+      "/notifications/preferences/",
+      payload,
+    );
+    return { prefs: data.data?.prefs ?? {}, quiet_hours: data.data?.quiet_hours ?? {} };
+  },
+
   async list(cursor?: string): Promise<CursorPage<Notification>> {
     const { data } = await api.get<CursorPage<Notification>>("/notifications/", {
       params: { cursor },

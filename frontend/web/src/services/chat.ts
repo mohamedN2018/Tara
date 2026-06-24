@@ -31,7 +31,12 @@ export const chatService = {
 
   async send(
     conversationId: string,
-    payload: { body: string; type?: string; attachments?: Message["attachments"] },
+    payload: {
+      body: string;
+      type?: string;
+      attachments?: Message["attachments"];
+      reply_to_id?: string | null;
+    },
   ): Promise<Message> {
     const { data } = await api.post<{ data: Message }>(
       `/conversations/${conversationId}/messages/`,

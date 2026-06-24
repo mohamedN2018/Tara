@@ -1,30 +1,33 @@
 <script setup lang="ts">
 import { onMounted } from "vue";
 
+import AppNavbar from "@/components/layout/AppNavbar.vue";
+import LeftSidebar from "@/components/layout/LeftSidebar.vue";
+import MobileBottomNavigation from "@/components/layout/MobileBottomNavigation.vue";
+import RightSidebar from "@/components/layout/RightSidebar.vue";
 import { useNotificationStore } from "@/stores/notifications";
+import { usePresenceStore } from "@/stores/presence";
 import { useUiStore } from "@/stores/ui";
 
-import MobileNavigation from "./MobileNavigation.vue";
-import SidebarNav from "./SidebarNav.vue";
-import TopHeader from "./TopHeader.vue";
+// `right=false` lets a view drop the right rail (e.g. full-width pages like chat).
+withDefaults(defineProps<{ right?: boolean }>(), { right: true });
 
 const ui = useUiStore();
 const notifications = useNotificationStore();
+const presence = usePresenceStore();
 
 onMounted(() => {
   notifications.bind();
   notifications.refresh();
+  presence.bind();
 });
 </script>
 
 <template>
-  <div class="min-h-screen lg:grid lg:grid-cols-[260px_1fr]">
-    <!-- Desktop sidebar -->
-    <aside class="sticky top-0 hidden h-screen border-e border-gray-200 dark:border-gray-800 lg:block">
-      <SidebarNav />
-    </aside>
+  <div class="min-h-screen bg-gray-100 dark:bg-gray-950">
+    <AppNavbar />
 
-    <!-- Mobile drawer -->
+    <!-- Mobile left-sidebar drawer -->
     <Transition name="fade">
       <div
         v-if="ui.sidebarOpen"
@@ -32,22 +35,36 @@ onMounted(() => {
         @click="ui.sidebarOpen = false"
       >
         <aside
-          class="h-full w-64 bg-white shadow-xl dark:bg-gray-950"
+          class="h-full w-72 overflow-y-auto bg-gray-50 pt-16 shadow-xl dark:bg-gray-900"
           @click.stop
         >
-          <SidebarNav />
+          <LeftSidebar />
         </aside>
       </div>
     </Transition>
 
-    <div class="flex min-h-screen flex-col">
-      <TopHeader />
-      <main class="mx-auto w-full max-w-2xl flex-1 px-3 pb-24 pt-4 lg:pb-8">
+    <!-- Full-width: side rails are pinned to the screen edges (no centered container). -->
+    <div class="flex w-full gap-4 px-2 pt-16 sm:px-4 xl:px-6">
+      <!-- Left rail (desktop) — fixed on the side -->
+      <aside class="sticky top-16 hidden h-[calc(100vh-4rem)] w-64 shrink-0 overflow-y-auto lg:block xl:w-72">
+        <LeftSidebar />
+      </aside>
+
+      <!-- Center -->
+      <main class="min-w-0 flex-1 pb-24 pt-1 lg:pb-8">
         <slot />
       </main>
+
+      <!-- Right rail (wide desktop) — fixed on the side -->
+      <aside
+        v-if="right"
+        class="sticky top-16 hidden h-[calc(100vh-4rem)] w-72 shrink-0 overflow-y-auto xl:block 2xl:w-80"
+      >
+        <slot name="right"><RightSidebar /></slot>
+      </aside>
     </div>
 
-    <MobileNavigation />
+    <MobileBottomNavigation />
   </div>
 </template>
 

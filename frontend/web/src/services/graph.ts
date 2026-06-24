@@ -53,10 +53,50 @@ export const graphService = {
       created_at: f.created_at,
     }));
   },
+  async outgoingRequests(): Promise<FriendRequest[]> {
+    // For outgoing, requested_by is me; the target is the other account in the pair.
+    const { data } = await api.get<{ data: Friendship[] }>("/friends/requests/", {
+      params: { direction: "outgoing" },
+    });
+    return data.data.map((f) => ({
+      id: f.id,
+      from_user_id: f.requested_by,
+      to_user_id: f.account_low_id === f.requested_by ? f.account_high_id : f.account_low_id,
+      created_at: f.created_at,
+    }));
+  },
   async friends(): Promise<string[]> {
     // Returns { friends: [<id>, ...] }.
     const { data } = await api.get<{ data: { friends: string[] } }>("/friends/");
     return data.data.friends;
+  },
+
+  // Who I follow / who follows me (for real follow-state + counts).
+  async followingIds(): Promise<string[]> {
+    const { data } = await api.get<{
+      data: { following: { target_id: string; target_type: string }[] };
+    }>("/follows/following/");
+    return data.data.following.filter((f) => f.target_type === "user").map((f) => f.target_id);
+  },
+  async followerIds(): Promise<string[]> {
+    const { data } = await api.get<{ data: { followers: string[] } }>("/follows/followers/");
+    return data.data.followers;
+  },
+
+  // Public relationship lists for any user_id.
+  async socialFriends(userId: string): Promise<string[]> {
+    const { data } = await api.get<{ data: { friends: string[] } }>(`/social/${userId}/friends/`);
+    return data.data.friends;
+  },
+  async socialFollowers(userId: string): Promise<string[]> {
+    const { data } = await api.get<{ data: { followers: string[] } }>(
+      `/social/${userId}/followers/`,
+    );
+    return data.data.followers;
+  },
+  async mutualFriends(userId: string): Promise<string[]> {
+    const { data } = await api.get<{ data: { mutual: string[] } }>(`/social/${userId}/mutual/`);
+    return data.data.mutual;
   },
 
   async block(userId: string): Promise<void> {
@@ -64,5 +104,9 @@ export const graphService = {
   },
   async unblock(userId: string): Promise<void> {
     await api.delete(`/blocks/${userId}/`);
+  },
+  async blockedIds(): Promise<string[]> {
+    const { data } = await api.get<{ data: { blocked: string[] } }>("/blocks/");
+    return data.data.blocked;
   },
 };

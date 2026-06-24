@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { UserCheck, UserPlus } from "lucide-vue-next";
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { graphService } from "@/services/graph";
@@ -9,6 +9,11 @@ const props = defineProps<{ userId: string; following: boolean }>();
 
 const { t } = useI18n();
 const isFollowing = ref(props.following);
+// Follow state may resolve asynchronously on the profile; keep in sync.
+watch(
+  () => props.following,
+  (v) => (isFollowing.value = v),
+);
 const busy = ref(false);
 
 async function toggle() {

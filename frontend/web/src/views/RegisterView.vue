@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter } from "vue-router";
 
 import LocaleToggle from "@/components/common/LocaleToggle.vue";
 import ThemeToggle from "@/components/common/ThemeToggle.vue";
@@ -10,11 +9,11 @@ import { useAuthStore } from "@/stores/auth";
 
 const { t } = useI18n();
 const auth = useAuthStore();
-const router = useRouter();
 
 const form = ref({ display_name: "", handle: "", email: "", password: "" });
 const loading = ref(false);
 const error = ref("");
+const done = ref(false);
 
 async function submit() {
   if (loading.value) return;
@@ -22,7 +21,9 @@ async function submit() {
   error.value = "";
   try {
     await auth.register(form.value);
-    router.push("/home");
+    // Account is created in "pending" state — verification is required before
+    // sign-in, so show a notice instead of auto-logging in.
+    done.value = true;
   } catch (e) {
     error.value = apiError(e).message;
   } finally {
@@ -44,7 +45,14 @@ async function submit() {
       </RouterLink>
       <h1 class="mb-6 text-center text-sm text-gray-500">{{ t("auth.joinTara") }}</h1>
 
-      <form class="space-y-4" @submit.prevent="submit">
+      <div v-if="done" class="space-y-4 text-center">
+        <p class="rounded-lg bg-green-50 px-3 py-3 text-sm text-green-700 dark:bg-green-950 dark:text-green-300">
+          {{ t("auth.verifyEmail") }}
+        </p>
+        <RouterLink to="/login" class="btn-primary w-full">{{ t("auth.loginCta") }}</RouterLink>
+      </div>
+
+      <form v-else class="space-y-4" @submit.prevent="submit">
         <div>
           <label class="mb-1 block text-sm font-medium">{{ t("auth.displayName") }}</label>
           <input v-model="form.display_name" class="input" required />

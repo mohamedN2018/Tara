@@ -16,17 +16,49 @@ export interface Tokens {
   refresh_token: string;
 }
 
+export interface ProfileLink {
+  id: number;
+  label: string;
+  url: string;
+  position: number;
+}
+
+export interface ProfileEducation {
+  id: number;
+  school: string;
+  degree: string;
+  field: string;
+  start_year: number | null;
+  end_year: number | null;
+}
+
+export interface ProfileWork {
+  id: number;
+  company: string;
+  title: string;
+  start_date: string | null;
+  end_date: string | null;
+  is_current: boolean;
+}
+
 export interface Profile {
   id?: string;
+  account_id?: string;
   user_id?: string;
   handle: string;
   display_name: string;
   avatar_media_id: string | null;
   cover_media_id: string | null;
   bio?: string;
+  intro?: string;
   city?: string;
   country?: string;
   visibility: string;
+  completion_pct?: number;
+  links?: ProfileLink[];
+  education?: ProfileEducation[];
+  work?: ProfileWork[];
+  created_at?: string;
   is_self?: boolean;
   are_friends?: boolean;
   restricted?: boolean;
@@ -77,8 +109,23 @@ export interface Message {
   sender_id: string;
   type: string;
   body: string;
+  reply_to_id?: string | null;
   attachments: { media_id: string; kind: string; duration_ms: number | null }[];
   created_at: string;
+  edited_at?: string | null;
+}
+
+export interface ListingCategory {
+  id: string;
+  slug: string;
+  name: string;
+  parent_id: string | null;
+  position: number;
+}
+
+export interface ListingMedia {
+  media_id: string;
+  position: number;
 }
 
 export interface Listing {
@@ -93,6 +140,9 @@ export interface Listing {
   status: string;
   save_count: number;
   created_at: string;
+  updated_at?: string;
+  category?: ListingCategory;
+  media?: ListingMedia[];
 }
 
 export interface Notification {

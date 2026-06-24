@@ -18,6 +18,9 @@ const store = useNotificationStore();
 const items = ref<Notification[]>([]);
 const loading = ref(true);
 const error = ref(false);
+const cursor = ref<string | null>(null);
+const hasMore = ref(false);
+const loadingMore = ref(false);
 
 async function load() {
   loading.value = true;
@@ -25,10 +28,27 @@ async function load() {
   try {
     const page = await notificationService.list();
     items.value = page.data;
+    cursor.value = page.page.next_cursor;
+    hasMore.value = page.page.has_more;
   } catch {
     error.value = true;
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadMore() {
+  if (!cursor.value || loadingMore.value) return;
+  loadingMore.value = true;
+  try {
+    const page = await notificationService.list(cursor.value);
+    items.value.push(...page.data);
+    cursor.value = page.page.next_cursor;
+    hasMore.value = page.page.has_more;
+  } catch {
+    /* keep what we have */
+  } finally {
+    loadingMore.value = false;
   }
 }
 
@@ -65,13 +85,20 @@ onMounted(load);
     <LoadingSkeleton v-if="loading" :rows="4" />
     <ErrorState v-else-if="error" @retry="load" />
     <EmptyState v-else-if="items.length === 0">{{ t("notifications.empty") }}</EmptyState>
-    <div v-else class="card divide-y divide-gray-100 overflow-hidden dark:divide-gray-800">
-      <NotificationItem
-        v-for="n in items"
-        :key="n.id"
-        :notification="n"
-        @read="markRead"
-      />
+    <div v-else>
+      <div class="card divide-y divide-gray-100 overflow-hidden dark:divide-gray-800">
+        <NotificationItem
+          v-for="n in items"
+          :key="n.id"
+          :notification="n"
+          @read="markRead"
+        />
+      </div>
+      <div v-if="hasMore" class="mt-4 flex justify-center">
+        <button class="btn-ghost" :disabled="loadingMore" @click="loadMore">
+          {{ loadingMore ? t("states.loading") : t("feed.loadMore") }}
+        </button>
+      </div>
     </div>
   </AppShell>
 </template>

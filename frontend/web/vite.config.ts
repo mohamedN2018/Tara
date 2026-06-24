@@ -8,8 +8,44 @@ export default defineConfig({
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
+  build: {
+    // Split vendors so the framework + icons cache independently of app code
+    // and load in parallel (smaller, long-cacheable chunks).
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return;
+          if (id.includes("lucide")) return "icons";
+          if (id.includes("/vue") || id.includes("pinia") || id.includes("@intlify") || id.includes("vue-i18n")) {
+            return "vue";
+          }
+          return "vendor";
+        },
+      },
+    },
+  },
   server: {
     host: true,
     port: 5173,
+    // Dev proxy: the browser stays same-origin (no CORS); Vite forwards the API
+    // and WebSocket to the local gateway (nginx on :8080).
+    proxy: {
+      "/api": { target: "http://localhost:8080", changeOrigin: true },
+      "/ws": { target: "http://localhost:8080", ws: true, changeOrigin: true },
+      // Object storage (MinIO) is published on :9000 but its presigned URLs are
+      // signed for the internal host `minio:9000`, which the browser can't
+      // resolve. Forward /__s3/* to localhost:9000 while keeping the signed
+      // Host header so the S3v4 signature still validates. Dev-only.
+      "/__s3": {
+        target: "http://localhost:9000",
+        changeOrigin: false,
+        rewrite: (p) => p.replace(/^\/__s3/, ""),
+        configure: (proxy) => {
+          proxy.on("proxyReq", (proxyReq) => {
+            proxyReq.setHeader("host", "minio:9000");
+          });
+        },
+      },
+    },
   },
 });

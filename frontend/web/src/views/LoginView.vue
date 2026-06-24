@@ -70,6 +70,12 @@ async function submit() {
         </button>
       </form>
 
+      <p class="mt-3 text-center text-sm">
+        <RouterLink to="/forgot-password" class="font-medium text-brand-600">
+          {{ t("auth.forgotPassword") }}
+        </RouterLink>
+      </p>
+
       <p class="mt-4 text-center text-sm text-gray-500">
         {{ t("auth.noAccount") }}
         <RouterLink to="/register" class="font-medium text-brand-600">

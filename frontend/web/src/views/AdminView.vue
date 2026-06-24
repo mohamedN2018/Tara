@@ -43,7 +43,7 @@ onMounted(load);
       <!-- Service health overview -->
       <section class="card mb-6 p-4">
         <h2 class="mb-3 flex items-center gap-2 font-semibold">
-          <Activity class="h-5 w-5 text-brand-600" /> Service health
+          <Activity class="h-5 w-5 text-brand-600" /> {{ t("admin.serviceHealth") }}
           <span
             v-if="health"
             class="ms-auto rounded-full px-2 py-0.5 text-xs font-medium"
@@ -70,24 +70,24 @@ onMounted(load);
             />
           </div>
         </div>
-        <EmptyState v-else>Service health unavailable.</EmptyState>
+        <EmptyState v-else>{{ t("admin.healthUnavailable") }}</EmptyState>
       </section>
 
       <!-- Moderation queue (cases) -->
       <h2 class="mb-2 flex items-center gap-2 font-semibold">
-        <ShieldAlert class="h-5 w-5 text-brand-600" /> Moderation queue
+        <ShieldAlert class="h-5 w-5 text-brand-600" /> {{ t("admin.moderationQueue") }}
       </h2>
-      <EmptyState v-if="cases.length === 0">{{ t("notifications.empty") }}</EmptyState>
+      <EmptyState v-if="cases.length === 0">{{ t("admin.queueEmpty") }}</EmptyState>
       <ul v-else class="space-y-2">
         <li v-for="c in cases" :key="c.id" class="card flex items-center gap-3 p-3">
           <span class="min-w-0 flex-1">
             <span class="block text-sm font-medium">
-              {{ c.target_type }} · {{ c.report_count }} report(s) · {{ c.state }}
+              {{ c.target_type }} · {{ c.report_count }} {{ t("admin.reports") }} · {{ c.state }}
             </span>
             <span class="block truncate text-xs text-gray-500">{{ c.target_id }}</span>
           </span>
-          <button class="btn-ghost text-sm" @click="act(c.id, 'dismiss')">Dismiss</button>
-          <button class="btn-primary text-sm" @click="act(c.id, 'remove')">Remove</button>
+          <button class="btn-ghost text-sm" @click="act(c.id, 'dismiss')">{{ t("admin.dismiss") }}</button>
+          <button class="btn-primary text-sm" @click="act(c.id, 'remove')">{{ t("admin.remove") }}</button>
         </li>
       </ul>
     </template>
