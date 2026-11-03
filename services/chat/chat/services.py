@@ -23,6 +23,8 @@ from .models import (
     PinnedMessage,
 )
 
+MAX_GROUP_MEMBERS = 256
+
 
 def _dm_key(a: str, b: str) -> str:
     x, y = sorted([str(uuid.UUID(str(a))), str(uuid.UUID(str(b)))])
@@ -112,7 +114,14 @@ def create_marketplace_conversation(buyer_id: str, seller_id: str, listing_id: s
 
 
 def create_group(actor_id: str, member_account_ids: list[str], title: str = "") -> Conversation:
-    if any(is_blocked(actor_id, mid) for mid in member_account_ids):
+    others = {str(m) for m in member_account_ids} - {str(actor_id)}
+    if not others:
+        raise TaraAPIError(
+            "A group needs at least one other member.",
+            code="validation_error",
+            http_status_code=400,
+        )
+    if any(is_blocked(actor_id, mid) for mid in others):
         raise TaraAPIError("Action not allowed.", code="permission_denied", http_status_code=403)
     with transaction.atomic():
         conversation = Conversation.objects.create(
@@ -130,22 +139,134 @@ def create_group(actor_id: str, member_account_ids: list[str], title: str = "") 
         events.emit(
             "conversation.member.changed",
             subject_id=str(conversation.id),
-            payload={"action": "created", "members": list(members)},
+            payload={
+                "conversation_id": str(conversation.id),
+                "action": "created",
+                "recipients": list(members),
+            },
             actor_id=str(actor_id),
             partition_key=f"conversation:{conversation.id}",
         )
     return conversation
 
 
-def with_members(queryset):
-    """Load active members up front; the serializer reads ``active_members``."""
+def _require_group_admin(actor_id: str, conversation_id: str) -> ConversationMember:
+    member = _require_group_member(actor_id, conversation_id)
+    if member.role != ConversationMember.Role.ADMIN:
+        raise TaraAPIError(
+            "Only group admins can do this.", code="permission_denied", http_status_code=403
+        )
+    return member
+
+
+def _require_group_member(actor_id: str, conversation_id: str) -> ConversationMember:
+    member = require_member(actor_id, conversation_id)
+    if member.conversation.type != Conversation.Type.GROUP:
+        raise TaraAPIError(
+            "Only group conversations have this.", code="validation_error", http_status_code=400
+        )
+    return member
+
+
+def _emit_changed(conversation: Conversation, actor_id: str, action: str, extra=()) -> None:
+    """Tell members (and anyone just removed) to refresh this conversation."""
+    events.emit(
+        "conversation.member.changed",
+        subject_id=str(conversation.id),
+        payload={
+            "conversation_id": str(conversation.id),
+            "action": action,
+            "recipients": sorted({*member_ids(conversation), *(str(e) for e in extra)}),
+        },
+        actor_id=str(actor_id),
+        partition_key=f"conversation:{conversation.id}",
+    )
+
+
+def rename_group(actor_id: str, conversation_id: str, title: str) -> None:
+    member = _require_group_admin(actor_id, conversation_id)
+    with transaction.atomic():
+        Conversation.objects.filter(id=conversation_id).update(title=title)
+        _emit_changed(member.conversation, actor_id, "renamed")
+
+
+def add_members(actor_id: str, conversation_id: str, account_ids: list[str]) -> None:
+    member = _require_group_admin(actor_id, conversation_id)
+    conversation = member.conversation
+    new_ids = {str(a) for a in account_ids} - set(member_ids(conversation))
+    if any(is_blocked(actor_id, account) for account in new_ids):
+        raise TaraAPIError("Action not allowed.", code="permission_denied", http_status_code=403)
+    if len(member_ids(conversation)) + len(new_ids) > MAX_GROUP_MEMBERS:
+        raise TaraAPIError("This group is full.", code="validation_error", http_status_code=400)
+    with transaction.atomic():
+        for account in new_ids:
+            # Someone who left comes back as an ordinary member, on the same row.
+            ConversationMember.objects.update_or_create(
+                conversation=conversation,
+                account_id=account,
+                defaults={"left_at": None, "role": ConversationMember.Role.MEMBER},
+            )
+        _emit_changed(conversation, actor_id, "added")
+
+
+def remove_member(actor_id: str, conversation_id: str, account_id: str) -> None:
+    """Admins remove anyone; everyone can leave. The group always keeps an admin."""
+    if str(actor_id) == str(account_id):
+        member = _require_group_member(actor_id, conversation_id)
+    else:
+        _require_group_admin(actor_id, conversation_id)
+        member = require_member(account_id, conversation_id)
+    conversation = member.conversation
+    with transaction.atomic():
+        member.left_at = timezone.now()
+        member.role = ConversationMember.Role.MEMBER
+        member.save(update_fields=["left_at", "role"])
+        active = conversation.members.filter(left_at__isnull=True)
+        if not active.filter(role=ConversationMember.Role.ADMIN).exists():
+            successor = active.order_by("joined_at").first()
+            if successor:
+                successor.role = ConversationMember.Role.ADMIN
+                successor.save(update_fields=["role"])
+        _emit_changed(conversation, actor_id, "removed", extra=[account_id])
+
+
+def set_member_role(actor_id: str, conversation_id: str, account_id: str, role: str) -> None:
+    member = _require_group_admin(actor_id, conversation_id)
+    target = require_member(account_id, conversation_id)
+    conversation = member.conversation
+    with transaction.atomic():
+        target.role = role
+        target.save(update_fields=["role"])
+        if not conversation.members.filter(
+            left_at__isnull=True, role=ConversationMember.Role.ADMIN
+        ).exists():
+            raise TaraAPIError(
+                "A group needs an admin.", code="validation_error", http_status_code=400
+            )
+        _emit_changed(conversation, actor_id, "role_changed")
+
+
+def with_state(queryset):
+    """Load members and pins up front; the serializer reads these attributes."""
     return queryset.prefetch_related(
         Prefetch(
             "members",
             queryset=ConversationMember.objects.filter(left_at__isnull=True).order_by("joined_at"),
             to_attr="active_members",
-        )
+        ),
+        Prefetch(
+            "pins",
+            queryset=PinnedMessage.objects.filter(message__deleted_at__isnull=True)
+            .select_related("message")
+            .order_by("-created_at"),
+            to_attr="active_pins",
+        ),
     )
+
+
+def get_conversation(account_id: str, conversation_id: str) -> Conversation:
+    require_member(account_id, conversation_id)
+    return with_state(Conversation.objects.filter(id=conversation_id)).get()
 
 
 def list_conversations(account_id: str):
@@ -154,7 +275,7 @@ def list_conversations(account_id: str):
     conv_ids = ConversationMember.objects.filter(
         account_id=account_id, left_at__isnull=True
     ).values("conversation_id")
-    return with_members(
+    return with_state(
         Conversation.objects.filter(id__in=conv_ids)
         .annotate(activity_at=Coalesce("last_message_at", "created_at"))
         .order_by("-activity_at", "-id")
@@ -162,6 +283,15 @@ def list_conversations(account_id: str):
 
 
 # ---- messages ---------------------------------------------------------------
+
+
+def _forbid_if_blocked(conversation: Conversation, actor_id: str) -> None:
+    if conversation.type in (Conversation.Type.DM, Conversation.Type.MARKETPLACE):
+        others = [m for m in member_ids(conversation) if m != str(actor_id)]
+        if others and is_blocked(actor_id, others[0]):
+            raise TaraAPIError(
+                "Action not allowed.", code="permission_denied", http_status_code=403
+            )
 
 
 def send_message(
@@ -188,12 +318,7 @@ def send_message(
             http_status_code=400,
         )
 
-    if conversation.type in (Conversation.Type.DM, Conversation.Type.MARKETPLACE):
-        others = [m for m in member_ids(conversation) if m != str(actor_id)]
-        if others and is_blocked(actor_id, others[0]):
-            raise TaraAPIError(
-                "Action not allowed.", code="permission_denied", http_status_code=403
-            )
+    _forbid_if_blocked(conversation, actor_id)
 
     if not body and not attachments:
         raise TaraAPIError("Message is empty.", code="validation_error", http_status_code=400)
@@ -224,12 +349,23 @@ def send_message(
                 "sender": str(actor_id),
                 "type": message_type,
                 "recipients": member_ids(conversation),
+                "muted": _muted_ids(conversation),
                 "preview": body[:140],
             },
             actor_id=str(actor_id),
             partition_key=f"conversation:{conversation.id}",
         )
     return message
+
+
+def _muted_ids(conversation: Conversation) -> list[str]:
+    """Members who should get the message but no alert."""
+    return [
+        str(m)
+        for m in conversation.members.filter(
+            left_at__isnull=True, muted_until__gt=timezone.now()
+        ).values_list("account_id", flat=True)
+    ]
 
 
 def remove_message(message_id: str) -> None:
@@ -241,7 +377,7 @@ def list_messages(actor_id: str, conversation_id: str):
     require_member(actor_id, conversation_id)
     return (
         Message.objects.filter(conversation_id=conversation_id, deleted_at__isnull=True)
-        .prefetch_related("attachments")
+        .prefetch_related("attachments", "reactions")
         .order_by("-created_at")
     )
 
@@ -249,13 +385,38 @@ def list_messages(actor_id: str, conversation_id: str):
 def react_message(actor_id: str, message_id: str, reaction_type: str) -> MessageReaction:
     if reaction_type not in MESSAGE_REACTION_TYPES:
         raise TaraAPIError("Invalid reaction.", code="validation_error", http_status_code=400)
-    message = Message.objects.select_related("conversation").filter(id=message_id).first()
+    message = _reactable_message(actor_id, message_id)
+    with transaction.atomic():
+        reaction, _ = MessageReaction.objects.update_or_create(
+            message=message, account_id=actor_id, defaults={"type": reaction_type}
+        )
+        _emit_reacted(message, actor_id, reaction_type)
+    return reaction
+
+
+def unreact_message(actor_id: str, message_id: str) -> None:
+    message = _reactable_message(actor_id, message_id)
+    with transaction.atomic():
+        deleted, _ = MessageReaction.objects.filter(message=message, account_id=actor_id).delete()
+        if deleted:
+            _emit_reacted(message, actor_id, None)
+
+
+def _reactable_message(actor_id: str, message_id: str) -> Message:
+    message = (
+        Message.objects.select_related("conversation")
+        .filter(id=message_id, deleted_at__isnull=True)
+        .first()
+    )
     if message is None:
         raise TaraAPIError("Message not found.", code="not_found", http_status_code=404)
     require_member(actor_id, str(message.conversation_id))
-    reaction, _ = MessageReaction.objects.update_or_create(
-        message=message, account_id=actor_id, defaults={"type": reaction_type}
-    )
+    _forbid_if_blocked(message.conversation, actor_id)
+    return message
+
+
+def _emit_reacted(message: Message, actor_id: str, reaction_type: str | None) -> None:
+    """``type`` is null when the reaction was removed."""
     events.emit(
         "message.reacted",
         subject_id=str(message.id),
@@ -269,7 +430,6 @@ def react_message(actor_id: str, message_id: str, reaction_type: str) -> Message
         actor_id=str(actor_id),
         partition_key=f"conversation:{message.conversation_id}",
     )
-    return reaction
 
 
 def mark_read(actor_id: str, conversation_id: str, up_to_message_id: str) -> None:
@@ -298,7 +458,7 @@ def set_mute(actor_id: str, conversation_id: str, until) -> None:
     member.save(update_fields=["muted_until"])
 
 
-def pin_message(actor_id: str, conversation_id: str, message_id: str) -> PinnedMessage:
+def _require_pin_rights(actor_id: str, conversation_id: str) -> ConversationMember:
     member = require_member(actor_id, conversation_id)
     if (
         member.conversation.type == Conversation.Type.GROUP
@@ -307,11 +467,30 @@ def pin_message(actor_id: str, conversation_id: str, message_id: str) -> PinnedM
         raise TaraAPIError(
             "Only admins can pin in groups.", code="permission_denied", http_status_code=403
         )
-    if not Message.objects.filter(id=message_id, conversation_id=conversation_id).exists():
+    return member
+
+
+def pin_message(actor_id: str, conversation_id: str, message_id: str) -> PinnedMessage:
+    member = _require_pin_rights(actor_id, conversation_id)
+    if not Message.objects.filter(
+        id=message_id, conversation_id=conversation_id, deleted_at__isnull=True
+    ).exists():
         raise TaraAPIError("Message not found.", code="not_found", http_status_code=404)
-    pin, created = PinnedMessage.objects.get_or_create(
-        conversation_id=conversation_id, message_id=message_id, defaults={"pinned_by": actor_id}
-    )
-    if not created:
-        raise Conflict("Already pinned.", code="conflict")
+    with transaction.atomic():
+        pin, created = PinnedMessage.objects.get_or_create(
+            conversation_id=conversation_id, message_id=message_id, defaults={"pinned_by": actor_id}
+        )
+        if not created:
+            raise Conflict("Already pinned.", code="conflict")
+        _emit_changed(member.conversation, actor_id, "pinned")
     return pin
+
+
+def unpin_message(actor_id: str, conversation_id: str, message_id: str) -> None:
+    member = _require_pin_rights(actor_id, conversation_id)
+    with transaction.atomic():
+        deleted, _ = PinnedMessage.objects.filter(
+            conversation_id=conversation_id, message_id=message_id
+        ).delete()
+        if deleted:
+            _emit_changed(member.conversation, actor_id, "unpinned")

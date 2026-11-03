@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { BellOff } from "lucide-vue-next";
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
@@ -15,7 +16,7 @@ const presence = usePresenceStore();
 const directory = useDirectoryStore();
 
 function isDm(c: Conversation): boolean {
-  return c.type === "dm" || c.members.length === 2;
+  return c.type !== "group" && c.members.length <= 2;
 }
 function peerId(c: Conversation): string {
   return c.members.find((m) => m !== props.selfId) ?? c.members[0] ?? c.id;
@@ -50,6 +51,7 @@ function title(c: Conversation): string {
             {{ isDm(c) ? (presence.isOnline(peerId(c)) ? t("presence.online") : t("messages.title")) : t("messages.membersCount", c.members.length) }}
           </span>
         </span>
+        <BellOff v-if="c.muted_until" class="h-3.5 w-3.5 shrink-0 text-gray-400" :aria-label="t('messages.muted')" />
         <time v-if="c.last_message_at" class="shrink-0 text-[10px] text-gray-400">
           {{ relativeTime(c.last_message_at) }}
         </time>

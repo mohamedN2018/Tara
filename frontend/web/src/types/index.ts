@@ -107,6 +107,20 @@ export interface Conversation {
   last_message_at: string | null;
   members: string[];
   member_states: ConversationMemberState[];
+  muted_until: string | null;
+  pinned_messages: PinnedMessage[];
+}
+
+export interface PinnedMessage {
+  id: string;
+  sender_id: string;
+  type: string;
+  body: string;
+}
+
+export interface MessageReaction {
+  account_id: string;
+  type: string;
 }
 
 export interface ConversationMemberState {
@@ -123,6 +137,7 @@ export interface Message {
   body: string;
   reply_to_id?: string | null;
   attachments: { media_id: string; kind: string; duration_ms: number | null }[];
+  reactions: MessageReaction[];
   created_at: string;
   edited_at?: string | null;
 }

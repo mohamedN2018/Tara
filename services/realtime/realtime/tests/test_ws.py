@@ -98,3 +98,20 @@ def test_feed_summary_event_pushes_to_every_recipient(monkeypatch):
     )
     assert [who for who, _ in pushed] == ["a", "b"]
     assert pushed[0][1] == {"event": "feed.item.added", "post_id": "p1", "author_id": "z"}
+
+
+def test_message_frame_tells_each_recipient_if_they_muted(monkeypatch):
+    from realtime import bridge
+    from tara_events.envelope import EventEnvelope
+
+    pushed = {}
+    monkeypatch.setattr(bridge, "_push_to_user", lambda who, data: pushed.update({who: data}))
+    bridge.on_message_created(
+        EventEnvelope(
+            event_type="message.created",
+            subject_id="m1",
+            producer="chat-service",
+            payload={"recipients": ["a", "b"], "muted": ["b"], "conversation_id": "c"},
+        )
+    )
+    assert (pushed["a"]["muted"], pushed["b"]["muted"]) == (False, True)

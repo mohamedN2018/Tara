@@ -20,6 +20,9 @@ from .serializers import (
     ConversationSerializer,
     DMCreateSerializer,
     GroupCreateSerializer,
+    GroupUpdateSerializer,
+    MemberRoleSerializer,
+    MembersAddSerializer,
     MessageCreateSerializer,
     MessageSerializer,
     MuteSerializer,
@@ -34,10 +37,17 @@ def _me(request: Request) -> str:
     return request.user.account_id
 
 
-def _paginate(request, queryset, serializer_cls):
+def _paginate(request, queryset, serializer_cls, context=None):
     paginator = CursorPagination()
     page = paginator.paginate_queryset(queryset, request)
-    return paginator.get_paginated_response(serializer_cls(page, many=True).data)
+    return paginator.get_paginated_response(
+        serializer_cls(page, many=True, context=context or {}).data
+    )
+
+
+def _conversation_data(request: Request, conversation_id) -> dict:
+    conversation = services.get_conversation(_me(request), conversation_id)
+    return ConversationSerializer(conversation, context={"viewer_id": _me(request)}).data
 
 
 class ConversationsView(APIView):
@@ -45,7 +55,12 @@ class ConversationsView(APIView):
 
     @extend_schema(responses={200: ConversationSerializer(many=True)}, tags=["chat"])
     def get(self, request: Request) -> Response:
-        return _paginate(request, services.list_conversations(_me(request)), ConversationSerializer)
+        return _paginate(
+            request,
+            services.list_conversations(_me(request)),
+            ConversationSerializer,
+            {"viewer_id": _me(request)},
+        )
 
     @extend_schema(responses={201: ConversationSerializer}, tags=["chat"])
     def post(self, request: Request) -> Response:
@@ -65,8 +80,64 @@ class ConversationsView(APIView):
                 _me(request), str(serializer.validated_data["other_id"])
             )
         return data_response(
-            ConversationSerializer(conversation).data, status=status.HTTP_201_CREATED
+            _conversation_data(request, conversation.id), status=status.HTTP_201_CREATED
         )
+
+
+class ConversationDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: ConversationSerializer}, tags=["chat"])
+    def get(self, request: Request, conversation_id: str) -> Response:
+        return data_response(_conversation_data(request, conversation_id))
+
+    @extend_schema(
+        request=GroupUpdateSerializer, responses={200: ConversationSerializer}, tags=["chat"]
+    )
+    def patch(self, request: Request, conversation_id: str) -> Response:
+        serializer = GroupUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        services.rename_group(_me(request), conversation_id, serializer.validated_data["title"])
+        return data_response(_conversation_data(request, conversation_id))
+
+
+class ConversationMembersView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        request=MembersAddSerializer, responses={201: ConversationSerializer}, tags=["chat"]
+    )
+    def post(self, request: Request, conversation_id: str) -> Response:
+        serializer = MembersAddSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        services.add_members(
+            _me(request),
+            conversation_id,
+            [str(a) for a in serializer.validated_data["account_ids"]],
+        )
+        return data_response(
+            _conversation_data(request, conversation_id), status=status.HTTP_201_CREATED
+        )
+
+
+class ConversationMemberView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        request=MemberRoleSerializer, responses={200: ConversationSerializer}, tags=["chat"]
+    )
+    def patch(self, request: Request, conversation_id: str, account_id: str) -> Response:
+        serializer = MemberRoleSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        services.set_member_role(
+            _me(request), conversation_id, account_id, serializer.validated_data["role"]
+        )
+        return data_response(_conversation_data(request, conversation_id))
+
+    @extend_schema(responses={204: None}, tags=["chat"])
+    def delete(self, request: Request, conversation_id: str, account_id: str) -> Response:
+        services.remove_member(_me(request), conversation_id, account_id)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class ConversationMessagesView(APIView):
@@ -137,6 +208,11 @@ class MessageReactionView(APIView):
         services.react_message(_me(request), message_id, serializer.validated_data["type"])
         return data_response({"detail": "reacted"})
 
+    @extend_schema(responses={204: None}, tags=["chat"])
+    def delete(self, request: Request, message_id: str) -> Response:
+        services.unreact_message(_me(request), message_id)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 class ConversationReadView(APIView):
     permission_classes = [IsAuthenticated]
@@ -177,3 +253,12 @@ class ConversationPinView(APIView):
             _me(request), conversation_id, str(serializer.validated_data["message_id"])
         )
         return data_response({"detail": "pinned"}, status=status.HTTP_201_CREATED)
+
+    @extend_schema(request=PinSerializer, responses={204: None}, tags=["chat"])
+    def delete(self, request: Request, conversation_id: str) -> Response:
+        serializer = PinSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        services.unpin_message(
+            _me(request), conversation_id, str(serializer.validated_data["message_id"])
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)

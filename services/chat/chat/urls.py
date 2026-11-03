@@ -7,6 +7,21 @@ app_name = "chat"
 urlpatterns = [
     path("conversations/", views.ConversationsView.as_view(), name="conversations"),
     path(
+        "conversations/<uuid:conversation_id>/",
+        views.ConversationDetailView.as_view(),
+        name="conversation",
+    ),
+    path(
+        "conversations/<uuid:conversation_id>/members/",
+        views.ConversationMembersView.as_view(),
+        name="members",
+    ),
+    path(
+        "conversations/<uuid:conversation_id>/members/<uuid:account_id>/",
+        views.ConversationMemberView.as_view(),
+        name="member",
+    ),
+    path(
         "conversations/<uuid:conversation_id>/messages/",
         views.ConversationMessagesView.as_view(),
         name="messages",

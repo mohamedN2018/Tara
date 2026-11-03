@@ -1,12 +1,34 @@
 from __future__ import annotations
 
+from django.utils import timezone
 from rest_framework import serializers
 
-from .models import MESSAGE_REACTION_TYPES, Conversation, Message, MessageAttachment
+from .models import (
+    MESSAGE_REACTION_TYPES,
+    Conversation,
+    ConversationMember,
+    Message,
+    MessageAttachment,
+    MessageReaction,
+)
 
 
 class DMCreateSerializer(serializers.Serializer):
     other_id = serializers.UUIDField()
+
+
+class GroupUpdateSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=160)
+
+
+class MembersAddSerializer(serializers.Serializer):
+    account_ids = serializers.ListField(
+        child=serializers.UUIDField(), max_length=256, allow_empty=False
+    )
+
+
+class MemberRoleSerializer(serializers.Serializer):
+    role = serializers.ChoiceField(choices=ConversationMember.Role.values)
 
 
 class GroupCreateSerializer(serializers.Serializer):
@@ -17,10 +39,15 @@ class GroupCreateSerializer(serializers.Serializer):
 
 
 class ConversationSerializer(serializers.ModelSerializer):
-    """Querysets from ``services.with_members`` avoid a members query per row."""
+    """Pass ``context={"viewer_id": ...}`` for ``muted_until``.
+
+    Querysets from ``services.with_state`` avoid per-row member and pin queries.
+    """
 
     members = serializers.SerializerMethodField()
     member_states = serializers.SerializerMethodField()
+    muted_until = serializers.SerializerMethodField()
+    pinned_messages = serializers.SerializerMethodField()
 
     class Meta:
         model = Conversation
@@ -33,6 +60,8 @@ class ConversationSerializer(serializers.ModelSerializer):
             "created_at",
             "members",
             "member_states",
+            "muted_until",
+            "pinned_messages",
         ]
 
     def _active(self, obj: Conversation) -> list:
@@ -56,6 +85,27 @@ class ConversationSerializer(serializers.ModelSerializer):
             for m in self._active(obj)
         ]
 
+    def get_muted_until(self, obj: Conversation) -> str | None:
+        viewer = str(self.context.get("viewer_id"))
+        mine = next((m for m in self._active(obj) if str(m.account_id) == viewer), None)
+        if mine is None or mine.muted_until is None or mine.muted_until <= timezone.now():
+            return None
+        return mine.muted_until.isoformat()
+
+    def get_pinned_messages(self, obj: Conversation) -> list[dict]:
+        pins = getattr(obj, "active_pins", None)
+        if pins is None:
+            pins = obj.pins.filter(message__deleted_at__isnull=True).select_related("message")
+        return [
+            {
+                "id": str(p.message_id),
+                "sender_id": str(p.message.sender_id),
+                "type": p.message.type,
+                "body": p.message.body[:140],
+            }
+            for p in pins
+        ]
+
 
 class AttachmentSerializer(serializers.ModelSerializer):
     class Meta:
@@ -76,13 +126,23 @@ class MessageCreateSerializer(serializers.Serializer):
     attachments = AttachmentInputSerializer(many=True, required=False, default=list)
 
 
+MAX_VOICE_MS = 10 * 60 * 1000
+
+
 class VoiceMessageSerializer(serializers.Serializer):
     media_id = serializers.UUIDField()
-    duration_ms = serializers.IntegerField(min_value=1)
+    duration_ms = serializers.IntegerField(min_value=1, max_value=MAX_VOICE_MS)
+
+
+class MessageReactionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MessageReaction
+        fields = ["account_id", "type"]
 
 
 class MessageSerializer(serializers.ModelSerializer):
     attachments = AttachmentSerializer(many=True, read_only=True)
+    reactions = MessageReactionSerializer(many=True, read_only=True)
 
     class Meta:
         model = Message
@@ -94,6 +154,7 @@ class MessageSerializer(serializers.ModelSerializer):
             "body",
             "reply_to_id",
             "attachments",
+            "reactions",
             "created_at",
             "edited_at",
         ]
@@ -108,7 +169,7 @@ class ReadSerializer(serializers.Serializer):
 
 
 class MuteSerializer(serializers.Serializer):
-    minutes = serializers.IntegerField(min_value=0, default=480)  # 0 = unmute
+    minutes = serializers.IntegerField(min_value=0, max_value=525600, default=480)  # 0 = unmute
 
 
 class PinSerializer(serializers.Serializer):

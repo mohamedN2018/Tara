@@ -1,20 +1,24 @@
 <script setup lang="ts">
-import { ArrowLeft, ChevronDown } from "lucide-vue-next";
+import { ArrowLeft, Bell, BellOff, ChevronDown, Info, Pin, Users } from "lucide-vue-next";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import ConversationList from "@/components/chat/ConversationList.vue";
+import GroupPanel from "@/components/chat/GroupPanel.vue";
+import NewGroupModal from "@/components/chat/NewGroupModal.vue";
 import MessageBubble from "@/components/chat/MessageBubble.vue";
 import MessageComposer from "@/components/chat/MessageComposer.vue";
 import AppShell from "@/components/layout/AppShell.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
-import { isSeenByOthers, mergeMessages } from "@/lib/chat";
+import { applyReaction, isSeenByOthers, mergeMessages } from "@/lib/chat";
+import type { VoiceNote } from "@/lib/useVoiceRecorder";
 import { realtime } from "@/lib/ws";
 import { chatService } from "@/services/chat";
+import { mediaService } from "@/services/media";
 import { useAuthStore } from "@/stores/auth";
 import { useDirectoryStore } from "@/stores/directory";
 import { usePresenceStore } from "@/stores/presence";
@@ -72,9 +76,27 @@ const myId = computed(() => auth.account?.id ?? "");
 const activeConversation = computed(
   () => conversations.value.find((c) => c.id === activeId.value) ?? null,
 );
+const isGroup = computed(() => activeConversation.value?.type === "group");
+const isGroupAdmin = computed(
+  () =>
+    activeConversation.value?.member_states.find((s) => s.account_id === myId.value)?.role === "admin",
+);
+const canPin = computed(() => !isGroup.value || isGroupAdmin.value);
+const pinnedIds = computed(
+  () => new Set(activeConversation.value?.pinned_messages.map((p) => p.id) ?? []),
+);
+const showNewGroup = ref(false);
+const showGroupPanel = ref(false);
+const showAddMembers = ref(false);
+const showMuteMenu = ref(false);
+const MUTE_OPTIONS = [
+  { minutes: 60, label: "messages.muteHour" },
+  { minutes: 480, label: "messages.muteEightHours" },
+  { minutes: 10080, label: "messages.muteWeek" },
+];
 const activePeerId = computed(() => {
   const c = activeConversation.value;
-  if (!c) return "";
+  if (!c || c.type === "group") return "";
   return c.members.find((m) => m !== myId.value) ?? c.members[0] ?? "";
 });
 
@@ -347,6 +369,97 @@ async function send({ body, mediaId }: { body: string; mediaId: string | null })
   }
 }
 
+async function sendVoice(note: VoiceNote) {
+  const id = activeId.value;
+  if (!id) return;
+  try {
+    const asset = await mediaService.upload(note.file, "voice");
+    const message = await chatService.sendVoice(id, asset.id, Math.max(1, note.durationMs));
+    if (id === activeId.value) {
+      messages.value = mergeMessages(messages.value, [message]);
+      await scrollToBottom();
+    }
+  } catch (e) {
+    toasts.error(e, SEND_FAILED);
+  }
+}
+
+async function onReact(message: Message, type: string | null) {
+  const previous = message.reactions;
+  message.reactions = applyReaction(previous, myId.value, type);
+  try {
+    if (type) await chatService.react(message.id, type);
+    else await chatService.unreact(message.id);
+  } catch (e) {
+    message.reactions = previous;
+    toasts.error(e);
+  }
+}
+
+async function refreshConversation(id: string) {
+  try {
+    const fresh = await chatService.get(id);
+    const index = conversations.value.findIndex((c) => c.id === id);
+    if (index >= 0) conversations.value[index] = fresh;
+    else conversations.value.unshift(fresh);
+  } catch {
+    // Removed from it, or it is gone.
+    conversations.value = conversations.value.filter((c) => c.id !== id);
+    if (id === activeId.value) router.push("/messages");
+  }
+}
+
+async function onPin(message: Message, pin: boolean) {
+  const id = activeId.value;
+  try {
+    if (pin) await chatService.pin(id, message.id);
+    else await chatService.unpin(id, message.id);
+    await refreshConversation(id);
+  } catch (e) {
+    toasts.error(e);
+  }
+}
+
+async function setMute(minutes: number) {
+  const id = activeId.value;
+  showMuteMenu.value = false;
+  try {
+    await chatService.mute(id, minutes);
+    await refreshConversation(id);
+  } catch (e) {
+    toasts.error(e);
+  }
+}
+
+function jumpTo(messageId: string) {
+  scroller.value
+    ?.querySelector(`[data-message-id="${messageId}"]`)
+    ?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function pinPreview(pin: { body: string; type: string }): string {
+  if (pin.body) return pin.body;
+  return pin.type === "voice" ? t("messages.voiceNote") : t("messages.photo");
+}
+
+function onGroupCreated(conversation: Conversation) {
+  showNewGroup.value = false;
+  conversations.value = [conversation, ...conversations.value.filter((c) => c.id !== conversation.id)];
+  router.push(`/messages/${conversation.id}`);
+}
+
+function onMembersAdded(conversation: Conversation) {
+  showAddMembers.value = false;
+  void refreshConversation(conversation.id);
+}
+
+function onLeft() {
+  const id = activeId.value;
+  showGroupPanel.value = false;
+  conversations.value = conversations.value.filter((c) => c.id !== id);
+  router.push("/messages");
+}
+
 function bumpConversation(id: string) {
   const c = conversations.value.find((x) => x.id === id);
   if (!c) {
@@ -394,6 +507,19 @@ onMounted(() => {
       const state = conversation?.member_states.find((s) => s.account_id === frame.reader);
       if (state) state.last_read_message_id = (frame.up_to_message_id as string) ?? null;
     }),
+    realtime.on("chat.message.reacted", (frame) => {
+      const message = messagesById.value[frame.message_id as string];
+      if (message && frame.reactor !== myId.value) {
+        message.reactions = applyReaction(
+          message.reactions,
+          frame.reactor as string,
+          (frame.type as string | null) ?? null,
+        );
+      }
+    }),
+    realtime.on("chat.conversation.changed", (frame) => {
+      if (typeof frame.conversation_id === "string") void refreshConversation(frame.conversation_id);
+    }),
     realtime.on("_reconnected", () => {
       void loadConversations(true);
       void syncLatest();
@@ -428,9 +554,12 @@ watch(activeId, (id, prev) => {
         class="min-h-0 overflow-y-auto border-e border-gray-200 dark:border-gray-800"
         :class="activeId ? 'hidden md:block' : 'block'"
       >
-        <h2 class="border-b border-gray-200 px-4 py-3 font-bold dark:border-gray-800">
-          {{ t("messages.title") }}
-        </h2>
+        <div class="flex items-center justify-between border-b border-gray-200 px-4 py-2 dark:border-gray-800">
+          <h2 class="font-bold">{{ t("messages.title") }}</h2>
+          <button class="btn-ghost px-2" :aria-label="t('messages.newGroup')" :title="t('messages.newGroup')" @click="showNewGroup = true">
+            <Users class="h-5 w-5" />
+          </button>
+        </div>
         <LoadingSkeleton v-if="loadingList" :rows="4" />
         <ErrorState v-else-if="listError" @retry="loadConversations()" />
         <EmptyState v-else-if="conversations.length === 0">
@@ -453,7 +582,7 @@ watch(activeId, (id, prev) => {
               <ArrowLeft class="h-4 w-4 rtl:rotate-180" />
             </button>
             <RouterLink
-              v-if="activePeerId"
+              v-if="activePeerId && !isGroup"
               :to="{ name: 'profile-by-id', params: { id: activePeerId } }"
               class="relative shrink-0"
               :aria-label="t('nav.profile')"
@@ -468,10 +597,55 @@ watch(activeId, (id, prev) => {
               <span class="block truncate text-sm font-semibold" dir="auto" data-testid="conversation-title">{{ activeTitle }}</span>
               <span class="block text-xs text-brand-500">
                 <template v-if="peerTyping">{{ t("messages.typing") }}</template>
+                <template v-else-if="isGroup">{{ t("messages.membersCount", activeConversation?.members.length ?? 0) }}</template>
                 <template v-else-if="presence.isOnline(activePeerId)">{{ t("presence.online") }}</template>
               </span>
             </div>
+            <div class="ms-auto flex items-center gap-1">
+              <div class="relative">
+                <button
+                  class="btn-ghost px-2"
+                  :aria-label="activeConversation?.muted_until ? t('messages.unmute') : t('messages.mute')"
+                  :title="activeConversation?.muted_until ? t('messages.unmute') : t('messages.mute')"
+                  @click="activeConversation?.muted_until ? setMute(0) : (showMuteMenu = !showMuteMenu)"
+                >
+                  <BellOff v-if="activeConversation?.muted_until" class="h-5 w-5 text-brand-600" />
+                  <Bell v-else class="h-5 w-5" />
+                </button>
+                <template v-if="showMuteMenu">
+                  <div class="fixed inset-0 z-40" @click="showMuteMenu = false" />
+                  <div class="card absolute end-0 z-50 mt-1 w-40 p-1" role="menu">
+                    <button
+                      v-for="option in MUTE_OPTIONS"
+                      :key="option.minutes"
+                      class="block w-full rounded-lg px-3 py-2 text-start text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
+                      role="menuitem"
+                      @click="setMute(option.minutes)"
+                    >
+                      {{ t(option.label) }}
+                    </button>
+                  </div>
+                </template>
+              </div>
+              <button v-if="isGroup" class="btn-ghost px-2" :aria-label="t('messages.groupInfo')" :title="t('messages.groupInfo')" @click="showGroupPanel = true">
+                <Info class="h-5 w-5" />
+              </button>
+            </div>
           </header>
+
+          <!-- Pinned messages -->
+          <div v-if="activeConversation?.pinned_messages.length" class="border-b border-gray-200 px-3 py-1.5 dark:border-gray-800" data-testid="pinned-bar">
+            <button
+              v-for="pin in activeConversation.pinned_messages"
+              :key="pin.id"
+              class="flex w-full items-center gap-2 py-0.5 text-start text-xs text-gray-600 hover:underline dark:text-gray-300"
+              @click="jumpTo(pin.id)"
+            >
+              <Pin class="h-3.5 w-3.5 shrink-0 text-brand-500" />
+              <span class="shrink-0 font-semibold">{{ nameOf(pin.sender_id) }}</span>
+              <span class="min-w-0 truncate" dir="auto">{{ pinPreview(pin) }}</span>
+            </button>
+          </div>
 
           <div
             ref="scroller"
@@ -491,12 +665,19 @@ watch(activeId, (id, prev) => {
                 </div>
                 <template v-else>
                   <MessageBubble
+                    :data-message-id="row.message.id"
                     :message="row.message"
                     :mine="row.message.sender_id === myId"
+                    :self-id="myId"
+                    :show-sender="isGroup"
+                    :can-pin="canPin"
+                    :pinned="pinnedIds.has(row.message.id)"
                     :reply-to="row.replyTo"
                     :reply-to-name="row.replyTo ? nameOf(row.replyTo.sender_id) : ''"
                     :sender-name="nameOf(row.message.sender_id)"
                     @reply="onReply"
+                    @react="onReact"
+                    @pin="onPin"
                   />
                   <p
                     v-if="row.message.id === lastMineId && peerSeen"
@@ -523,6 +704,7 @@ watch(activeId, (id, prev) => {
             :replying-to="replyTarget"
             :replying-to-name="replyTarget ? nameOf(replyTarget.sender_id) : ''"
             @send="send"
+            @voice="sendVoice"
             @typing="onTyping"
             @cancel-reply="replyTarget = null"
           />
@@ -531,5 +713,22 @@ watch(activeId, (id, prev) => {
         <EmptyState v-else>{{ t("messages.empty") }}</EmptyState>
       </div>
     </div>
+
+    <NewGroupModal v-if="showNewGroup" @close="showNewGroup = false" @done="onGroupCreated" />
+    <NewGroupModal
+      v-if="showAddMembers"
+      :conversation="activeConversation"
+      @close="showAddMembers = false"
+      @done="onMembersAdded"
+    />
+    <GroupPanel
+      v-if="showGroupPanel && activeConversation"
+      :conversation="activeConversation"
+      :self-id="myId"
+      @close="showGroupPanel = false"
+      @changed="refreshConversation(activeConversation!.id)"
+      @left="onLeft"
+      @add="showGroupPanel = false; showAddMembers = true"
+    />
   </AppShell>
 </template>

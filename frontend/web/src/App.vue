@@ -59,7 +59,7 @@ onMounted(() => {
   unsubs.push(
     realtime.on("chat.message.created", (f) => {
       // The gateway also echoes our own messages (one per recipient, sender included).
-      if (f.sender === auth.account?.id) return;
+      if (f.sender === auth.account?.id || f.muted) return;
       const convoId = f.conversation_id as string | undefined;
       // Don't toast for the conversation the user is already reading.
       if (convoId && route.path === `/messages/${convoId}`) return;

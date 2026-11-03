@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { CornerUpLeft, ImagePlus, Send, X } from "lucide-vue-next";
+import { CornerUpLeft, ImagePlus, Mic, Send, Square, Trash2, X } from "lucide-vue-next";
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 
+import { useVoiceRecorder, type VoiceNote } from "@/lib/useVoiceRecorder";
 import { mediaService } from "@/services/media";
 import { useToastStore } from "@/stores/toasts";
 import type { Message } from "@/types";
@@ -10,6 +11,7 @@ import type { Message } from "@/types";
 defineProps<{ replyingTo?: Message | null; replyingToName?: string }>();
 const emit = defineEmits<{
   send: [payload: { body: string; mediaId: string | null }];
+  voice: [note: VoiceNote];
   typing: [];
   cancelReply: [];
 }>();
@@ -21,6 +23,22 @@ const mediaId = ref<string | null>(null);
 const preview = ref<string | null>(null);
 const uploading = ref(false);
 let sent: { mediaId: string | null; preview: string | null } | null = null;
+const voice = useVoiceRecorder();
+
+async function startRecording() {
+  try {
+    await voice.start();
+  } catch {
+    toasts.push({ text: t("messages.micDenied"), icon: "error" });
+  }
+}
+
+async function finishRecording() {
+  const note = await voice.stop();
+  if (note) emit("voice", note);
+}
+
+const clock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
 async function onFile(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0];
@@ -92,7 +110,20 @@ defineExpose({ restore });
       </div>
     </div>
 
-    <form class="flex items-center gap-2" @submit.prevent="submit">
+    <div v-if="voice.recording.value" class="flex items-center gap-3" role="status">
+      <span class="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" aria-hidden="true" />
+      <span class="text-sm">{{ t("messages.recording") }}</span>
+      <span class="text-sm tabular-nums" dir="ltr">{{ clock(voice.seconds.value) }}</span>
+      <span class="flex-1" />
+      <button type="button" class="btn-ghost px-2" :aria-label="t('messages.cancelRecording')" @click="voice.cancel()">
+        <Trash2 class="h-4 w-4" />
+      </button>
+      <button type="button" class="btn-primary px-3" :aria-label="t('messages.stopAndSend')" @click="finishRecording">
+        <Square class="h-4 w-4" />
+      </button>
+    </div>
+
+    <form v-else class="flex items-center gap-2" @submit.prevent="submit">
       <label
         class="shrink-0 cursor-pointer rounded-full p-2 text-gray-500 transition focus-within:ring-2 focus-within:ring-brand-300 hover:bg-gray-100 dark:hover:bg-gray-800"
         :class="uploading ? 'opacity-50' : ''"
@@ -109,6 +140,17 @@ defineExpose({ restore });
         :placeholder="uploading ? t('profile.uploading') : t('messages.placeholder')"
         @input="$emit('typing')"
       />
+      <button
+        v-if="voice.supported && !body.trim() && !mediaId"
+        type="button"
+        class="shrink-0 rounded-full p-2 text-gray-500 transition hover:bg-gray-100 dark:hover:bg-gray-800"
+        :aria-label="t('messages.recordVoice')"
+        :title="t('messages.recordVoice')"
+        :disabled="uploading"
+        @click="startRecording"
+      >
+        <Mic class="h-5 w-5" />
+      </button>
       <button type="submit" class="btn-primary px-3" :aria-label="t('messages.send')" :disabled="uploading || (!body.trim() && !mediaId)">
         <Send class="h-4 w-4 rtl:-scale-x-100" />
       </button>

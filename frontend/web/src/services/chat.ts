@@ -51,6 +51,62 @@ export const chatService = {
     return data.data;
   },
 
+  async sendVoice(conversationId: string, mediaId: string, durationMs: number): Promise<Message> {
+    const { data } = await api.post<{ data: Message }>(
+      `/conversations/${conversationId}/voice-messages/`,
+      { media_id: mediaId, duration_ms: durationMs },
+    );
+    return data.data;
+  },
+
+  async get(conversationId: string): Promise<Conversation> {
+    const { data } = await api.get<{ data: Conversation }>(`/conversations/${conversationId}/`);
+    return data.data;
+  },
+
+  async createGroup(title: string, memberIds: string[]): Promise<Conversation> {
+    const { data } = await api.post<{ data: Conversation }>("/conversations/", {
+      type: "group",
+      title,
+      member_ids: memberIds,
+    });
+    return data.data;
+  },
+  async renameGroup(conversationId: string, title: string): Promise<void> {
+    await api.patch(`/conversations/${conversationId}/`, { title });
+  },
+  async addMembers(conversationId: string, accountIds: string[]): Promise<Conversation> {
+    const { data } = await api.post<{ data: Conversation }>(
+      `/conversations/${conversationId}/members/`,
+      { account_ids: accountIds },
+    );
+    return data.data;
+  },
+  async removeMember(conversationId: string, accountId: string): Promise<void> {
+    await api.delete(`/conversations/${conversationId}/members/${accountId}/`);
+  },
+  async setMemberRole(conversationId: string, accountId: string, role: string): Promise<void> {
+    await api.patch(`/conversations/${conversationId}/members/${accountId}/`, { role });
+  },
+
+  async react(messageId: string, type: string): Promise<void> {
+    await api.post(`/messages/${messageId}/reactions/`, { type });
+  },
+  async unreact(messageId: string): Promise<void> {
+    await api.delete(`/messages/${messageId}/reactions/`);
+  },
+
+  /** 0 unmutes. */
+  async mute(conversationId: string, minutes: number): Promise<void> {
+    await api.post(`/conversations/${conversationId}/mute/`, { minutes });
+  },
+  async pin(conversationId: string, messageId: string): Promise<void> {
+    await api.post(`/conversations/${conversationId}/pin/`, { message_id: messageId });
+  },
+  async unpin(conversationId: string, messageId: string): Promise<void> {
+    await api.delete(`/conversations/${conversationId}/pin/`, { data: { message_id: messageId } });
+  },
+
   async markRead(conversationId: string, messageId: string): Promise<void> {
     await api.post(`/conversations/${conversationId}/read/`, { up_to_message_id: messageId });
   },

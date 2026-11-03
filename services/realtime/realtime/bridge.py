@@ -37,8 +37,9 @@ def on_message_created(event: EventEnvelope) -> None:
         "type": p.get("type"),
         "preview": p.get("preview"),
     }
+    muted = set(p.get("muted", []))
     for recipient in p.get("recipients", []):
-        _push_to_user(recipient, data)
+        _push_to_user(recipient, {**data, "muted": recipient in muted})
 
 
 @on_event("message.read")
@@ -63,6 +64,18 @@ def on_message_reacted(event: EventEnvelope) -> None:
         "message_id": p.get("message_id"),
         "reactor": p.get("reactor"),
         "type": p.get("type"),
+    }
+    for recipient in p.get("recipients", []):
+        _push_to_user(recipient, data)
+
+
+@on_event("conversation.member.changed")
+def on_conversation_changed(event: EventEnvelope) -> None:
+    p = event.payload
+    data = {
+        "event": "chat.conversation.changed",
+        "conversation_id": p.get("conversation_id"),
+        "action": p.get("action"),
     }
     for recipient in p.get("recipients", []):
         _push_to_user(recipient, data)

@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { api } from "@/lib/api";
-import { isSeen, isSeenByOthers, mergeMessages, oldestFirst } from "@/lib/chat";
+import {
+  applyReaction,
+  isSeen,
+  isSeenByOthers,
+  mergeMessages,
+  oldestFirst,
+  reactionSummary,
+} from "@/lib/chat";
+import { pickContainer } from "@/lib/useVoiceRecorder";
 import { chatService } from "@/services/chat";
 import type { Message } from "@/types";
 
@@ -13,6 +21,7 @@ function msg(id: string, minute: number, sender = "peer"): Message {
     type: "text",
     body: id,
     attachments: [],
+    reactions: [],
     created_at: `2026-11-03T10:${String(minute).padStart(2, "0")}:00Z`,
   };
 }
@@ -104,5 +113,28 @@ describe("isSeenByOthers", () => {
   });
   it("is true when any group member has read it", () => {
     expect(isSeenByOthers(list, [state("x", null), state("y", "c")], "me")).toBe(true);
+  });
+});
+
+describe("reactions", () => {
+  const r = (account_id: string, type: string) => ({ account_id, type });
+
+  it("a member has one reaction, and null removes it", () => {
+    const start = [r("a", "like"), r("b", "love")];
+    expect(applyReaction(start, "a", "haha")).toEqual([r("b", "love"), r("a", "haha")]);
+    expect(applyReaction(start, "a", null)).toEqual([r("b", "love")]);
+  });
+
+  it("summarises by count, most used first", () => {
+    const summary = reactionSummary([r("a", "like"), r("b", "love"), r("c", "love")]);
+    expect(summary).toEqual([{ type: "love", count: 2 }, { type: "like", count: 1 }]);
+  });
+});
+
+describe("pickContainer", () => {
+  it("takes the first format the browser can record", () => {
+    expect(pickContainer((m) => m === "audio/mp4")?.ext).toBe("m4a");
+    expect(pickContainer((m) => m.startsWith("audio/"))?.ext).toBe("webm");
+    expect(pickContainer(() => false)).toBeNull();
   });
 });

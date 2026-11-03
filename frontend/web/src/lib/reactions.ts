@@ -19,6 +19,9 @@ export const REACTIONS: ReactionDef[] = [
   { key: "angry", emoji: "😡", labelKey: "reactionTypes.angry", color: "text-orange-600" },
 ];
 
+// services/chat/chat/models.py has no "care".
+export const MESSAGE_REACTIONS = REACTIONS.filter((r) => r.key !== "care");
+
 export function reactionByKey(key: string | null | undefined): ReactionDef | undefined {
   if (!key) return undefined;
   return REACTIONS.find((r) => r.key === key);

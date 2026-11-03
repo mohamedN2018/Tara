@@ -72,8 +72,9 @@ def on_user_followed(e: EventEnvelope) -> None:
 def on_message_created(e: EventEnvelope) -> None:
     p = e.payload
     sender = p.get("sender")
+    muted = set(p.get("muted", []))
     for recipient in p.get("recipients", []):
-        if str(recipient) != str(sender):
+        if str(recipient) != str(sender) and str(recipient) not in muted:
             notify(
                 recipient,
                 "message",

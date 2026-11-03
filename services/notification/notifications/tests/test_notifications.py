@@ -5,7 +5,12 @@ import uuid
 import pytest
 from django.urls import reverse
 
-from notifications.handlers import on_comment_replied, on_post_reacted, on_user_followed
+from notifications.handlers import (
+    on_comment_replied,
+    on_message_created,
+    on_post_reacted,
+    on_user_followed,
+)
 from notifications.models import Notification, NotificationPreference, OutboxEvent
 from notifications.services import notify
 from tara_events.envelope import EventEnvelope
@@ -167,3 +172,23 @@ def test_quiet_hours_are_stored_and_can_be_cleared(client_for):
     assert resp.json()["data"]["quiet_hours"]["timezone"] == "Africa/Cairo"
     resp = client.patch(url, {"quiet_hours": {}}, format="json")
     assert resp.json()["data"]["quiet_hours"] == {}
+
+
+def test_muted_member_gets_no_message_notification():
+    sender, muted, listening = _acct(), _acct(), _acct()
+    on_message_created(
+        EventEnvelope(
+            event_type="message.created",
+            subject_id=str(uuid.uuid4()),
+            producer="chat-service",
+            payload={
+                "conversation_id": str(uuid.uuid4()),
+                "sender": sender,
+                "recipients": [sender, muted, listening],
+                "muted": [muted],
+                "preview": "hi",
+            },
+        )
+    )
+    assert not Notification.objects.filter(recipient_id=muted).exists()
+    assert Notification.objects.filter(recipient_id=listening, kind="message").exists()
