@@ -105,24 +105,26 @@ Events are **never** published directly inside the business transaction. Instead
 |-------|---------|-------------|-----------|
 | `friendship.requested` | request | from, to | Notification |
 | `friendship.accepted` | friendship | a, b | Notification, Feed (edge), Search (mutuals) |
-| `friendship.removed` | friendship | a, b | Feed |
+| `friendship.removed` | friendship | a, b, reason (`unfriend` \| `block`) | Feed |
 | `user.followed` | follow | follower, target(type) | Notification, Feed (edge) |
-| `user.unfollowed` | follow | follower, target | Feed |
+| `user.unfollowed` | follow | follower, target, target_type, reason (`unfollow` \| `block`) | Feed |
 | `user.blocked` | block | blocker, blocked | Post, Chat, Feed (hide/sever) |
 | `user.unblocked` | block | blocker, blocked | Post, Chat, Feed |
+
+A block ends every edge between the two accounts in the same transaction: graph emits `user.blocked`, then `friendship.removed` (only if they were friends; a pending request is deleted silently) and one `user.unfollowed` per follow direction, all with `reason=block` and `actor_id` = the blocker. Consumers therefore react to a block exactly as to an unfriend or unfollow. `reason` is additive (v1); a re-block emits nothing.
 
 ### Posts
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
 | `post.created` | post | author, audience, media_ids, hashtags, mentions | Feed (fan-out), Search, Notification (mentions) |
-| `post.updated` | post | changed | Feed, Search |
+| `post.updated` | post | post_id, author_id, audience (may change on edit), excerpt, new_mentions | Feed, Search |
 | `post.deleted` | post | — | Feed, Search |
 | `post.reacted` | post | reactor, reaction_type | Notification |
 | `post.commented` | comment | post_id, author | Notification, Feed (signal) |
 | `comment.replied` | comment | parent_id, author | Notification |
 | `post.shared` | post | sharer, post_id, share_post_id, author_id | Notification |
 | `user.mentioned` | post | recipient, actor, post_id, comment_id (only readers who can open the post) | Notification |
-| `post.reported` | report | reporter, reason | Moderation |
+| `post.reported` | post | post_id, reporter, reason, owner_id (the post author; additive, v1). Emitted once per reporter per post, and only when the reporter can see the post | Moderation |
 
 ### Feed
 | Event | Subject | Key payload | Consumers |
@@ -132,7 +134,7 @@ Events are **never** published directly inside the business transaction. Instead
 ### Media
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
-| `media.uploaded` | media | owner, kind, bytes | File Processing |
+| `media.uploaded` | media | owner, kind, bytes (the stored object's real size, not the declared one) | File Processing |
 | `media.processed` | media | variants, waveform?, duration? | Post, Chat, Marketplace |
 | `media.failed` | media | error, retryable | Post, Chat (show retry) |
 
@@ -152,7 +154,7 @@ Events are **never** published directly inside the business transaction. Instead
 | `listing.created` | listing | seller, category, price | Search, Moderation (queue) |
 | `listing.updated` | listing | changed | Search |
 | `listing.status.changed` | listing | from, to | Search, Notification |
-| `listing.reported` | report | reporter, reason | Moderation |
+| `listing.reported` | report | listing_id, reporter, owner_id (the seller; only the owner may appeal; absent before 1.2), reason | Moderation |
 | `marketplace.contact.requested` | listing | buyer, seller | Chat (create conversation) |
 
 ### Notification
@@ -164,7 +166,7 @@ Events are **never** published directly inside the business transaction. Instead
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
 | `report.created` | report | target_type, target_id | Moderation (own queue) |
-| `moderation.actioned` | case | target, action (remove/restrict/warn/shadow) | Post/Chat/Marketplace/Profile (enforce), Notification, Audit |
+| `moderation.actioned` | case | target, action (remove/restrict/warn/shadow/dismiss/approve). An overturned appeal emits it again only with the inverse of the decision: `approve` for removed content (post/comment/message/listing), and only when no other case's removal of that target still stands. Overturning a warning, or a user or page decision, emits nothing (audit log only) | Post/Chat/Marketplace/Profile (enforce), Notification, Audit |
 | `appeal.created` | appeal | case_id | Moderation |
 
 ### Advertisement

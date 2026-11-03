@@ -30,13 +30,21 @@ class MediaAsset(models.Model):
     owner_id = models.UUIDField()  # account that uploaded it
     kind = models.CharField(max_length=8, choices=Kind.choices)
     storage_key = models.CharField(max_length=300)
+    # The stored object's real size: the declared size until completion, then
+    # what storage reports (and, for images, the size after EXIF removal).
     bytes = models.BigIntegerField(default=0)
+    etag = models.CharField(max_length=128, blank=True, default="")
     mime = models.CharField(max_length=120, blank=True, default="")
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.UPLOADING)
     scan_status = models.CharField(max_length=12, default="pending")  # virus-scan hook
     visibility = models.CharField(
         max_length=8, choices=Visibility.choices, default=Visibility.PUBLIC
     )
+    # The post this media is attached to (a bare id in post_db). When
+    # ``restricted``, only the owner and viewers the post service says can see
+    # that post may read it; ``visibility`` is then ignored.
+    post_id = models.UUIDField(null=True, blank=True)
+    restricted = models.BooleanField(default=False)
     error = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -73,6 +81,10 @@ class UploadSession(models.Model):
     media = models.OneToOneField(
         MediaAsset, on_delete=models.CASCADE, related_name="upload_session"
     )
+    # Where the presigned PUT writes. ``complete()`` verifies it and copies it to
+    # the asset's key, so a replayed PUT can never change the verified object.
+    # Empty for sessions signed before staging keys existed.
+    staging_key = models.CharField(max_length=300, blank=True, default="")
     expires_at = models.DateTimeField()
     completed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

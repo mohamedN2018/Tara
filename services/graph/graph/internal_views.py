@@ -49,8 +49,10 @@ class RelationshipView(APIView):
 class FanoutAudienceView(APIView):
     """Who should receive an author's post, for Feed fan-out-on-write.
 
-    Returns followers + friends of the author (deduped). The Feed service decides
-    which subset applies per post audience.
+    Returns followers + friends of the author (deduped), never an account with a
+    block toward the author in either direction (even if a stale edge survived a
+    race with block()). The Feed service decides which subset applies per post
+    audience.
     """
 
     permission_classes = [AllowAny]

@@ -1,20 +1,23 @@
 """Async media processing.
 
-Makes image thumbnails, then marks the asset ready. Video transcoding and audio
-waveforms are not implemented. If processing fails, the original is preserved
-and `media.failed` lets owners show a retry state (brief §8).
+Images are cleaned first: EXIF (including GPS), XMP and comments are removed
+and the EXIF orientation is applied, and the clean copy replaces the stored
+upload. Only then are thumbnails made and the asset marked ready, so nobody is
+ever served the original (no URL is issued before READY). Video transcoding
+and audio waveforms are not implemented. If processing fails, the original is
+kept but never served, and `media.failed` lets owners show a retry state
+(brief §8).
 """
 
 from __future__ import annotations
 
-import io
 import logging
 
 from celery import shared_task
 from django.conf import settings
 from django.db import transaction
 
-from . import events, storage
+from . import events, imaging, storage
 from .models import MediaAsset, MediaVariant
 
 logger = logging.getLogger("tara.media.tasks")
@@ -28,15 +31,12 @@ def process_media(self, media_id: str) -> None:
     if asset is None or asset.status != MediaAsset.Status.PROCESSING:
         return
     try:
-        variants = _derive_variants(asset)
-        for kind, key, meta in variants:
-            MediaVariant.objects.get_or_create(
-                media=asset, kind=kind, defaults={"storage_key": key, **meta}
-            )
+        clean_image(asset)
+        variants = derive_variants(asset)
         with transaction.atomic():
             asset.status = MediaAsset.Status.READY
             asset.scan_status = "clean"  # virus-scan integration hook
-            asset.save(update_fields=["status", "scan_status"])
+            asset.save(update_fields=["status", "scan_status", "bytes", "etag", "updated_at"])
             events.emit(
                 "media.processed",
                 subject_id=str(asset.id),
@@ -61,22 +61,39 @@ def process_media(self, media_id: str) -> None:
             )
 
 
-def _derive_variants(asset: MediaAsset) -> list[tuple[str, str, dict]]:
-    """Thumbnails for images. Video and audio are served as uploaded for now."""
+def clean_image(asset: MediaAsset) -> None:
+    """Replace the stored image with a metadata-free copy; set its size and ETag.
+
+    Only sets the fields; the caller saves them.
+    """
+    if asset.kind != MediaAsset.Kind.IMAGE or settings.STORAGE_BACKEND == "fake":
+        return
+    clean = imaging.sanitize_image(storage.read(asset.storage_key), asset.mime)
+    etag = storage.write(asset.storage_key, clean, asset.mime)
+    if not etag:  # every S3 PUT returns one; never leave the row looking unprocessed
+        found = storage.stat(asset.storage_key, 1)
+        etag = found.etag if found else ""
+    asset.etag = etag
+    asset.bytes = len(clean)
+
+
+def derive_variants(asset: MediaAsset) -> list[tuple[str, str, dict]]:
+    """Write the thumbnail of an image and make sure its variant row exists.
+
+    Video and audio are served as uploaded for now.
+    """
     if asset.kind != MediaAsset.Kind.IMAGE:
         return []
     key = f"{asset.storage_key}/thumb.jpg"
     if settings.STORAGE_BACKEND != "fake":
         storage.write(key, _thumbnail(storage.read(asset.storage_key)), "image/jpeg")
-    return [(MediaVariant.Kind.THUMB, key, {"width": THUMB_SIZE, "height": THUMB_SIZE})]
+    variants = [(MediaVariant.Kind.THUMB, key, {"width": THUMB_SIZE, "height": THUMB_SIZE})]
+    for kind, variant_key, meta in variants:
+        MediaVariant.objects.get_or_create(
+            media=asset, kind=kind, defaults={"storage_key": variant_key, **meta}
+        )
+    return variants
 
 
 def _thumbnail(content: bytes) -> bytes:
-    from PIL import Image, ImageOps
-
-    with Image.open(io.BytesIO(content)) as image:
-        thumb = ImageOps.exif_transpose(image).convert("RGB")
-        thumb.thumbnail((THUMB_SIZE, THUMB_SIZE))
-        out = io.BytesIO()
-        thumb.save(out, "JPEG", quality=85)
-    return out.getvalue()
+    return imaging.thumbnail(content, THUMB_SIZE)

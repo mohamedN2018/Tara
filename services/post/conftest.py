@@ -1,6 +1,7 @@
 """Pytest config for the Post service (mint RS256 tokens; stub external infra)."""
 
 import time
+import uuid
 
 import jwt
 import pytest
@@ -48,6 +49,65 @@ def make_access_token(account_id: str) -> str:
         algorithm="RS256",
         headers={"kid": "test-key"},
     )
+
+
+class FakeMedia:
+    """Stands in for the media service's internal API.
+
+    Only media registered with ``add`` exist, as in the real service, so a test
+    that attaches media must say who owns it.
+    """
+
+    def __init__(self):
+        from posts.media_client import MediaInfo
+
+        self._info = MediaInfo
+        self.assets: dict = {}
+        self.binds: list[dict] = []
+        self.calls: list[str] = []
+        self.down = False
+
+    def add(self, owner, *, kind="image", status="ready") -> str:
+        media_id = str(uuid.uuid4())
+        self.assets[media_id] = self._info(media_id, str(owner), kind, status)
+        return media_id
+
+    def _available(self, name: str) -> None:
+        from posts import media_client
+
+        self.calls.append(name)
+        if self.down:
+            raise media_client._unavailable()
+
+    def lookup(self, media_ids):
+        self._available("lookup")
+        return {m: self.assets[m] for m in map(str, media_ids) if m in self.assets}
+
+    def bind(self, owner_id, post_id, media_ids, *, restricted):
+        self._available("bind")
+        ids = [str(m) for m in media_ids]
+        self.binds.append(
+            {
+                "owner_id": str(owner_id),
+                "post_id": str(post_id),
+                "ids": ids,
+                "restricted": restricted,
+            }
+        )
+        return [m for m in ids if m not in self.assets or self.assets[m].owner_id != str(owner_id)]
+
+
+@pytest.fixture(autouse=True)
+def media_stub(monkeypatch):
+    from posts import media_client
+
+    from tara_resilience import CircuitBreaker
+
+    fake = FakeMedia()
+    monkeypatch.setattr(media_client, "lookup", fake.lookup)
+    monkeypatch.setattr(media_client, "bind", fake.bind)
+    monkeypatch.setattr(media_client, "_breaker", CircuitBreaker(name="media-test"))
+    return fake
 
 
 @pytest.fixture

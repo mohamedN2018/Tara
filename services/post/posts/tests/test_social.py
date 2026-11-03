@@ -30,9 +30,11 @@ def _detail(client, post_id):
 # ---- shares ------------------------------------------------------------------
 
 
-def test_share_creates_a_post_with_the_original_embedded(client_for):
+def test_share_creates_a_post_with_the_original_embedded(client_for, media_stub):
     author, sharer = _acct(), _acct()
-    original = services.create_post(author, body="original text", media_ids=[_acct()])
+    original = services.create_post(
+        author, body="original text", media_ids=[media_stub.add(author)]
+    )
     resp = _share(client_for(sharer), original.id, body="look at this")
     assert resp.status_code == 201
     data = resp.json()["data"]

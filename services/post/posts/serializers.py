@@ -29,7 +29,10 @@ class PostCreateSerializer(serializers.Serializer):
         choices=[Post.Type.TEXT, Post.Type.IMAGE, Post.Type.VIDEO], default=Post.Type.TEXT
     )
     audience = serializers.ChoiceField(choices=Audience.values, default=Audience.PUBLIC)
-    media_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
+    # The service caps the count (MAX_MEDIA_PER_POST); this only bounds the payload.
+    media_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, default=list, max_length=50
+    )
     poll = PollCreateSerializer(required=False)
 
     def validate(self, attrs):
@@ -137,7 +140,13 @@ class PostBatchSerializer(serializers.Serializer):
 
 
 class PostEditSerializer(serializers.Serializer):
-    body = serializers.CharField(allow_blank=True, max_length=20000)
+    body = serializers.CharField(required=False, allow_blank=True, max_length=20000)
+    audience = serializers.ChoiceField(choices=Audience.values, required=False)
+
+    def validate(self, attrs):
+        if "body" not in attrs and "audience" not in attrs:
+            raise serializers.ValidationError("Send body, audience or both.")
+        return attrs
 
 
 class ReactionSerializer(serializers.Serializer):

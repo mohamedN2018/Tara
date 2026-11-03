@@ -60,10 +60,12 @@ def test_action_resolves_case_and_emits_event(client_for):
 
 
 def test_appeal_flow(client_for):
-    case = services.ingest_report(reporter_id=_acct(), target_type="post", target_id="p2")
+    user = _acct()  # the author of the reported post
+    case = services.ingest_report(
+        reporter_id=_acct(), target_type="post", target_id="p2", owner_id=user
+    )
     services.take_action(str(case.id), _acct(), "remove")
-    user = _acct()
-    # Affected user files an appeal (no moderator role needed).
+    # The affected user files an appeal (no moderator role needed).
     filed = client_for(user).post(
         reverse("moderation:case-appeal", args=[case.id]), {"text": "please review"}, format="json"
     )

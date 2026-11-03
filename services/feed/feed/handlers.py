@@ -25,7 +25,8 @@ def on_post_created(event: EventEnvelope) -> None:
 def on_user_unfollowed(event: EventEnvelope) -> None:
     p = event.payload
     if p.get("target_type", "user") == "user":
-        services.remove_author_from_recipient(p["follower"], p["target"])
+        # Only items the follow brought in: a friend who unfollows keeps friend items.
+        services.remove_follow_items(p["follower"], p["target"])
 
 
 @on_event("user.blocked")
@@ -43,11 +44,21 @@ def on_post_deleted(event: EventEnvelope) -> None:
 
 @on_event("post.updated")
 def on_post_updated(event: EventEnvelope) -> None:
+    """Narrowing the audience drops the rows it no longer reaches (no Graph call)."""
     p = event.payload
-    services.update_post_excerpt(p["post_id"], p.get("excerpt", ""))
+    services.update_post_excerpt(
+        p["post_id"], p.get("excerpt", ""), p.get("audience"), p.get("media_ids")
+    )
 
 
 @on_event("friendship.removed")
 def on_friendship_removed(event: EventEnvelope) -> None:
     p = event.payload
-    services.remove_friends_only_posts(p["a"], p["b"])
+    services.apply_unfriend(p["a"], p["b"])
+
+
+@on_event("friendship.accepted")
+def on_friendship_accepted(event: EventEnvelope) -> None:
+    """Relabel `follow` items between new friends (raises -> retried if Graph down)."""
+    p = event.payload
+    services.label_friend_items(p["a"], p["b"])

@@ -5,7 +5,7 @@ from __future__ import annotations
 from tara_events import on_event
 from tara_events.envelope import EventEnvelope
 
-from . import backend
+from . import backend, posts
 from .models import BlockedPair
 
 
@@ -31,31 +31,23 @@ def on_page_created(e: EventEnvelope) -> None:
     )
 
 
+# Handler names are dedupe keys (`search:<name>`): keep them stable.
+# Only live public posts, and hashtags from them, are indexed (see posts.py).
+
+
 @on_event("post.created")
 def on_post_created(e: EventEnvelope) -> None:
-    p = e.payload
-    if p.get("audience") == "public":  # only public posts are searchable
-        backend.index_document(
-            "post", p["post_id"], title="", body=p.get("excerpt", ""), owner_id=p.get("author_id")
-        )
-    for tag in p.get("hashtags", []):
-        backend.index_document("hashtag", tag, title=f"#{tag}", body="")
+    posts.apply_post_event(e)
 
 
-@on_event("post.deleted")
+@on_event("post.deleted")  # also emitted when moderation removes a post
 def on_post_deleted(e: EventEnvelope) -> None:
-    backend.delete_document("post", e.payload.get("post_id", e.subject_id))
+    posts.apply_post_event(e, deleted=True)
 
 
 @on_event("post.updated")
 def on_post_updated(e: EventEnvelope) -> None:
-    p = e.payload
-    if p.get("audience") == "public":
-        backend.index_document(
-            "post", p["post_id"], title="", body=p.get("excerpt", ""), owner_id=p.get("author_id")
-        )
-    else:
-        backend.delete_document("post", p["post_id"])
+    posts.apply_post_event(e)
 
 
 @on_event("listing.status.changed")

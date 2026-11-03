@@ -22,16 +22,17 @@ class CaseSerializer(serializers.ModelSerializer):
             "state",
             "report_count",
             "assigned_to",
+            "owner_id",
             "created_at",
             "updated_at",
         ]
 
 
 class ManualReportSerializer(serializers.Serializer):
-    target_type = serializers.ChoiceField(
-        choices=["post", "comment", "message", "listing", "page", "user"]
-    )
-    target_id = serializers.CharField(max_length=64)
+    # Posts, comments, listings and messages are reported through the service
+    # that owns them, which checks the reporter can see the item first.
+    target_type = serializers.ChoiceField(choices=["user", "page"])
+    target_id = serializers.UUIDField()
     reason = serializers.CharField(max_length=200, required=False, allow_blank=True, default="")
 
 

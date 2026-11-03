@@ -97,6 +97,9 @@ TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-s
 GRAPH_INTERNAL_URL = os.getenv("GRAPH_INTERNAL_URL", "http://graph:8000")
 PROFILE_INTERNAL_URL = os.getenv("PROFILE_INTERNAL_URL", "http://profile:8000")
 GRAPH_CALL_TIMEOUT = float(os.getenv("GRAPH_CALL_TIMEOUT", "2.0"))
+# Attachment checks and media restriction (fail closed: 503 when media is down).
+MEDIA_INTERNAL_URL = os.getenv("MEDIA_INTERNAL_URL", "http://media:8000")
+MEDIA_CALL_TIMEOUT = float(os.getenv("MEDIA_CALL_TIMEOUT", "2.0"))
 
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")
 TARA_EVENT_PUBLISHER = "rabbitmq" if RABBITMQ_URL else "null"

@@ -105,6 +105,8 @@ class PostMedia(models.Model):
     class Meta:
         db_table = "post_media"
         ordering = ["position"]
+        # "Is this media already on a post?" runs on every post with media.
+        indexes = [models.Index(fields=["media_id"], name="post_media_media_idx")]
 
 
 class PostReaction(models.Model):
@@ -218,6 +220,10 @@ class PostReport(models.Model):
 
     class Meta:
         db_table = "post_report"
+        constraints = [
+            # One report per account per post; repeats are no-ops.
+            models.UniqueConstraint(fields=["post", "reporter_id"], name="post_report_uniq"),
+        ]
 
 
 class BlockedPair(models.Model):

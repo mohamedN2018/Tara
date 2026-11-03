@@ -9,6 +9,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from tara_common.exceptions import TaraAPIError
 from tara_common.pagination import CursorPagination
 from tara_common.permissions import IsModerator
 from tara_common.responses import data_response
@@ -22,6 +23,7 @@ from .serializers import (
     ManualReportSerializer,
     ReportSerializer,
 )
+from .throttling import ReportThrottle
 
 
 def _me(request: Request) -> str:
@@ -51,20 +53,29 @@ class ReportsView(APIView):
 
 
 class ManualReportView(APIView):
-    """Any authenticated user can file a report (e.g. reporting a user/page)."""
+    """Any authenticated user can report a user or a page."""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [*APIView.throttle_classes, ReportThrottle]
 
     @extend_schema(request=ManualReportSerializer, responses={202: None}, tags=["moderation"])
     def post(self, request: Request) -> Response:
         serializer = ManualReportSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         v = serializer.validated_data
+        target_id = str(v["target_id"])
+        if v["target_type"] == "user" and target_id == str(_me(request)):
+            raise TaraAPIError(
+                "You cannot report yourself.", code="validation_error", http_status_code=400
+            )
         services.ingest_report(
             reporter_id=_me(request),
             target_type=v["target_type"],
-            target_id=v["target_id"],
+            target_id=target_id,
             reason=v["reason"],
+            # A reported account owns its own case. A page's owner lives in
+            # profile, so page cases stay unappealable until a report names it.
+            owner_id=target_id if v["target_type"] == "user" else None,
         )
         return data_response({"detail": "reported"}, status=status.HTTP_202_ACCEPTED)
 

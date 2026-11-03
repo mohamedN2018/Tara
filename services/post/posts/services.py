@@ -10,8 +10,9 @@ from django.db.models import F, Q
 from django.utils import timezone
 
 from tara_common.exceptions import Conflict, TaraAPIError
+from tara_events.envelope import uuid7
 
-from . import events, linkpreview
+from . import events, linkpreview, media_client
 from .clients import get_relationship, resolve_handles
 from .models import (
     REACTION_TYPES,
@@ -37,6 +38,9 @@ from .models import (
 _HASHTAG_RE = re.compile(r"(?<![\w/&#])#(\w{1,80})")
 _MENTION_RE = re.compile(r"(?<![\w.@/])@([a-zA-Z0-9_]{3,30})")
 MAX_MENTION_NOTIFICATIONS = 10
+MAX_MEDIA_PER_POST = 10
+# Media still processing are accepted: the composer posts right after upload.
+_ATTACHABLE_STATUSES = {"processing", "ready"}
 AUDIENCE_RANK = {
     Audience.ONLY_ME: 0,
     Audience.FRIENDS: 1,
@@ -138,6 +142,40 @@ def _create_poll(post: Post, spec: dict) -> Poll:
     return poll
 
 
+def _bad_request(message: str, code: str = "validation_error") -> TaraAPIError:
+    return TaraAPIError(message, code=code, http_status_code=400)
+
+
+def _video_not_supported() -> TaraAPIError:
+    # Video posts come with the video pipeline (roadmap step 5, decision D1).
+    return _bad_request("Video posts are not supported yet.", "video_not_supported_yet")
+
+
+def _check_attachments(author_id: str, media_ids: list[str]) -> None:
+    """Each id is the author's own image, uploaded, and on no other live post.
+
+    A remote read, so callers run it before their write transaction.
+    """
+    if len(media_ids) > MAX_MEDIA_PER_POST:
+        raise _bad_request(f"A post can have at most {MAX_MEDIA_PER_POST} media.")
+    if len(set(media_ids)) != len(media_ids):
+        raise _bad_request("The same media is attached twice.")
+    found = media_client.lookup(media_ids)
+    infos = [found.get(m) for m in media_ids]
+    # Someone else's media and unknown ids look the same, so neither leaks.
+    if any(i is None or i.owner_id != str(author_id) for i in infos):
+        raise _bad_request("Media not found.", "media_not_owned")
+    if any(i.kind == "video" for i in infos):
+        raise _video_not_supported()
+    if any(i.kind != "image" for i in infos):
+        raise _bad_request("Only images can be attached to a post.", "media_kind_not_allowed")
+    if any(i.status not in _ATTACHABLE_STATUSES for i in infos):
+        raise _bad_request("Media upload is not complete.", "media_not_ready")
+    # One media belongs to one post, so its restriction follows one audience.
+    if PostMedia.objects.filter(media_id__in=media_ids, post__deleted_at__isnull=True).exists():
+        raise _bad_request("Media is already attached to another post.", "media_already_attached")
+
+
 def create_post(
     author_id: str,
     *,
@@ -149,13 +187,31 @@ def create_post(
     author_type: str = "user",
     poll: dict | None = None,
 ) -> Post:
+    """Media are checked and bound to the post through media before the write
+    transaction opens, so a media outage fails the request (503) instead of
+    publishing restricted photos as public."""
     if audience not in Audience.values:
         raise TaraAPIError("Invalid audience.", code="validation_error", http_status_code=400)
+    if post_type == Post.Type.VIDEO:
+        raise _video_not_supported()
     if not body and not media_ids and not shared_post_id:
         raise TaraAPIError("Post must have content.", code="validation_error", http_status_code=400)
 
+    media_ids = [str(m) for m in media_ids or []]
+    post_id = uuid7()
+    if media_ids:
+        _check_attachments(author_id, media_ids)
+        # Restricted before the post exists. If the post then fails to commit,
+        # the media point at a post that is never visible: owner-only, safe.
+        skipped = media_client.bind(
+            author_id, str(post_id), media_ids, restricted=audience != Audience.PUBLIC
+        )
+        if skipped:  # deleted or changed hands since the lookup
+            raise _bad_request("Media not found.", "media_not_owned")
+
     with transaction.atomic():
         post = Post.objects.create(
+            id=post_id,
             author_id=author_id,
             author_type=author_type,
             type=Post.Type.POLL if poll else post_type,
@@ -165,7 +221,7 @@ def create_post(
         )
         if poll:
             _create_poll(post, poll)
-        for i, media_id in enumerate(media_ids or []):
+        for i, media_id in enumerate(media_ids):
             PostMedia.objects.create(post=post, media_id=media_id, position=i)
         tags, mentions = _attach_tags_and_mentions(post)
         events.emit(
@@ -178,7 +234,7 @@ def create_post(
                 "type": post.type,
                 "audience": audience,
                 "excerpt": body[:280],
-                "media_ids": [str(m) for m in (media_ids or [])],
+                "media_ids": media_ids,
                 "hashtags": tags,
                 "mentions": mentions,
                 "shared_post_id": str(shared_post_id) if shared_post_id else None,
@@ -190,17 +246,65 @@ def create_post(
     return post
 
 
-def edit_post(author_id: str, post_id: str, body: str) -> Post:
-    post = Post.objects.filter(id=post_id, author_id=author_id, deleted_at__isnull=True).first()
+def _editable_post(author_id: str, post_id: str, *, lock: bool = False) -> Post:
+    """The author's own live post. Removed or pending-review posts are 404: an
+    edit must not change content a moderator is reviewing or has removed."""
+    qs = Post.objects.filter(
+        id=post_id,
+        author_id=author_id,
+        deleted_at__isnull=True,
+        moderation_status=Post.ModerationStatus.OK,
+    )
+    post = (qs.select_for_update() if lock else qs).first()
     if post is None:
         raise TaraAPIError("Post not found.", code="not_found", http_status_code=404)
+    return post
+
+
+def edit_post(
+    author_id: str, post_id: str, body: str | None = None, *, audience: str | None = None
+) -> Post:
+    """Change the body, the audience, or both.
+
+    Moving to a non-public audience restricts the post's media through media
+    before the write transaction (503 if media is down, nothing changes).
+    Widening needs no media change: restricted media follow the post's
+    visibility, which already lets the wider audience in.
+    """
+    if body is None and audience is None:
+        raise _bad_request("Nothing to change.")
+    if audience is not None and audience not in Audience.values:
+        raise _bad_request("Invalid audience.")
+    post = _editable_post(author_id, post_id)
+    if audience is not None and audience != post.audience and post.shared_post_id:
+        original = Post.objects.filter(id=post.shared_post_id).first()
+        if original and AUDIENCE_RANK[audience] > AUDIENCE_RANK[original.audience]:
+            raise _bad_request("A share cannot reach further than the original post.")
+    if audience is not None and audience != Audience.PUBLIC:
+        # Even when unchanged: a concurrent edit may have widened the post
+        # since this read, and binding is idempotent. Skipped ids are deleted,
+        # or (posts from before ownership checks) not the author's.
+        media_ids = [str(m) for m in post.media.values_list("media_id", flat=True)]
+        if media_ids:
+            media_client.bind(author_id, str(post.id), media_ids, restricted=True)
+
     with transaction.atomic():
-        mentioned_before = set(post.mentions.values_list("mentioned_handle", flat=True))
-        post.body = body
-        post.save(update_fields=["body", "updated_at"])
-        post.hashtags.all().delete()
-        post.mentions.all().delete()
-        _, mentions = _attach_tags_and_mentions(post)
+        post = _editable_post(author_id, post_id, lock=True)  # removed meanwhile → 404
+        fields = ["updated_at"]
+        new_mentions: list[str] = []
+        if audience is not None:
+            post.audience = audience
+            fields.append("audience")
+        if body is not None:
+            mentioned_before = set(post.mentions.values_list("mentioned_handle", flat=True))
+            post.body = body
+            fields.append("body")
+        post.save(update_fields=fields)
+        if body is not None:
+            post.hashtags.all().delete()
+            post.mentions.all().delete()
+            _, mentions = _attach_tags_and_mentions(post)
+            new_mentions = sorted(set(mentions) - mentioned_before)
         events.emit(
             "post.updated",
             subject_id=str(post.id),
@@ -208,8 +312,8 @@ def edit_post(author_id: str, post_id: str, body: str) -> Post:
                 "post_id": str(post.id),
                 "author_id": str(author_id),
                 "audience": post.audience,
-                "excerpt": body[:280],
-                "new_mentions": sorted(set(mentions) - mentioned_before),
+                "excerpt": post.body[:280],
+                "new_mentions": new_mentions,
             },
             actor_id=str(author_id),
         )
@@ -551,14 +655,27 @@ def list_saved(owner_id: str, item_type: str | None = None):
 
 
 def report_post(viewer_id: str, post_id: str, reason: str) -> PostReport:
-    post = Post.objects.filter(id=post_id).first()
-    if post is None:
-        raise TaraAPIError("Post not found.", code="not_found", http_status_code=404)
-    report = PostReport.objects.create(post=post, reporter_id=viewer_id, reason=reason)
-    events.emit(
-        "post.reported",
-        subject_id=str(post.id),
-        payload={"post_id": str(post.id), "reporter": str(viewer_id), "reason": reason},
-        actor_id=str(viewer_id),
-    )
+    """Only a post the reporter can see may be reported (404 otherwise, nothing
+    written). A repeat report by the same account returns the first one and
+    emits nothing."""
+    post = _require_visible(viewer_id, post_id)
+    existing = PostReport.objects.filter(post=post, reporter_id=viewer_id).first()
+    if existing is not None:
+        return existing
+    try:
+        with transaction.atomic():
+            report = PostReport.objects.create(post=post, reporter_id=viewer_id, reason=reason)
+            events.emit(
+                "post.reported",
+                subject_id=str(post.id),
+                payload={
+                    "post_id": str(post.id),
+                    "reporter": str(viewer_id),
+                    "reason": reason,
+                    "owner_id": str(post.author_id),
+                },
+                actor_id=str(viewer_id),
+            )
+    except IntegrityError:  # a concurrent duplicate won the unique constraint
+        return PostReport.objects.get(post=post, reporter_id=viewer_id)
     return report

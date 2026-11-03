@@ -38,6 +38,14 @@ _DEV_MARKERS = (
 # (id, level, message). level is "error" (blocks deploy) or "warning".
 Finding = tuple[str, str, str]
 
+# Caller-specific secrets (roadmap 1.0d): each is held only by one privileged
+# endpoint and its named caller, never by every service. A service is checked
+# for one only when its settings declare it (identity and admin declare
+# ADMIN_IDENTITY_SECRET; post, chat and the rest do not).
+_CALLER_SECRET_SETTINGS = ("ADMIN_IDENTITY_SECRET",)
+# RFC 7518 section 3.2: an HS256 key needs at least 256 bits.
+_MIN_CALLER_SECRET_LENGTH = 32
+
 
 def _looks_like_dev_secret(value: Any) -> bool:
     text = str(value or "").lower()
@@ -74,6 +82,30 @@ def evaluate_production_safety(settings_obj: Any) -> list[Finding]:
                 "TARA_INTERNAL_JWT_SECRET is a development default; set INTERNAL_JWT_SECRET.",
             )
         )
+
+    shared_secret = getattr(settings_obj, "TARA_INTERNAL_JWT_SECRET", None)
+    for name in _CALLER_SECRET_SETTINGS:
+        if not hasattr(settings_obj, name):
+            continue
+        value = str(getattr(settings_obj, name) or "")
+        if len(value) < _MIN_CALLER_SECRET_LENGTH or _looks_like_dev_secret(value):
+            findings.append(
+                (
+                    "tara.E007",
+                    "error",
+                    f"{name} is missing, shorter than {_MIN_CALLER_SECRET_LENGTH} characters "
+                    "or a development default; set it from a secret.",
+                )
+            )
+        elif value == shared_secret:
+            findings.append(
+                (
+                    "tara.E008",
+                    "error",
+                    f"{name} equals INTERNAL_JWT_SECRET, which every service holds; "
+                    "give it its own value.",
+                )
+            )
 
     databases = getattr(settings_obj, "DATABASES", {}) or {}
     default_db = databases.get("default", {}) if isinstance(databases, dict) else {}

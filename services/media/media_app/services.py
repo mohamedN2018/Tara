@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from tara_common.exceptions import TaraAPIError
+from tara_common.exceptions import Conflict, TaraAPIError
 
-from . import events, storage, validation
+from . import events, post_client, storage, validation
 from .models import MediaAsset, UploadSession
+
+logger = logging.getLogger("tara.media.services")
 
 
 def sign_upload(owner_id: str, *, kind: str, mime: str, size: int, visibility: str) -> dict:
@@ -32,48 +35,112 @@ def sign_upload(owner_id: str, *, kind: str, mime: str, size: int, visibility: s
     asset = MediaAsset(owner_id=owner_id, kind=kind, mime=mime, bytes=size, visibility=visibility)
     asset.storage_key = f"{kind}/{owner_id}/{asset.id}"
     asset.save()
-    UploadSession.objects.create(
-        media=asset, expires_at=timezone.now() + timedelta(seconds=settings.SIGNED_URL_TTL)
+    # The browser writes to a staging key; only complete() writes the real key.
+    session = UploadSession.objects.create(
+        media=asset,
+        staging_key=f"staging/{asset.storage_key}",
+        expires_at=timezone.now() + timedelta(seconds=settings.SIGNED_URL_TTL),
     )
     return {
         "media_id": str(asset.id),
         "storage_key": asset.storage_key,
-        "upload_url": storage.presign_put(asset.storage_key, mime),
+        "upload_url": storage.presign_put(session.staging_key, mime),
         "method": "PUT",
         "expires_in": settings.SIGNED_URL_TTL,
     }
 
 
-def _verify_uploaded_object(asset: MediaAsset) -> None:
-    """The presigned PUT cannot limit size or content, so check what actually arrived."""
-    stored = storage.inspect(asset.storage_key)
+# ---- completion ----------------------------------------------------------------
+
+
+def _claim_upload(owner_id: str, media_id: str) -> UploadSession:
+    """Mark the session used. A session completes once; a second call is 409."""
+    with transaction.atomic():
+        asset = (
+            MediaAsset.objects.select_for_update()
+            .filter(id=media_id, owner_id=owner_id, deleted_at__isnull=True)
+            .first()
+        )
+        if asset is None:
+            raise TaraAPIError("Media not found.", code="not_found", http_status_code=404)
+        session = UploadSession.objects.select_for_update().filter(media=asset).first()
+        if (
+            session is None
+            or session.completed_at is not None
+            or asset.status != MediaAsset.Status.UPLOADING
+        ):
+            raise Conflict("This upload was already completed.", code="upload_already_completed")
+        session.completed_at = timezone.now()
+        session.save(update_fields=["completed_at"])
+    session.media = asset
+    return session
+
+
+def _release_claim(session: UploadSession) -> None:
+    """Let the client retry after a storage outage (not after a rejected file)."""
+    UploadSession.objects.filter(pk=session.pk).update(completed_at=None)
+
+
+def _reject(asset: MediaAsset, source_key: str, problem: str) -> TaraAPIError:
+    try:
+        storage.delete(source_key)
+    except Exception:  # noqa: BLE001 - the rejection matters more than the cleanup
+        logger.warning("could not delete a rejected upload", extra={"media_id": str(asset.id)})
+    MediaAsset.objects.filter(pk=asset.pk).update(
+        status=MediaAsset.Status.FAILED, error=problem, updated_at=timezone.now()
+    )
+    return TaraAPIError(problem, code="validation_error", http_status_code=400)
+
+
+def _verify_and_store(asset: MediaAsset, source_key: str) -> tuple[int, str]:
+    """Check what actually arrived (the presigned PUT limits neither size nor
+    content), then copy exactly that version to the asset's key.
+
+    Returns the real size and ETag. Raises 400 (and fails the asset) for a bad
+    file; storage errors propagate.
+    """
+    try:
+        stored = storage.stat(source_key, validation.HEAD_BYTES)
+    except storage.ObjectChanged:
+        raise _reject(asset, source_key, "The upload changed while it was checked.") from None
     if stored is None:
-        return  # fake backend
-    size, head = stored
-    problem = ""
-    if size is None:
-        problem = "The upload was not found."
-    elif size > settings.MAX_UPLOAD_BYTES:
-        problem = "File exceeds the size limit."
-    elif not validation.matches_signature(asset.mime, head):
-        problem = "The file content does not match its type."
-    if problem:
-        if size is not None:
-            storage.delete(asset.storage_key)
-        raise TaraAPIError(problem, code="validation_error", http_status_code=400)
+        raise _reject(asset, source_key, "The upload was not found.")
+    if stored.size > settings.MAX_UPLOAD_BYTES:
+        raise _reject(asset, source_key, "File exceeds the size limit.")
+    if not validation.matches_signature(asset.mime, stored.head):
+        raise _reject(asset, source_key, "The file content does not match its type.")
+    if source_key == asset.storage_key:  # a session signed before staging keys
+        return stored.size, stored.etag
+    try:
+        etag = storage.copy(source_key, asset.storage_key, if_match=stored.etag)
+    except storage.ObjectChanged:
+        raise _reject(asset, source_key, "The upload changed while it was checked.") from None
+    storage.delete(source_key)
+    return stored.size, etag
 
 
 def complete_upload(owner_id: str, media_id: str) -> MediaAsset:
-    asset = MediaAsset.objects.filter(id=media_id, owner_id=owner_id).first()
-    if asset is None:
-        raise TaraAPIError("Media not found.", code="not_found", http_status_code=404)
-    if asset.status != MediaAsset.Status.UPLOADING:
-        return asset  # idempotent
-    _verify_uploaded_object(asset)
+    session = _claim_upload(owner_id, media_id)
+    asset = session.media
+    size, etag = asset.bytes, ""
+    if settings.STORAGE_BACKEND != "fake":
+        try:
+            size, etag = _verify_and_store(asset, session.staging_key or asset.storage_key)
+        except TaraAPIError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - storage outage: retryable
+            logger.warning("upload verification failed", exc_info=True)
+            _release_claim(session)
+            raise TaraAPIError(
+                "Storage is unavailable; try again.",
+                code="dependency_unavailable",
+                http_status_code=503,
+            ) from exc
     with transaction.atomic():
         asset.status = MediaAsset.Status.PROCESSING
-        asset.save(update_fields=["status"])
-        UploadSession.objects.filter(media=asset).update(completed_at=timezone.now())
+        asset.bytes = size
+        asset.etag = etag
+        asset.save(update_fields=["status", "bytes", "etag", "updated_at"])
         events.emit(
             "media.uploaded",
             subject_id=str(asset.id),
@@ -90,9 +157,17 @@ def complete_upload(owner_id: str, media_id: str) -> MediaAsset:
     return asset
 
 
+# ---- access ----------------------------------------------------------------------
+
+
 def _can_view(viewer_id: str, asset: MediaAsset) -> bool:
     if str(asset.owner_id) == str(viewer_id):
         return True
+    if asset.restricted:
+        # Attached to a non-public post: the post decides, and fails closed.
+        return asset.post_id is not None and post_client.can_view_post(
+            str(viewer_id), str(asset.post_id)
+        )
     return asset.visibility == MediaAsset.Visibility.PUBLIC
 
 
@@ -138,3 +213,55 @@ def download_url(viewer_id: str, media_id: str) -> str:
     if asset.status != MediaAsset.Status.READY:
         raise TaraAPIError("Media is not ready.", code="conflict", http_status_code=409)
     return storage.presign_get(asset.storage_key)
+
+
+# ---- internal: post attachment ------------------------------------------------------
+
+
+def internal_lookup(media_ids: list[str]) -> list[dict]:
+    """What another service needs to validate attachments. No URLs."""
+    assets = MediaAsset.objects.filter(id__in=media_ids, deleted_at__isnull=True)
+    return [
+        {
+            "id": str(a.id),
+            "owner_id": str(a.owner_id),
+            "kind": a.kind,
+            "status": a.status,
+            "mime": a.mime,
+            "bytes": a.bytes,
+            "visibility": a.visibility,
+            "restricted": a.restricted,
+            "post_id": str(a.post_id) if a.post_id else None,
+        }
+        for a in assets
+    ]
+
+
+def bind_to_post(owner_id: str, post_id: str, media_ids: list[str], *, restricted: bool) -> dict:
+    """Attach the owner's media to a post, restricted to its audience or not.
+
+    Post calls this before it commits the post, so the media are already
+    restricted when the post becomes visible. A repeat call for the same post
+    can only tighten: it never lifts a restriction. Narrowing an audience then
+    always takes effect, and a late or reordered call for an older, wider
+    audience cannot reopen the media; post's visibility check already lets
+    the wider audience in. Media of another owner, or deleted, are skipped.
+    """
+    with transaction.atomic():
+        assets = list(
+            MediaAsset.objects.select_for_update().filter(
+                id__in=media_ids, owner_id=owner_id, deleted_at__isnull=True
+            )
+        )
+        for asset in assets:
+            if asset.post_id is not None and str(asset.post_id) == str(post_id):
+                asset.restricted = asset.restricted or restricted
+            else:
+                asset.post_id = post_id
+                asset.restricted = restricted
+            asset.save(update_fields=["post_id", "restricted", "updated_at"])
+    bound = {str(a.id) for a in assets}
+    return {
+        "bound": sorted(bound),
+        "skipped": sorted({str(m) for m in media_ids} - bound),
+    }

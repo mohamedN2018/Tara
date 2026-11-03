@@ -11,11 +11,16 @@ from __future__ import annotations
 import logging
 
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Q
 
 from .models import BlockedPair, SearchDocument
 
 logger = logging.getLogger("tara.search.backend")
+
+
+def opensearch_enabled() -> bool:
+    return bool(settings.SEARCH_USE_OPENSEARCH)
 
 
 def index_document(doc_type, doc_id, *, title="", body="", owner_id=None, extra=None) -> None:
@@ -24,14 +29,15 @@ def index_document(doc_type, doc_id, *, title="", body="", owner_id=None, extra=
         doc_id=str(doc_id),
         defaults={"title": title, "body": body, "owner_id": owner_id, "extra": extra or {}},
     )
-    if settings.SEARCH_USE_OPENSEARCH:
-        _os_index(doc_type, doc_id, title, body, owner_id, extra)
+    if opensearch_enabled():
+        # After commit: a rolled-back handler must not leave a copy in OpenSearch.
+        transaction.on_commit(lambda: _os_index(doc_type, doc_id, title, body, owner_id, extra))
 
 
 def delete_document(doc_type, doc_id) -> None:
     SearchDocument.objects.filter(doc_type=doc_type, doc_id=str(doc_id)).delete()
-    if settings.SEARCH_USE_OPENSEARCH:
-        _os_delete(doc_type, doc_id)
+    if opensearch_enabled():
+        transaction.on_commit(lambda: _os_delete(doc_type, doc_id))
 
 
 def _serialize(doc: SearchDocument) -> dict:
@@ -117,6 +123,19 @@ def _os_delete(doc_type, doc_id) -> None:
         )
     except Exception:  # noqa: BLE001
         logger.warning("OpenSearch delete failed", exc_info=True)
+
+
+def os_doc_ids(doc_type: str, *, limit: int = 10000) -> set[str]:
+    """Ids of one doc type held by OpenSearch (for reconcile jobs). Empty on failure."""
+    try:
+        resp = _os_client().search(
+            index=settings.OPENSEARCH_INDEX,
+            body={"query": {"term": {"doc_type": doc_type}}, "_source": ["doc_id"], "size": limit},
+        )
+    except Exception:  # noqa: BLE001 - reconcile is best-effort on the accelerator
+        logger.warning("OpenSearch id listing failed", exc_info=True)
+        return set()
+    return {str(h["_source"]["doc_id"]) for h in resp["hits"]["hits"]}
 
 
 def _os_query(q: str, doc_type: str | None, limit: int) -> list[dict]:

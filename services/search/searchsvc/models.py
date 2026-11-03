@@ -15,7 +15,8 @@ class SearchDocument(models.Model):
     DOC_TYPES = ["user", "page", "post", "listing", "hashtag"]
 
     doc_type = models.CharField(max_length=16)
-    doc_id = models.CharField(max_length=64)
+    # Hashtags are up to 80 characters (post-service `#(\w{1,80})`), so 64 was too short.
+    doc_id = models.CharField(max_length=100)
     title = models.CharField(max_length=300, blank=True, default="")
     body = models.TextField(blank=True, default="")
     owner_id = models.UUIDField(null=True, blank=True)
@@ -29,6 +30,43 @@ class SearchDocument(models.Model):
             models.UniqueConstraint(fields=["doc_type", "doc_id"], name="search_doc_uniq"),
         ]
         indexes = [models.Index(fields=["doc_type"], name="search_doctype_idx")]
+
+
+class PostIndexState(models.Model):
+    """The last post event applied per post, kept after a delete (the tombstone).
+
+    Retries reorder events, so an older ``post.created``/``post.updated`` can arrive
+    after a newer delete or audience change. It is ignored instead of putting a
+    deleted or non-public post (and its hashtags) back into the index.
+    """
+
+    post_id = models.CharField(max_length=64, unique=True)
+    public = models.BooleanField(default=False)
+    deleted = models.BooleanField(default=False)
+    occurred_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "post_index_state"
+
+
+class PublicPostHashtag(models.Model):
+    """A hashtag carried by a live PUBLIC post: the only input to hashtag documents.
+
+    A hashtag document exists only while at least one row backs it. Friends,
+    followers, only-me, close-friends and group posts never get a row.
+    """
+
+    post_id = models.CharField(max_length=64)
+    tag = models.CharField(max_length=80)
+    author_id = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "public_post_hashtag"
+        constraints = [
+            models.UniqueConstraint(fields=["post_id", "tag"], name="search_post_tag_uniq"),
+        ]
+        indexes = [models.Index(fields=["tag"], name="search_post_tag_idx")]
 
 
 class BlockedPair(models.Model):

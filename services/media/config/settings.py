@@ -107,6 +107,16 @@ S3_SECRET_KEY = os.getenv("AWS_SECRET_ACCESS_KEY") or os.getenv(
 )
 SIGNED_URL_TTL = int(os.getenv("SIGNED_URL_TTL", "900"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(200 * 1024 * 1024)))  # 200 MB
+# Image limits, checked from the header before decoding (the worker has 256 MB).
+# One frame at most 50 MP (a 50 MP phone photo is 8160x6120); animations at most
+# MEDIA_MAX_FRAMES frames and MEDIA_MAX_ANIMATION_PIXELS pixels over all frames.
+MEDIA_MAX_IMAGE_PIXELS = int(os.getenv("MEDIA_MAX_IMAGE_PIXELS", "50000000"))
+MEDIA_MAX_FRAMES = int(os.getenv("MEDIA_MAX_FRAMES", "1000"))
+MEDIA_MAX_ANIMATION_PIXELS = int(os.getenv("MEDIA_MAX_ANIMATION_PIXELS", "100000000"))
+
+# Restricted (non-public post) media ask post who may see them; fails closed.
+POST_INTERNAL_URL = os.getenv("POST_INTERNAL_URL", "http://post:8000")
+POST_CALL_TIMEOUT = float(os.getenv("POST_CALL_TIMEOUT", "2.0"))
 
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")
 TARA_EVENT_PUBLISHER = "rabbitmq" if RABBITMQ_URL else "null"

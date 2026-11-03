@@ -182,7 +182,12 @@ def eligible_creatives(placement: str):
 
 
 def pick_for_viewer(viewer_id: str, placement: str = "feed") -> dict | None:
-    """Return one eligible, frequency-uncapped creative for the viewer (or None)."""
+    """Return one eligible, frequency-uncapped creative for the viewer (or None).
+
+    With serving switched off nothing is picked and no serve token is minted.
+    """
+    if not settings.ADS_SERVING_ENABLED:
+        return None
     for creative in eligible_creatives(placement)[:25]:
         seen = cache.get(_freq_key(viewer_id, str(creative.id)), 0)
         if seen < _cap_for(creative.ad_set):

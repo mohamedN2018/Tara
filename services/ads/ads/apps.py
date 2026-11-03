@@ -7,6 +7,10 @@ class AdsConfig(AppConfig):
     verbose_name = "Advertisement"
 
     def ready(self) -> None:
+        # Outside the try below: the serving switch and serve-token checks must
+        # never be skipped silently.
+        from . import checks  # noqa: F401
+
         try:
             from tara_observability.tracing import setup_tracing
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from django.conf import settings
+from django.db import transaction
+from django.utils.decorators import method_decorator
 from drf_spectacular.utils import extend_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
@@ -33,15 +35,22 @@ class SignUploadView(APIView):
         return data_response(result, status=201)
 
 
+# Completion commits its single-use claim, and the failed state of a rejected
+# file, on its own, so a 400 does not roll them back; storage is called outside
+# any transaction.
+@method_decorator(transaction.non_atomic_requests, name="dispatch")
 class CompleteUploadView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(responses={200: None}, tags=["media"])
     def post(self, request: Request, media_id: str) -> Response:
+        """Verify the uploaded object and start processing. A second call returns 409."""
         asset = services.complete_upload(request.user.account_id, media_id)
         return data_response(services.asset_payload(asset))
 
 
+# Reads only; restricted media call post, which should not hold a transaction open.
+@method_decorator(transaction.non_atomic_requests, name="dispatch")
 class MediaDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -51,6 +60,7 @@ class MediaDetailView(APIView):
         return data_response(services.asset_payload(asset))
 
 
+@method_decorator(transaction.non_atomic_requests, name="dispatch")
 class DownloadUrlView(APIView):
     permission_classes = [IsAuthenticated]
 

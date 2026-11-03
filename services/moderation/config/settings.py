@@ -79,6 +79,8 @@ REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "tara_common.exceptions.tara_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
+# Reports filed per account through the generic endpoint (user and page targets).
+MODERATION_REPORT_RATE = os.getenv("MODERATION_REPORT_RATE", "20/hour")
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Tara Moderation API",

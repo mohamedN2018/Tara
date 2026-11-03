@@ -130,7 +130,9 @@ def test_signature_check_rejects_html_named_png():
 
     assert not matches_signature("image/png", b"<html><script>")
     assert matches_signature("image/png", b"\x89PNG\r\n\x1a\n....")
-    assert matches_signature("audio/webm; codecs=opus", b"anything")
+    # Audio and video used to pass with any bytes; now the container is checked.
+    assert not matches_signature("audio/webm; codecs=opus", b"anything")
+    assert matches_signature("audio/webm; codecs=opus", b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81")
 
 
 def test_thumbnail_is_a_small_jpeg():

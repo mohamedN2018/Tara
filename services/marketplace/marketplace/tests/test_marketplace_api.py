@@ -6,7 +6,7 @@ import pytest
 from django.urls import reverse
 
 from marketplace import services
-from marketplace.models import Listing, OutboxEvent
+from marketplace.models import BlockedPair, Listing, ListingReport, OutboxEvent
 
 pytestmark = pytest.mark.django_db
 
@@ -158,6 +158,58 @@ def test_report_emits_event(client_for, category):
     )
     assert resp.status_code == 202
     assert OutboxEvent.objects.filter(event_type="listing.reported").exists()
+
+
+def test_listing_reported_carries_the_seller_as_owner_id(client_for, category):
+    seller, reporter = _acct(), _acct()
+    listing = _create(seller, category)
+    services.publish_listing(seller, str(listing.id))
+    client_for(reporter).post(
+        reverse("marketplace:report", args=[listing.id]), {"reason": "fake"}, format="json"
+    )
+    payload = OutboxEvent.objects.get(event_type="listing.reported").payload["payload"]
+    assert payload == {
+        "listing_id": str(listing.id),
+        "reporter": reporter,
+        "owner_id": seller,
+        "reason": "fake",
+    }
+
+
+def test_reporting_a_listing_the_reporter_cannot_see_returns_404(client_for, category):
+    seller = _acct()
+    draft = _create(seller, category)  # never published
+    missing = uuid.uuid4()
+    for listing_id in (draft.id, missing):
+        resp = client_for(_acct()).post(
+            reverse("marketplace:report", args=[listing_id]), {"reason": "x"}, format="json"
+        )
+        assert resp.status_code == 404
+    assert not ListingReport.objects.exists()
+    assert not OutboxEvent.objects.filter(event_type="listing.reported").exists()
+
+
+def test_reporting_a_blocked_sellers_listing_returns_404(client_for, category):
+    seller, reporter = _acct(), _acct()
+    listing = _create(seller, category)
+    services.publish_listing(seller, str(listing.id))
+    BlockedPair.objects.create(blocker_id=seller, blocked_id=reporter)
+    resp = client_for(reporter).post(
+        reverse("marketplace:report", args=[listing.id]), {"reason": "x"}, format="json"
+    )
+    assert resp.status_code == 404
+    assert not OutboxEvent.objects.filter(event_type="listing.reported").exists()
+
+
+def test_seller_cannot_report_their_own_listing(client_for, category):
+    seller = _acct()
+    listing = _create(seller, category)
+    services.publish_listing(seller, str(listing.id))
+    resp = client_for(seller).post(
+        reverse("marketplace:report", args=[listing.id]), {"reason": "x"}, format="json"
+    )
+    assert resp.status_code == 400
+    assert not OutboxEvent.objects.filter(event_type="listing.reported").exists()
 
 
 # ---- inbound moderation -----------------------------------------------------

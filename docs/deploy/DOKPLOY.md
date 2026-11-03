@@ -90,6 +90,38 @@ docker exec tara-identity-1 python manage.py create_admin you@example.com
   and then dead-lettered. After fixing the cause, put them back with
   `docker exec tara-feed-consumer-1 python manage.py consume_events --replay-dlq`.
 
+### Upgrading an existing deployment
+
+Some releases add required settings. Add them to Dokploy's Environment panel
+**before** redeploying, or the stack refuses to start:
+
+| Added in | Variable | Value |
+|---|---|---|
+| Step 1 wave A | `ADMIN_IDENTITY_SECRET` | `openssl rand -hex 32`, different from `INTERNAL_JWT_SECRET`. Only admin and identity use it. |
+| Step 1 wave A | `ADS_SERVE_TOKEN_SECRET` | `openssl rand -hex 32`. Ad tokens issued before the change stop working (they last 30 minutes). |
+| Step 1 wave A | `ADS_SERVING_ENABLED` | `false`. Paid ads must not serve until payment verification exists. |
+
+Migrations in that release are additive and run at boot. The search migration
+`0004_purge_nonpublic_hashtags` rebuilds hashtag links from public posts in
+batches and is safe to re-run.
+
+**Step 1 wave A: deploy post and media together.** Post now asks media to
+restrict attachments, and media asks post who may see a restricted image. If
+only one of them is updated, posts with photos return 503 until the other
+catches up. After both are up, run these one-off commands once, in this order.
+Each one is safe to re-run:
+
+```bash
+docker exec tara-media-1 python manage.py sanitize_existing_images   # strip EXIF/GPS from old images
+docker exec tara-post-1  python manage.py restrict_post_media        # restrict photos of non-public posts
+docker exec tara-feed-1  python manage.py relabel_feed_reasons       # friend/follow labels on old feed rows
+docker exec tara-search-1 python manage.py reconcile_hashtags        # hashtags only from public posts
+```
+
+Add a bucket lifecycle rule that deletes objects under `staging/` after one day.
+Uploads now land there first. If an upload is abandoned, its staging object is
+never served, but it does take up space.
+
 ### Backups
 
 `scripts/backup.sh` saves all databases, media and the JWT keys. Run it daily from

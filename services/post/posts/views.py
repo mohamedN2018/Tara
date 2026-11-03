@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from django.db import transaction
+from django.utils.decorators import method_decorator
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -44,6 +46,10 @@ def _serialize(viewer_id: str, posts: list) -> list:
     return PostSerializer(posts, many=True, context=context).data
 
 
+# Creating and editing call media before writing (attachment checks, media
+# restriction), so these views run outside ATOMIC_REQUESTS and each write path
+# opens its own transaction (roadmap 3.3, "Sync calls inside requests").
+@method_decorator(transaction.non_atomic_requests, name="dispatch")
 class PostCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -104,6 +110,7 @@ class PostBatchView(APIView):
         return data_response(_serialize(_me(request), posts))
 
 
+@method_decorator(transaction.non_atomic_requests, name="dispatch")
 class PostDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -114,9 +121,11 @@ class PostDetailView(APIView):
 
     @extend_schema(request=PostEditSerializer, responses={200: PostSerializer}, tags=["posts"])
     def patch(self, request: Request, post_id: str) -> Response:
+        """Edit the body and/or audience. Removed or pending-review posts return 404."""
         serializer = PostEditSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        post = services.edit_post(_me(request), post_id, serializer.validated_data["body"])
+        v = serializer.validated_data
+        post = services.edit_post(_me(request), post_id, v.get("body"), audience=v.get("audience"))
         return data_response(_one(_me(request), post))
 
     @extend_schema(responses={204: None}, tags=["posts"])
@@ -254,6 +263,7 @@ class ReportView(APIView):
 
     @extend_schema(request=ReportSerializer, responses={202: None}, tags=["posts"])
     def post(self, request: Request, post_id: str) -> Response:
+        """404 if the reporter cannot see the post; a repeat report is accepted once."""
         serializer = ReportSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         services.report_post(_me(request), post_id, serializer.validated_data["reason"])

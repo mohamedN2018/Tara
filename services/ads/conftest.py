@@ -29,6 +29,10 @@ def _isolated_settings(settings):
     settings.TARA_EVENT_PUBLISHER = "null"
     settings.CELERY_TASK_ALWAYS_EAGER = True
     settings.ADS_AUTO_APPROVE = True
+    # Pinned so the suite never depends on the host's TARA_ENV or .env.
+    settings.TARA_ENV = "development"
+    settings.ADS_SERVING_ENABLED = True
+    settings.ADS_SERVE_TOKEN_SECRET = "test-ads-serve-token-secret-0123456789abcdef"
     settings.CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
     return settings
 

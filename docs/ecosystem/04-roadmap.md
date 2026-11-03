@@ -39,6 +39,34 @@ The current state of the code is described in the companion document [02-tara-au
 
 ---
 
+## 0. Implementation status
+
+| Milestone | Status | Notes |
+|---|---|---|
+| 1.0a CI lint and vitest | Done | `.github/workflows/ci.yml` |
+| 1.0b Ads serving switch | Done | `ADS_SERVING_ENABLED`; off by default when `TARA_ENV=production`; deploy check errors if on in production |
+| 1.0c DLQ broker migration | **Not started** | Needs the policy-based migration and a broker rehearsal described in 1.0c |
+| 1.0d Caller-specific secret for identity's role API | Done | `ADMIN_IDENTITY_SECRET`, `iss=admin`, `aud=identity.roles`; the shared secret is rejected there |
+| 1.0e Ads-only serve-token secret | Done | `ADS_SERVE_TOKEN_SECRET`; old tokens are rejected immediately (no 30-minute grace window) |
+| 1.1 Social-core correctness | Done | Feed, search, graph and post parts; backfills `relabel_feed_reasons` and `reconcile_hashtags` |
+| 1.2 Moderation hardening | Done | Owner-only appeals, 409s, row locks, first-report race, report throttle, `owner_id` on `post.reported` and `listing.reported` |
+| 1.5 Media privacy and upload safety | **Done (safety part)** | See the design note below. The UX part of 1.5 (media grid, URL-backed viewer, HEIC) is not started |
+
+**Design as built for 1.5 (differs from the row below):** post media is restricted
+when the post's audience is not public. Post binds the media to the post through
+`POST /internal/v1/media/bind/` before it writes; restriction only ever narrows.
+For a restricted asset, media asks post `GET /internal/v1/posts/<id>/visibility/`
+(the same resolver as the public API, 2 s timeout, circuit breaker, fails closed),
+so the SPA keeps using `/media/<id>/` unchanged. Strangers, blocked users and
+ex-friends get 404. EXIF/GPS is stripped from every image before READY
+(`sanitize_existing_images` cleans older ones). Uploads are single-use through a
+`staging/` key, with real size, ETag and signature checks. Video posts return
+`400 video_not_supported_yet` until step 5. Still open: media of deleted or
+removed **public** posts stays fetchable by id until media consumes `post.deleted`.
+Media's internal endpoints still accept the shared internal secret (a
+caller-specific key, as in 1.0d, is a follow-up). A URL already handed out stays
+valid for up to 15 minutes after an unfriend or block.
+
 ## 1. How to read this roadmap
 
 - **The order of the ten steps is fixed by the product owner:** shared social core → profiles + notifications → messenger → marketplace → video + reels → ads manager → professional → admin dashboard → design system pass → integration tests. This is the priority order. For a single engineer it is also the build order. With more engineers, the next free engineer takes the earliest step whose dependencies are met (see [section 17](#17-critical-path)).

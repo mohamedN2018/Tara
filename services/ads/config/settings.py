@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 from tara_common.rate_limits import NUM_PROXIES
@@ -18,6 +19,16 @@ def env_bool(name: str, default: bool = False) -> bool:
 def env_list(name: str, default: str = "") -> list[str]:
     return [x.strip() for x in os.getenv(name, default).split(",") if x.strip()]
 
+
+def ads_serving_enabled(environ: Mapping[str, str]) -> bool:
+    """An explicit ADS_SERVING_ENABLED wins; unset or empty means on, except in production."""
+    explicit = environ.get("ADS_SERVING_ENABLED", "").strip().lower()
+    if explicit:
+        return explicit in ("1", "true", "yes", "on")
+    return environ.get("TARA_ENV", "development").strip().lower() != "production"
+
+
+TARA_ENV = os.getenv("TARA_ENV", "development").strip().lower()
 
 SECRET_KEY = os.getenv("ADS_SECRET_KEY", "dev-only-insecure-secret-change-me")
 DEBUG = env_bool("ADS_DEBUG", False)
@@ -99,6 +110,16 @@ TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-s
 # Until the Moderation/ad-review team is staffed, dev auto-approves creatives.
 ADS_AUTO_APPROVE = env_bool("ADS_AUTO_APPROVE", False)
 ADS_DEFAULT_FREQUENCY_CAP = int(os.getenv("ADS_DEFAULT_FREQUENCY_CAP", "5"))  # per viewer/day
+
+# No campaign may serve in production before funding is verified (roadmap 1.0b,
+# 6.3): while this is off the feed slot is always empty and no serve token is
+# minted. The deploy check refuses to boot production with it on.
+ADS_SERVING_ENABLED = ads_serving_enabled(os.environ)
+
+# Signs the serve tokens browsers hold. Only ads has it, so no other service can
+# mint billable impressions or clicks (roadmap 1.0e). Required in production; an
+# empty value in development falls back to a key derived from SECRET_KEY.
+ADS_SERVE_TOKEN_SECRET = os.getenv("ADS_SERVE_TOKEN_SECRET", "")
 
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")
 TARA_EVENT_PUBLISHER = "rabbitmq" if RABBITMQ_URL else "null"

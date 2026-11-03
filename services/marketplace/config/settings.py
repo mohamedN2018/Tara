@@ -94,6 +94,10 @@ TARA_JWT_ISSUER = os.getenv("JWT_ISSUER", "tara-identity")
 TARA_JWT_AUDIENCE = os.getenv("JWT_AUDIENCE", "tara")
 TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-secret-change-me")
 
+# Listing attachments are checked with media's internal batch lookup (fail closed).
+MEDIA_INTERNAL_URL = os.getenv("MEDIA_INTERNAL_URL", "http://media:8000")
+MEDIA_CALL_TIMEOUT = float(os.getenv("MEDIA_CALL_TIMEOUT", "2.0"))
+
 # Until the Moderation service is live (Phase 6), dev auto-approves listings.
 MARKETPLACE_AUTO_APPROVE = env_bool("MARKETPLACE_AUTO_APPROVE", True)
 

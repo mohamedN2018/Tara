@@ -153,24 +153,38 @@ class BlockListView(APIView):
 
 
 # ---- public relationship lists ----------------------------------------------
+# Every list of another account goes through services.ensure_lists_visible: a
+# block in either direction returns 404 (never 403), and the rows themselves
+# never include an account that has a block toward the viewer or the owner.
 
 
 class SocialFriendsView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={200: None, 404: None}, tags=["social"])
     def get(self, request: Request, user_id: str) -> Response:
-        return data_response({"friends": services.list_friend_ids(user_id)})
+        me = _me(request)
+        services.ensure_lists_visible(me, user_id)
+        return data_response({"friends": services.list_friend_ids(user_id, viewer_id=me)})
 
 
 class SocialFollowersView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={200: None, 404: None}, tags=["social"])
     def get(self, request: Request, user_id: str) -> Response:
-        return data_response({"followers": services.follower_ids(user_id)})
+        me = _me(request)
+        services.ensure_lists_visible(me, user_id)
+        return data_response({"followers": services.follower_ids(user_id, viewer_id=me)})
 
 
 class SocialMutualView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={200: None, 404: None}, tags=["social"])
     def get(self, request: Request, user_id: str) -> Response:
-        return data_response({"mutual": services.mutual_friends(_me(request), user_id)})
+        me = _me(request)
+        # The intersection discloses part of user_id's friend list, so it is
+        # hidden whenever that list is.
+        services.ensure_lists_visible(me, user_id)
+        return data_response({"mutual": services.mutual_friends(me, user_id)})

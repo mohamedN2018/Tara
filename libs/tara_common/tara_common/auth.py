@@ -20,6 +20,7 @@ from typing import Any
 
 import jwt
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from jwt import PyJWKClient
 from rest_framework import authentication, exceptions
 
@@ -128,15 +129,67 @@ class JWTAuthentication(authentication.BaseAuthentication):
         return _jwks_cache.signing_key(jwks_url, token, ttl).key
 
 
-def verify_internal_token(token: str, *, expected_audience: str | None = None) -> dict[str, Any]:
-    """Verify a short-lived HS256 service-to-service token (NOT a user token)."""
-    secret = getattr(settings, "TARA_INTERNAL_JWT_SECRET", None)
+INTERNAL_TOKEN_TTL_SECONDS = 30
+
+
+def mint_internal_token(
+    *,
+    issuer: str,
+    audience: str,
+    secret: str | None = None,
+    ttl_seconds: int = INTERNAL_TOKEN_TTL_SECONDS,
+) -> str:
+    """Sign a short-lived HS256 service-to-service token.
+
+    ``secret`` defaults to the shared ``TARA_INTERNAL_JWT_SECRET``. The caller of
+    a privileged endpoint passes the secret it shares with that endpoint alone.
+    An empty ``secret`` raises ``ImproperlyConfigured``; it never falls back to
+    the shared one.
+    """
+    key = getattr(settings, "TARA_INTERNAL_JWT_SECRET", None) if secret is None else secret
+    if not key:
+        raise ImproperlyConfigured("Internal token secret not configured.")
+    now = int(time.time())
+    return jwt.encode(
+        {"iss": issuer, "aud": audience, "iat": now, "exp": now + ttl_seconds},
+        key,
+        algorithm="HS256",
+    )
+
+
+def verify_internal_token(
+    token: str,
+    *,
+    expected_audience: str | None = None,
+    secret: str | None = None,
+    expected_issuer: str | None = None,
+) -> dict[str, Any]:
+    """Verify a short-lived HS256 service-to-service token (NOT a user token).
+
+    With no ``secret`` the token must be signed with the shared
+    ``TARA_INTERNAL_JWT_SECRET``. Every service holds that secret, so the
+    token's ``iss`` proves nothing about who sent it.
+
+    A privileged endpoint passes ``secret`` (a key that only it and one named
+    caller hold) and ``expected_issuer``. The shared secret is then not tried at
+    all, so a token signed with it fails, and an empty ``secret`` fails closed
+    instead of falling back to it.
+
+    Raises a ``jwt.InvalidTokenError`` subclass for a bad token, and
+    ``AuthenticationFailed`` when no secret is configured.
+    """
+    if secret is None:
+        secret = getattr(settings, "TARA_INTERNAL_JWT_SECRET", None)
     if not secret:
         raise exceptions.AuthenticationFailed("Internal token secret not configured.")
+    required = ["exp", "iat"]
+    if expected_issuer is not None:
+        required.append("iss")
     return jwt.decode(
         token,
         secret,
         algorithms=["HS256"],
         audience=expected_audience,
-        options={"require": ["exp", "iat"]},
+        issuer=expected_issuer,
+        options={"require": required},
     )

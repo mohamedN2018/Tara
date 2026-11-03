@@ -1,6 +1,7 @@
 """Pytest config for the Marketplace service (mint RS256 tokens; stub infra)."""
 
 import time
+import uuid
 
 import jwt
 import pytest
@@ -49,6 +50,47 @@ def make_access_token(account_id: str) -> str:
         algorithm="RS256",
         headers={"kid": "test-key"},
     )
+
+
+class FakeMedia:
+    """Stands in for media's internal batch lookup.
+
+    Only media registered with ``add`` exist, as in the real service, so a test
+    that attaches media must say who owns it and what kind it is.
+    """
+
+    def __init__(self):
+        from marketplace.media_client import MediaInfo
+
+        self._info = MediaInfo
+        self.assets: dict = {}
+        self.calls: list[list[str]] = []
+        self.down = False
+
+    def add(self, owner, *, kind="image", status="ready") -> str:
+        media_id = str(uuid.uuid4())
+        self.assets[media_id] = self._info(media_id, str(owner), kind, status)
+        return media_id
+
+    def lookup(self, media_ids):
+        from marketplace import media_client
+
+        self.calls.append([str(m) for m in media_ids])
+        if self.down:
+            raise media_client._unavailable()
+        return {m: self.assets[m] for m in map(str, media_ids) if m in self.assets}
+
+
+@pytest.fixture(autouse=True)
+def media_stub(monkeypatch):
+    from marketplace import media_client
+
+    from tara_resilience import CircuitBreaker
+
+    fake = FakeMedia()
+    monkeypatch.setattr(media_client, "lookup", fake.lookup)
+    monkeypatch.setattr(media_client, "_breaker", CircuitBreaker(name="media-test"))
+    return fake
 
 
 @pytest.fixture

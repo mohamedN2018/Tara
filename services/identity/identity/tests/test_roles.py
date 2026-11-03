@@ -1,6 +1,7 @@
 """Roles: Identity is the source of truth, and the token claim follows it."""
 
 import io
+import json
 import time
 import uuid
 
@@ -10,8 +11,10 @@ from django.conf import settings
 from django.core.management import CommandError, call_command
 from django.urls import reverse
 
+from identity.internal_views import _caller_secret
 from identity.models import Account, AccountRole, SecurityEvent
 from identity.tokens import issue_access_token
+from tara_common.auth import mint_internal_token
 
 pytestmark = pytest.mark.django_db
 
@@ -27,12 +30,20 @@ def _claims(account: Account) -> dict:
     return jwt.decode(token, options={"verify_signature": False})
 
 
-def _internal(audience="identity-internal", secret=None) -> dict:
-    now = int(time.time())
-    token = jwt.encode(
-        {"iss": "admin", "aud": audience, "iat": now, "exp": now + 30},
-        secret or settings.TARA_INTERNAL_JWT_SECRET,
-        algorithm="HS256",
+SHARED_SECRET = "shared-internal-secret-every-service-holds-0123456789"
+ADMIN_SECRET = "admin-identity-secret-only-admin-holds-0123456789"
+
+
+@pytest.fixture(autouse=True)
+def _distinct_internal_secrets(settings):
+    settings.TARA_INTERNAL_JWT_SECRET = SHARED_SECRET
+    settings.ADMIN_IDENTITY_SECRET = ADMIN_SECRET
+
+
+def _internal(audience="identity.roles", secret=None, issuer="admin") -> dict:
+    """What admin sends: its own secret, ``iss=admin``, ``aud=identity.roles``."""
+    token = mint_internal_token(
+        issuer=issuer, audience=audience, secret=secret or settings.ADMIN_IDENTITY_SECRET
     )
     return {"HTTP_AUTHORIZATION": f"Bearer {token}"}
 
@@ -96,23 +107,125 @@ def test_unknown_role_is_rejected(client):
     assert resp.status_code == 400
 
 
-@pytest.mark.parametrize(
-    "headers",
-    [
-        {},
-        {"HTTP_AUTHORIZATION": "Bearer nonsense"},
-        _internal(audience="profile-internal"),
-        _internal(secret="wrong-secret-that-is-long-enough-for-hs256"),
-    ],
-)
-def test_internal_role_api_needs_the_right_service_token(client, headers):
+def _raw(claims: dict, secret: str, algorithm: str = "HS256") -> dict:
+    now = int(time.time())
+    token = jwt.encode({"iat": now, "exp": now + 30, **claims}, secret, algorithm=algorithm)
+    return {"HTTP_AUTHORIZATION": f"Bearer {token}"}
+
+
+# Built inside the test (not at collection), so no token can expire first and
+# pass for the wrong reason.
+BAD_TOKENS = {
+    "no header": lambda: {},
+    "not a jwt": lambda: {"HTTP_AUTHORIZATION": "Bearer nonsense"},
+    "not bearer": lambda: {"HTTP_AUTHORIZATION": _internal()["HTTP_AUTHORIZATION"][7:]},
+    # The 1.0d blocker: any service holds the shared secret and can claim iss=admin.
+    "shared secret, admin claims": lambda: _internal(secret=SHARED_SECRET),
+    "shared secret, legacy audience": lambda: _internal(
+        audience="identity-internal", secret=SHARED_SECRET
+    ),
+    "admin secret, wrong issuer": lambda: _internal(issuer="post"),
+    "admin secret, another caller": lambda: _internal(issuer="notification"),
+    "admin secret, no issuer": lambda: _raw({"aud": "identity.roles"}, ADMIN_SECRET),
+    "admin secret, legacy audience": lambda: _internal(audience="identity-internal"),
+    "admin secret, other service audience": lambda: _internal(audience="profile-internal"),
+    "admin secret, no audience": lambda: _raw({"iss": "admin"}, ADMIN_SECRET),
+    "wrong secret": lambda: _internal(secret="wrong-secret-that-is-long-enough-for-hs256"),
+    "expired": lambda: _raw(
+        {"iss": "admin", "aud": "identity.roles", "iat": 1, "exp": 2}, ADMIN_SECRET
+    ),
+    "alg none": lambda: _raw({"iss": "admin", "aud": "identity.roles"}, "", algorithm="none"),
+    "issuer is a list": lambda: _jws({"iss": ["admin"], "aud": "identity.roles"}, ADMIN_SECRET),
+}
+
+
+def _jws(claims: dict, secret: str) -> dict:
+    """Signs claims that jwt.encode would refuse (e.g. a non-string iss)."""
+    now = int(time.time())
+    payload = json.dumps({"iat": now, "exp": now + 30, **claims}).encode()
+    token = jwt.PyJWS().encode(payload, secret, algorithm="HS256")
+    return {"HTTP_AUTHORIZATION": f"Bearer {token}"}
+
+
+def test_a_caller_without_a_mapped_secret_is_never_trusted():
+    assert _caller_secret("moderation") is None
+    assert _caller_secret("admin") == ADMIN_SECRET
+
+
+@pytest.mark.parametrize("make_headers", BAD_TOKENS.values(), ids=BAD_TOKENS.keys())
+def test_internal_role_api_needs_admins_own_service_token(client, make_headers):
     account = _account()
+    headers = make_headers()
     assert client.get(_roles_url(account), **headers).status_code == 401
+    body = {"role": "admin", "actor_id": str(uuid.uuid4())}
+    resp = client.post(_roles_url(account), body, content_type="application/json", **headers)
+    assert resp.status_code == 401
+    assert resp.json()["error"]["code"] == "unauthenticated"
+    assert not AccountRole.objects.exists()
+    assert not SecurityEvent.objects.filter(type="role_granted").exists()
+
+
+def test_shared_secret_cannot_revoke_or_read_staff(client):
+    """Lookup and holders expose emails and roles: they need admin's secret too."""
+    staff = _account("staff@example.com", is_staff=True)
+    AccountRole.objects.create(account=staff, role="moderator")
+    shared = _internal(secret=SHARED_SECRET)
+
+    resp = client.delete(
+        _roles_url(staff),
+        {"role": "moderator", "actor_id": str(uuid.uuid4())},
+        content_type="application/json",
+        **shared,
+    )
+    assert resp.status_code == 401
+    assert AccountRole.objects.filter(account=staff, role="moderator").exists()
+    lookup = client.get(
+        reverse("internal-account-lookup"), {"email": "staff@example.com"}, **shared
+    )
+    assert lookup.status_code == 401
+    assert "staff@example.com" not in lookup.content.decode()
+    holders = client.get(reverse("internal-role-holders"), **shared)
+    assert holders.status_code == 401
+    assert "staff@example.com" not in holders.content.decode()
+
+
+def test_admin_token_grants(client):
+    """Positive control for the matrix above: same request, admin's own token."""
+    account = _account()
     resp = client.post(
         _roles_url(account),
         {"role": "admin", "actor_id": str(uuid.uuid4())},
         content_type="application/json",
-        **headers,
+        **_internal(),
+    )
+    assert resp.status_code == 201
+    assert resp.json()["data"]["roles"] == ["admin"]
+
+
+def test_unset_admin_secret_fails_closed(client, settings):
+    """No fallback to the shared secret when the caller's secret is missing."""
+    settings.ADMIN_IDENTITY_SECRET = ""
+    account = _account()
+    for headers in (_internal(secret=SHARED_SECRET), _internal(secret=ADMIN_SECRET)):
+        resp = client.post(
+            _roles_url(account),
+            {"role": "admin", "actor_id": str(uuid.uuid4())},
+            content_type="application/json",
+            **headers,
+        )
+        assert resp.status_code == 401
+    assert not AccountRole.objects.exists()
+
+
+def test_admin_secret_equal_to_shared_secret_fails_closed(client, settings):
+    """Misconfigured as the shared secret, it would let every service in."""
+    settings.ADMIN_IDENTITY_SECRET = SHARED_SECRET
+    account = _account()
+    resp = client.post(
+        _roles_url(account),
+        {"role": "admin", "actor_id": str(uuid.uuid4())},
+        content_type="application/json",
+        **_internal(secret=SHARED_SECRET),
     )
     assert resp.status_code == 401
     assert not AccountRole.objects.exists()

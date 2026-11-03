@@ -95,9 +95,13 @@ def test_saved_list_is_paged(client_for):
     assert len({s["item_id"] for s in got}) == 5
 
 
-def test_batch_queries_do_not_grow_with_posts(client_for):
+def test_batch_queries_do_not_grow_with_posts(client_for, media_stub):
     viewer = _acct()
     client = client_for(viewer)
+
+    def with_photo():
+        author = _acct()
+        return services.create_post(author, body="p", media_ids=[media_stub.add(author)])
 
     def batch(posts):
         with CaptureQueriesContext(connection) as ctx:
@@ -107,9 +111,9 @@ def test_batch_queries_do_not_grow_with_posts(client_for):
         assert resp.status_code == 200
         return len(ctx)
 
-    posts = [services.create_post(_acct(), body="p", media_ids=[_acct()])]
+    posts = [with_photo()]
     few = batch(posts)
-    posts += [services.create_post(_acct(), body="p", media_ids=[_acct()]) for _ in range(6)]
+    posts += [with_photo() for _ in range(6)]
     assert batch(posts) == few
 
 

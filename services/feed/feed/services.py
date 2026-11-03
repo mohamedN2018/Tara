@@ -1,25 +1,58 @@
 """Feed fan-out-on-write + read.
 
 On `post.created`, resolve the author's audience from Graph and write a FeedItem
-(with a denormalized snapshot) into each recipient's feed. High-follower accounts
-are capped (FANOUT_MAX_RECIPIENTS) — a real system switches those to
-fan-out-on-read (Phase 9); we log what was dropped rather than silently truncate.
+(with a denormalized snapshot) into each recipient's feed, labelled with why it
+got there: `self` (the author), `friend` or `follow`. High-follower accounts are
+capped (FANOUT_MAX_RECIPIENTS) — a real system switches those to
+fan-out-on-read (Phase 9); we log what was dropped rather than silently
+truncate. The author's own item is never dropped, and friends go before
+followers.
+
+Who receives what (matches Post's `visible_to_viewer`):
+
+    public, followers -> author + friends + followers
+    friends           -> author + friends
+    only_me, unknown  -> author only (fail closed)
+
+Every other row is backed by the relationship its reason names: fan-out labels
+it, and unfollow, unfriend, new friendships and blocks keep it true. That is what
+lets an edit that narrows the audience drop the rows it no longer reaches from
+the feed's own data, with no Graph call (`_drop_rows_outside`).
 """
 
 from __future__ import annotations
 
 import logging
+import uuid
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import F
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from . import events
-from .clients import fanout_audience
+from .clients import GraphUnavailable, Relationship, fanout_audience, relationship
 from .models import FeedItem
 
 logger = logging.getLogger("tara.feed.services")
+
+Reason = FeedItem.Reason
+
+# Audiences fanned out beyond the author. Anything else (only_me, or an audience
+# this service does not know yet) reaches the author alone.
+_FRIENDS_ONLY = "friends"
+_FRIENDS_AND_FOLLOWERS = frozenset({"public", "followers"})
+
+# What any recipient may see of a post they might no longer be allowed to open:
+# ids and enums only, never the excerpt or the media ids.
+_ID_KEYS = ("post_id", "author_id", "author_type", "type", "audience", "created_at")
+
+_IN_CHUNK = 1000
+
+
+def _norm(account_id) -> str:
+    return str(uuid.UUID(str(account_id)))
 
 
 def _snapshot(payload: dict) -> dict:
@@ -35,50 +68,67 @@ def _snapshot(payload: dict) -> dict:
     }
 
 
+def shows_content(snapshot: dict, recipient_id, author_id) -> bool:
+    """Content stays only on public posts and on the author's own item.
+
+    Anything else may have become invisible to the recipient since fan-out (an
+    unfriend, an audience change); the client hydrates it through
+    `/posts/batch/`, which checks visibility now.
+    """
+    return snapshot.get("audience") == "public" or str(recipient_id) == str(author_id)
+
+
+def snapshot_for(snapshot: dict, recipient_id, author_id) -> dict:
+    """The part of ``snapshot`` that ``recipient_id`` may be given."""
+    if shows_content(snapshot, recipient_id, author_id):
+        return snapshot
+    return {k: snapshot[k] for k in _ID_KEYS if k in snapshot}
+
+
+def _recipients(author_id: str, audience: str) -> list[tuple[str, str]]:
+    """``[(recipient, reason)]``: the author first, then friends, then followers."""
+    out = [(author_id, Reason.SELF)]
+    if audience != _FRIENDS_ONLY and audience not in _FRIENDS_AND_FOLLOWERS:
+        if audience != "only_me":
+            logger.warning("unknown audience; author only", extra={"audience": audience})
+        return out
+
+    data = fanout_audience(author_id)  # raises GraphUnavailable -> consumer retries
+    friends = {_norm(x) for x in data.get("friends", [])} - {author_id}
+    out += [(r, Reason.FRIEND) for r in sorted(friends)]
+    if audience in _FRIENDS_AND_FOLLOWERS:
+        followers = {_norm(x) for x in data.get("followers", [])} - friends - {author_id}
+        out += [(r, Reason.FOLLOW) for r in sorted(followers)]
+    return out
+
+
 def fan_out_post(payload: dict) -> int:
     """Distribute a created post to recipient feeds. Returns count of new items."""
-    author_id = payload["author_id"]
+    author_id = _norm(payload["author_id"])
     post_id = payload["post_id"]
     audience = payload.get("audience", "public")
     created_at = parse_datetime(payload.get("created_at") or "") or timezone.now()
 
-    if audience == "only_me":
-        recipients = {author_id}
-    else:
-        data = fanout_audience(author_id)  # raises GraphUnavailable -> consumer retries
-        followers = set(data.get("followers", []))
-        friends = set(data.get("friends", []))
-        if audience == "friends":
-            recipients = friends
-        elif audience == "followers":
-            recipients = followers
-        else:  # public
-            recipients = followers | friends
-        recipients.add(author_id)  # authors see their own posts
-
-    recipients = list(recipients)
-    if len(recipients) > settings.FANOUT_MAX_RECIPIENTS:
+    recipients = _recipients(author_id, audience)
+    cap = max(settings.FANOUT_MAX_RECIPIENTS, 1)  # the author's own item always fits
+    if len(recipients) > cap:
         logger.warning(
             "fan-out capped",
-            extra={
-                "post_id": post_id,
-                "total": len(recipients),
-                "cap": settings.FANOUT_MAX_RECIPIENTS,
-            },
+            extra={"post_id": post_id, "total": len(recipients), "cap": cap},
         )
-        recipients = recipients[: settings.FANOUT_MAX_RECIPIENTS]
+        recipients = recipients[:cap]  # the author is first, so it is always kept
 
     existing = {
         str(r)
-        for r in FeedItem.objects.filter(post_id=post_id, recipient_id__in=recipients).values_list(
-            "recipient_id", flat=True
-        )
+        for r in FeedItem.objects.filter(
+            post_id=post_id, recipient_id__in=[r for r, _ in recipients]
+        ).values_list("recipient_id", flat=True)
     }
-    snapshot = _snapshot(payload)
-    new_recipients = [r for r in recipients if str(r) not in existing]
-    if not new_recipients:
+    new = [(r, reason) for r, reason in recipients if r not in existing]
+    if not new:
         return 0
 
+    snapshot = _snapshot(payload)
     with transaction.atomic():
         FeedItem.objects.bulk_create(
             [
@@ -86,11 +136,11 @@ def fan_out_post(payload: dict) -> int:
                     recipient_id=r,
                     post_id=post_id,
                     author_id=author_id,
-                    reason="self" if str(r) == str(author_id) else "follow",
-                    snapshot=snapshot,
+                    reason=reason,
+                    snapshot=snapshot_for(snapshot, r, author_id),
                     post_created_at=created_at,
                 )
-                for r in new_recipients
+                for r, reason in new
             ],
             ignore_conflicts=True,
         )
@@ -100,36 +150,152 @@ def fan_out_post(payload: dict) -> int:
             "feed.item.added",
             subject_id=str(post_id),
             payload={
-                "recipients": [str(r) for r in new_recipients],
+                "recipients": [r for r, _ in new],
                 "post_id": str(post_id),
-                "author_id": str(author_id),
+                "author_id": author_id,
             },
             partition_key=f"post:{post_id}",
         )
-    return len(new_recipients)
+    return len(new)
 
 
 def remove_author_from_recipient(recipient_id: str, author_id: str) -> None:
     FeedItem.objects.filter(recipient_id=recipient_id, author_id=author_id).delete()
 
 
+def remove_follow_items(follower_id: str, author_id: str) -> int:
+    """After an unfollow, drop only what the follow brought in (never friend items)."""
+    deleted, _ = FeedItem.objects.filter(
+        recipient_id=follower_id, author_id=author_id, reason=Reason.FOLLOW
+    ).delete()
+    return deleted
+
+
 def remove_post(post_id: str) -> None:
     FeedItem.objects.filter(post_id=post_id).delete()
 
 
-def update_post_excerpt(post_id: str, excerpt: str) -> None:
+def _drop_rows_outside(post_id: str, audience: str) -> int:
+    """Delete the rows of ``post_id`` that ``audience`` no longer reaches.
+
+    Decided from the rows alone (see the module docstring): public and followers
+    keep everyone, since friends and followers both qualify; friends keeps the
+    `friend` rows; only_me, or an audience this service does not know, keeps the
+    author alone. A legacy row still labelled `follow` between friends can only
+    be over-deleted. There is no re-fan-out, so a later widening edit does not
+    bring deleted rows back; the post still shows on the author's profile.
+    """
+    if audience in _FRIENDS_AND_FOLLOWERS:
+        return 0
+    rows = FeedItem.objects.filter(post_id=post_id).exclude(recipient_id=F("author_id"))
+    if audience == _FRIENDS_ONLY:
+        rows = rows.exclude(reason=Reason.FRIEND)
+    elif audience != "only_me":
+        logger.warning("unknown audience on edit; author only", extra={"audience": audience})
+    deleted, _ = rows.delete()
+    return deleted
+
+
+def update_post_excerpt(
+    post_id: str,
+    excerpt: str,
+    audience: str | None = None,
+    media_ids: list | None = None,
+) -> None:
+    """Follow an edit: drop the rows the new audience no longer reaches, refresh the rest.
+
+    ``audience`` None means the edit did not say (the stored one stays). Rows
+    that may not show content keep ids only. A row whose content comes back (the
+    post became public) gets its media ids from ``media_ids`` when the event
+    carries them, else from the author's own item, which always keeps the full
+    snapshot; with neither, they stay absent and the client hydrates the media.
+    """
+    if audience is not None:
+        _drop_rows_outside(post_id, audience)
     items = list(FeedItem.objects.filter(post_id=post_id))
+    if not isinstance(media_ids, list):
+        media_ids = next(
+            (
+                i.snapshot["media_ids"]
+                for i in items
+                if str(i.recipient_id) == str(i.author_id)
+                and isinstance(i.snapshot.get("media_ids"), list)
+            ),
+            None,
+        )
     for item in items:
-        item.snapshot["excerpt"] = excerpt
+        snapshot = {**item.snapshot, "excerpt": excerpt}
+        if audience is not None:
+            snapshot["audience"] = audience
+        if media_ids is not None:
+            snapshot["media_ids"] = media_ids
+        item.snapshot = snapshot_for(snapshot, item.recipient_id, item.author_id)
     FeedItem.objects.bulk_update(items, ["snapshot"], batch_size=500)
 
 
-def remove_friends_only_posts(a: str, b: str) -> None:
-    """After an unfriend, neither side keeps the other's friends-only posts."""
+def _ex_friend_cleanup(recipient: str, author: str, *, still_follows: bool) -> None:
+    items = FeedItem.objects.filter(recipient_id=recipient, author_id=author)
+    if not still_follows:
+        # No connection left: like after an unfollow, none of the author's posts
+        # stay. A kept `friend` row would also survive a later edit to friends
+        # or followers, for someone who is neither.
+        items.delete()
+        return
+    items.filter(snapshot__audience=_FRIENDS_ONLY).delete()
+    # What is left now reached them through the follow.
+    items.filter(reason=Reason.FRIEND).update(reason=Reason.FOLLOW)
+
+
+def apply_unfriend(a: str, b: str) -> None:
+    """After an unfriend, each side keeps only what it may still see as a follower.
+
+    A side that still follows the other keeps its public and followers-audience
+    items, relabelled `follow`; friends-audience items go. A side that does not
+    follow loses all of the other's items, public ones too, as after an
+    unfollow. The current relationship comes from Graph; if Graph cannot
+    answer, nobody is assumed to follow (fail closed — feed rows are derived
+    and rebuildable).
+    """
+    try:
+        rel = relationship(a, b)
+    except GraphUnavailable:
+        logger.warning("graph unavailable on unfriend; assuming no follows", exc_info=True)
+        rel = Relationship()
+    if rel.are_friends:
+        return  # friends again since: the event is stale
+    _ex_friend_cleanup(a, b, still_follows=rel.a_follows_b)
+    _ex_friend_cleanup(b, a, still_follows=rel.b_follows_a)
+
+
+def label_friend_items(a: str, b: str) -> int:
+    """After a new friendship, items each side got by following are friend items.
+
+    Raises GraphUnavailable (the consumer retries): until then the label stays
+    `follow`, which only ever over-deletes on a later unfollow.
+    """
+    if not relationship(a, b).are_friends:
+        return 0  # unfriended since: the event is stale
+    changed = 0
     for recipient, author in ((a, b), (b, a)):
-        FeedItem.objects.filter(
-            recipient_id=recipient, author_id=author, snapshot__audience="friends"
-        ).delete()
+        changed += FeedItem.objects.filter(
+            recipient_id=recipient, author_id=author, reason=Reason.FOLLOW
+        ).update(reason=Reason.FRIEND)
+    return changed
+
+
+def relabel_friend_items_for(
+    recipient_id: str, friend_ids: list[str], *, dry_run: bool = False
+) -> int:
+    """One-off data fix: `follow` items whose author is a friend become `friend`."""
+    changed = 0
+    for i in range(0, len(friend_ids), _IN_CHUNK):
+        items = FeedItem.objects.filter(
+            recipient_id=recipient_id,
+            author_id__in=friend_ids[i : i + _IN_CHUNK],
+            reason=Reason.FOLLOW,
+        )
+        changed += items.count() if dry_run else items.update(reason=Reason.FRIEND)
+    return changed
 
 
 def home_feed(recipient_id: str):

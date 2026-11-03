@@ -170,6 +170,12 @@ TARA_JWT_PUBLIC_KEY = JWT_PUBLIC_KEY
 TARA_JWT_ISSUER = JWT_ISSUER
 TARA_JWT_AUDIENCE = JWT_AUDIENCE
 TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-secret-change-me")
+# Held only by identity and admin (roadmap 1.0d). The /internal/v1/ role and
+# staff endpoints verify admin's tokens with it and refuse INTERNAL_JWT_SECRET.
+# The deploy check rejects a missing, short or development value.
+ADMIN_IDENTITY_SECRET = os.getenv(
+    "ADMIN_IDENTITY_SECRET", "dev-only-admin-identity-secret-change-me"
+)
 
 # ---- Events / outbox (ADR-003) ----------------------------------------------
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")

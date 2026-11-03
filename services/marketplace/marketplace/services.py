@@ -10,7 +10,7 @@ from django.db.models import F, Q
 
 from tara_common.exceptions import Conflict, TaraAPIError
 
-from . import events
+from . import events, media_client
 from .models import (
     BlockedPair,
     Listing,
@@ -64,6 +64,42 @@ def _emit_status(listing: Listing, previous: str, actor_id: str) -> None:
 
 # ---- create / edit ----------------------------------------------------------
 
+MAX_MEDIA_PER_LISTING = 10  # roadmap 4.2; also under media's batch limit
+_ATTACHABLE_STATUSES = {"processing", "ready"}
+
+
+def _media_error(message: str, code: str) -> TaraAPIError:
+    return TaraAPIError(
+        message,
+        code="validation_error",
+        http_status_code=400,
+        details=[{"field": "media_ids", "code": code, "message": message}],
+    )
+
+
+def _check_attachments(seller_id: str, media_ids: list[str]) -> None:
+    """Each id is the seller's own image, uploaded. Videos wait for 5.7 (D1).
+
+    A remote read, so it runs before any write; media being down is a 503.
+    """
+    if len(media_ids) > MAX_MEDIA_PER_LISTING:
+        raise _media_error(
+            f"A listing can have at most {MAX_MEDIA_PER_LISTING} photos.", "too_many_media"
+        )
+    if len(set(media_ids)) != len(media_ids):
+        raise _media_error("The same photo is attached twice.", "duplicate_media")
+    found = media_client.lookup(media_ids)
+    infos = [found.get(m) for m in media_ids]
+    # Someone else's media and unknown ids look the same, so neither leaks.
+    if any(i is None or i.owner_id != str(seller_id) for i in infos):
+        raise _media_error("Media not found.", "media_not_owned")
+    if any(i.kind == "video" for i in infos):
+        raise _media_error("Listing videos are not supported yet.", "video_not_supported_yet")
+    if any(i.kind != "image" for i in infos):
+        raise _media_error("Only photos can be attached to a listing.", "media_kind_not_allowed")
+    if any(i.status not in _ATTACHABLE_STATUSES for i in infos):
+        raise _media_error("Media upload is not complete.", "media_not_ready")
+
 
 def create_listing(seller_id: str, data: dict) -> Listing:
     category = MarketplaceCategory.objects.filter(id=data["category_id"]).first()
@@ -77,6 +113,9 @@ def create_listing(seller_id: str, data: dict) -> Listing:
         raise TaraAPIError(
             "Price cannot be negative.", code="validation_error", http_status_code=400
         )
+    media_ids = [str(m) for m in data.get("media_ids") or []]
+    if media_ids:
+        _check_attachments(seller_id, media_ids)  # remote: before the first write
 
     with transaction.atomic():
         SellerProfile.objects.get_or_create(account_id=seller_id)
@@ -91,7 +130,7 @@ def create_listing(seller_id: str, data: dict) -> Listing:
             location=data.get("location", ""),
             status=Listing.Status.DRAFT,
         )
-        for i, media_id in enumerate(data.get("media_ids", [])):
+        for i, media_id in enumerate(media_ids):
             ListingMedia.objects.create(listing=listing, media_id=media_id, position=i)
         events.emit(
             "listing.created",
@@ -233,14 +272,24 @@ def list_saved(account_id: str):
 
 
 def report_listing(reporter_id: str, listing_id: str, reason: str) -> ListingReport:
-    listing = Listing.objects.filter(id=listing_id, deleted_at__isnull=True).first()
-    if listing is None:
-        raise TaraAPIError("Listing not found.", code="not_found", http_status_code=404)
+    # 404 for anything the reporter cannot see (drafts, pending, blocked sellers),
+    # so reporting does not reveal that a hidden listing exists.
+    listing = get_listing(reporter_id, listing_id)
+    if str(listing.seller_id) == str(reporter_id):
+        raise TaraAPIError(
+            "You cannot report your own listing.", code="validation_error", http_status_code=400
+        )
     report = ListingReport.objects.create(listing=listing, reporter_id=reporter_id, reason=reason)
     events.emit(
         "listing.reported",
         subject_id=str(listing.id),
-        payload={"listing_id": str(listing.id), "reporter": str(reporter_id), "reason": reason},
+        payload={
+            "listing_id": str(listing.id),
+            "reporter": str(reporter_id),
+            # The seller: moderation lets only the owner appeal the decision.
+            "owner_id": str(listing.seller_id),
+            "reason": reason,
+        },
         actor_id=str(reporter_id),
     )
     return report

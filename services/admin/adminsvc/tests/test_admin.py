@@ -5,10 +5,12 @@ import uuid
 import jwt
 import pytest
 import requests
+from django.test import override_settings
 from django.urls import reverse
 
 from adminsvc import identity_client
 from adminsvc.models import AuditLog, FeatureFlag
+from tara_common.checks import production_safety_check
 from tara_common.exceptions import TaraAPIError
 
 pytestmark = pytest.mark.django_db
@@ -161,25 +163,74 @@ def test_identity_outage_is_reported_not_swallowed(client_for, monkeypatch):
     assert not AuditLog.objects.exists()
 
 
-def test_identity_client_sends_a_service_token(monkeypatch, settings):
-    captured = {}
+SHARED_SECRET = "shared-internal-secret-every-service-holds-0123456789"
+ADMIN_SECRET = "admin-identity-secret-only-admin-holds-0123456789"
+
+
+def _fake_identity(monkeypatch, status=200, body=b'{"data": {"roles": []}}'):
+    captured = {"calls": 0}
 
     def fake(method, url, **kwargs):
         captured.update(kwargs, method=method, url=url)
+        captured["calls"] += 1
         response = requests.Response()
-        response.status_code = 200
-        response._content = b'{"data": {"roles": []}}'
+        response.status_code = status
+        response._content = body
         return response
 
     monkeypatch.setattr("adminsvc.identity_client.requests.request", fake)
+    return captured
+
+
+def test_identity_client_signs_with_the_admin_only_secret(monkeypatch, settings):
+    settings.TARA_INTERNAL_JWT_SECRET = SHARED_SECRET
+    settings.ADMIN_IDENTITY_SECRET = ADMIN_SECRET
+    captured = _fake_identity(monkeypatch)
     account = _acct()
     identity_client.grant(account, "analyst", _acct())
     assert captured["url"].endswith(f"/internal/v1/accounts/{account}/roles/")
+    assert captured["timeout"] == settings.IDENTITY_CALL_TIMEOUT
     token = captured["headers"]["Authorization"].removeprefix("Bearer ")
     claims = jwt.decode(
         token,
-        settings.TARA_INTERNAL_JWT_SECRET,
+        ADMIN_SECRET,
         algorithms=["HS256"],
-        audience="identity-internal",
+        audience="identity.roles",
+        issuer="admin",
+        options={"require": ["exp", "iat", "iss", "aud"]},
     )
-    assert claims["iss"] == "admin"
+    assert claims["exp"] - claims["iat"] <= 30
+    # Not signed with the secret every service holds.
+    with pytest.raises(jwt.InvalidSignatureError):
+        jwt.decode(token, SHARED_SECRET, algorithms=["HS256"], audience="identity.roles")
+
+
+def test_identity_client_refuses_to_call_without_its_secret(client_for, monkeypatch, settings):
+    settings.ADMIN_IDENTITY_SECRET = ""
+    captured = _fake_identity(monkeypatch)
+    resp = client_for(_acct(), roles=["admin"]).post(
+        reverse("adminsvc:roles"), {"account_id": _acct(), "role": "analyst"}, format="json"
+    )
+    assert resp.status_code == 503
+    assert captured["calls"] == 0  # never falls back to the shared secret
+    assert not AuditLog.objects.exists()
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_identity_refusing_the_service_token_is_a_503(client_for, monkeypatch, status):
+    _fake_identity(monkeypatch, status=status, body=b'{"error": {"code": "unauthenticated"}}')
+    resp = client_for(_acct(), roles=["admin"]).post(
+        reverse("adminsvc:roles"), {"account_id": _acct(), "role": "analyst"}, format="json"
+    )
+    assert resp.status_code == 503
+    assert resp.json()["error"]["code"] == "dependency_unavailable"
+    assert not AuditLog.objects.exists()
+
+
+def test_admin_deploy_check_requires_the_admin_identity_secret(settings):
+    assert hasattr(settings, "ADMIN_IDENTITY_SECRET")
+    with override_settings(
+        DEBUG=False, ADMIN_IDENTITY_SECRET="dev-only-admin-identity-secret-change-me"
+    ):
+        ids = {m.id for m in production_safety_check() if m.is_serious()}
+    assert "tara.E007" in ids

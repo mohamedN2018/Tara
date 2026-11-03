@@ -70,6 +70,8 @@ x-identity-env: &identity-env
   IDENTITY_DEBUG: ${IDENTITY_DEBUG:-}
   IDENTITY_JWT_KEY_ID: ${IDENTITY_JWT_KEY_ID:-}
   IDENTITY_SECRET_KEY: ${IDENTITY_SECRET_KEY:?}
+  # Identity and admin only: identity's role API refuses INTERNAL_JWT_SECRET (1.0d).
+  ADMIN_IDENTITY_SECRET: ${ADMIN_IDENTITY_SECRET:?}
   REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-}
   EMAIL_HOST: ${EMAIL_HOST:?set your SMTP host}
   EMAIL_PORT: ${EMAIL_PORT:-587}
@@ -200,6 +202,8 @@ x-admin-env: &admin-env
   ADMIN_DB_USER: ${ADMIN_DB_USER:-}
   ADMIN_DEBUG: ${ADMIN_DEBUG:-}
   ADMIN_SECRET_KEY: ${ADMIN_SECRET_KEY:?}
+  # Identity and admin only: signs admin's calls to identity's role API (1.0d).
+  ADMIN_IDENTITY_SECRET: ${ADMIN_IDENTITY_SECRET:?}
 
 x-ads-env: &ads-env
   <<: *common-env
@@ -211,6 +215,8 @@ x-ads-env: &ads-env
   ADS_DB_USER: ${ADS_DB_USER:-}
   ADS_DEBUG: ${ADS_DEBUG:-}
   ADS_SECRET_KEY: ${ADS_SECRET_KEY:?}
+  ADS_SERVE_TOKEN_SECRET: ${ADS_SERVE_TOKEN_SECRET:?}
+  ADS_SERVING_ENABLED: ${ADS_SERVING_ENABLED:-false}
 
 x-realtime-env: &realtime-env
   <<: *common-env

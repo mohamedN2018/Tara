@@ -33,6 +33,51 @@ def _isolated_settings(settings):
     return settings
 
 
+@pytest.fixture(autouse=True)
+def _fresh_post_breaker(monkeypatch):
+    from media_app import post_client
+
+    from tara_resilience import CircuitBreaker
+
+    monkeypatch.setattr(post_client, "_breaker", CircuitBreaker(name="post-test"))
+
+
+@pytest.fixture
+def memory_storage(settings):
+    """A bucket in a dict: the real verify, copy and image-cleaning paths run."""
+    from media_app import storage
+
+    settings.STORAGE_BACKEND = "memory"
+    storage.memory_reset()
+    yield storage
+    storage.memory_reset()
+
+
+@pytest.fixture
+def post_visibility(monkeypatch):
+    """Stub post's internal visibility answer: ``post_visibility.allow(viewer, post)``."""
+    from media_app import post_client
+
+    class _Visibility:
+        def __init__(self):
+            self.allowed: set[tuple[str, str]] = set()
+            self.calls: list[tuple[str, str]] = []
+
+        def allow(self, viewer_id, post_id):
+            self.allowed.add((str(viewer_id), str(post_id)))
+
+        def revoke(self, viewer_id, post_id):
+            self.allowed.discard((str(viewer_id), str(post_id)))
+
+        def __call__(self, viewer_id, post_id):
+            self.calls.append((str(viewer_id), str(post_id)))
+            return (str(viewer_id), str(post_id)) in self.allowed
+
+    stub = _Visibility()
+    monkeypatch.setattr(post_client, "can_view_post", stub)
+    return stub
+
+
 def make_access_token(account_id: str) -> str:
     now = int(time.time())
     return jwt.encode(

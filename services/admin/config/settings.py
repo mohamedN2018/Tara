@@ -93,6 +93,12 @@ TARA_JWT_PUBLIC_KEY = os.getenv("TARA_JWT_PUBLIC_KEY", "")
 TARA_JWT_ISSUER = os.getenv("JWT_ISSUER", "tara-identity")
 TARA_JWT_AUDIENCE = os.getenv("JWT_AUDIENCE", "tara")
 TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-secret-change-me")
+# Shared with identity alone (roadmap 1.0d): signs calls to identity's role and
+# staff API, which refuses INTERNAL_JWT_SECRET. The deploy check rejects a
+# missing, short or development value.
+ADMIN_IDENTITY_SECRET = os.getenv(
+    "ADMIN_IDENTITY_SECRET", "dev-only-admin-identity-secret-change-me"
+)
 IDENTITY_INTERNAL_URL = os.getenv("IDENTITY_INTERNAL_URL", "http://identity:8000")
 IDENTITY_CALL_TIMEOUT = float(os.getenv("IDENTITY_CALL_TIMEOUT", "3"))
 

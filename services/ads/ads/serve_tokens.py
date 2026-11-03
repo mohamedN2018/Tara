@@ -4,30 +4,60 @@ Serving a creative signs a short-lived token for that viewer, creative and
 placement. The events endpoint spends budget only against such a token, so
 nobody can burn a competitor's budget by posting a creative id they were never
 shown, and each token pays for at most one impression and one click.
+
+The key is ``ADS_SERVE_TOKEN_SECRET``, which only ads holds. It used to be
+derived from the shared ``INTERNAL_JWT_SECRET``, so any service could mint
+billable events; tokens signed that way are no longer accepted.
 """
 
 from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import time
 import uuid
 
 import jwt
 from django.conf import settings
 from django.core.cache import cache
+from django.core.exceptions import ImproperlyConfigured
 
 from tara_common.exceptions import TaraAPIError
 
 AUDIENCE = "ad-serve"
 TTL_SECONDS = 30 * 60
 
+logger = logging.getLogger("tara.ads.serve_tokens")
+_warned_dev_key = False
+
+
+def _dev_key() -> str:
+    """Development only: derived from ads' own SECRET_KEY, never the internal secret."""
+    return hmac.new(
+        settings.SECRET_KEY.encode(), b"ads-serve-token-dev-fallback", hashlib.sha256
+    ).hexdigest()
+
 
 def _key() -> str:
-    """Browsers hold these tokens, so they never get the internal secret itself."""
-    return hmac.new(
-        settings.TARA_INTERNAL_JWT_SECRET.encode(), b"ad-serve-token", hashlib.sha256
-    ).hexdigest()
+    """Fail closed: production never signs without ads' own secret."""
+    global _warned_dev_key
+    secret = settings.ADS_SERVE_TOKEN_SECRET
+    if secret and secret == settings.TARA_INTERNAL_JWT_SECRET:
+        raise ImproperlyConfigured(
+            "ADS_SERVE_TOKEN_SECRET must not reuse INTERNAL_JWT_SECRET: every service holds it."
+        )
+    if secret:
+        return secret
+    if settings.TARA_ENV == "production":
+        raise ImproperlyConfigured("ADS_SERVE_TOKEN_SECRET is required in production.")
+    if not _warned_dev_key:
+        _warned_dev_key = True
+        logger.warning(
+            "ADS_SERVE_TOKEN_SECRET is not set; signing ad serve tokens with a "
+            "development key derived from SECRET_KEY."
+        )
+    return _dev_key()
 
 
 def issue(viewer_id: str, creative_id: str, placement: str) -> str:

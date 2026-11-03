@@ -104,6 +104,11 @@ MODERATION_SECRET_KEY=$(secret)
 ADMIN_SECRET_KEY=$(secret)
 ADS_SECRET_KEY=$(secret)
 INTERNAL_JWT_SECRET=$(secret)
+# Identity and admin only: signs admin's calls to identity's role API, which
+# refuses INTERNAL_JWT_SECRET (roadmap 1.0d).
+ADMIN_IDENTITY_SECRET=$(secret)
+# Ads-only: signs the ad serve tokens browsers hold.
+ADS_SERVE_TOKEN_SECRET=$(secret)
 
 # ---- DEBUG off everywhere --------------------------------------------------
 IDENTITY_DEBUG=false
@@ -157,6 +162,8 @@ DEFAULT_FROM_EMAIL=no-reply@${DOMAIN}
 # New listings and ads wait for a moderator.
 MARKETPLACE_AUTO_APPROVE=false
 ADS_AUTO_APPROVE=false
+# No ads serve until payment verification exists; ads refuses to boot with it on.
+ADS_SERVING_ENABLED=false
 # Web Push. Keep these keys: replacing them invalidates every browser subscription.
 VAPID_PUBLIC_KEY=${VAPID_PUBLIC}
 VAPID_PRIVATE_KEY=${VAPID_PRIVATE}

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from django.test import override_settings
 
 from tara_common.checks import (
@@ -77,6 +78,65 @@ def test_hardened_production_config_is_clean():
     assert evaluate_production_safety(settings_obj) == []
 
 
+# ---- caller-specific secret (roadmap 1.0d) ---------------------------------
+
+_STRONG_SHARED = "z3" + "p1m4n" * 12
+_STRONG_ADMIN = "a8" + "r5t7v" * 12
+
+
+def _hardened(**overrides) -> SimpleNamespace:
+    values = {
+        "DEBUG": False,
+        "SECRET_KEY": "x7" + "k9q2w" * 12,
+        "TARA_INTERNAL_JWT_SECRET": _STRONG_SHARED,
+        "DATABASES": {"default": {"PASSWORD": "S0me-Strong-Rotating-Secret"}},
+        "ALLOWED_HOSTS": ["api.tara.example"],
+        "SESSION_COOKIE_SECURE": True,
+        "CSRF_COOKIE_SECURE": True,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",  # ADMIN_IDENTITY_SECRET= (set but empty)
+        None,
+        "dev-only-admin-identity-secret-change-me",  # the settings default: env var missing
+        "__REPLACE_ME__-padding-to-be-long-enough-000",
+        "too-short-0123456789",
+    ],
+)
+def test_missing_or_weak_admin_identity_secret_is_an_error(value):
+    findings = evaluate_production_safety(_hardened(ADMIN_IDENTITY_SECRET=value))
+    assert [(fid, level) for fid, level, _ in findings] == [("tara.E007", "error")]
+    assert "ADMIN_IDENTITY_SECRET" in findings[0][2]
+
+
+def test_admin_identity_secret_equal_to_the_shared_secret_is_an_error():
+    findings = evaluate_production_safety(_hardened(ADMIN_IDENTITY_SECRET=_STRONG_SHARED))
+    assert [(fid, level) for fid, level, _ in findings] == [("tara.E008", "error")]
+
+
+def test_a_strong_distinct_admin_identity_secret_is_clean():
+    assert evaluate_production_safety(_hardened(ADMIN_IDENTITY_SECRET=_STRONG_ADMIN)) == []
+
+
+def test_services_without_the_setting_are_not_flagged():
+    # post, chat and the rest neither verify nor send these tokens.
+    assert evaluate_production_safety(_hardened()) == []
+
+
+def test_dev_mode_never_flags_the_admin_identity_secret():
+    assert evaluate_production_safety(_hardened(DEBUG=True, ADMIN_IDENTITY_SECRET="")) == []
+
+
+def test_identity_settings_declare_the_admin_identity_secret(settings):
+    # Without the setting the check above would never run for identity.
+    assert hasattr(settings, "ADMIN_IDENTITY_SECRET")
+
+
 # ---- Django system-check wrapper -------------------------------------------
 
 
@@ -98,3 +158,14 @@ def test_wrapper_emits_django_errors_in_production():
     assert "tara.E004" in ids
     # Errors carry Django's ERROR level so `check --deploy` exits non-zero.
     assert any(m.id == "tara.E001" and m.is_serious() for m in messages)
+
+
+def test_wrapper_blocks_deploy_without_an_admin_identity_secret():
+    with override_settings(
+        DEBUG=False,
+        SECRET_KEY="x7" + "k9q2w" * 12,
+        ALLOWED_HOSTS=["api.tara.example"],
+        ADMIN_IDENTITY_SECRET="dev-only-admin-identity-secret-change-me",
+    ):
+        messages = production_safety_check()
+    assert any(m.id == "tara.E007" and m.is_serious() for m in messages)

@@ -2,10 +2,21 @@
 
 Identity owns roles: the Admin service changes them here, and access tokens read
 them at issue time, so a change reaches the ``roles`` claim on the next refresh.
+
+Caller-specific secrets (roadmap 1.0d). Every service holds the shared
+``INTERNAL_JWT_SECRET``, so a token signed with it proves nothing about the
+caller, whatever its ``iss`` says. These endpoints grant roles and list staff,
+so they accept only a token signed with a secret that identity shares with one
+named caller (picked by the token's ``iss``), issued by that caller, for the
+``identity.roles`` audience. The shared secret is never tried here.
 """
 
 from __future__ import annotations
 
+import logging
+
+import jwt
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
 from rest_framework import serializers
@@ -22,19 +33,64 @@ from .events import emit_security_event
 from .models import Account, AccountRole
 from .tokens import bridged_roles, roles_for
 
+logger = logging.getLogger("tara.identity.internal")
+
 MAX_ROLE_HOLDERS = 200
+ROLES_AUDIENCE = "identity.roles"
+
+# Caller (the token's ``iss``) -> the setting with the secret that identity shares
+# with that caller alone. A new caller (notification in 2.19, moderation in 8.4)
+# gets its own secret here and is allowed only on the views it needs.
+CALLER_SECRET_SETTINGS = {"admin": "ADMIN_IDENTITY_SECRET"}
 
 
-def _require_internal(request: Request) -> None:
+def _invalid_token() -> TaraAPIError:
+    return TaraAPIError("Invalid internal token.", code="unauthenticated", http_status_code=401)
+
+
+def _caller_secret(caller: str) -> str | None:
+    setting = CALLER_SECRET_SETTINGS.get(caller)
+    secret = (getattr(settings, setting, "") or "") if setting else ""
+    if not secret:
+        logger.error("no secret configured for internal caller", extra={"caller": caller})
+        return None
+    if secret == getattr(settings, "TARA_INTERNAL_JWT_SECRET", None):
+        # Every service could sign with it, which would undo the whole point.
+        logger.error("caller secret equals the shared internal secret", extra={"caller": caller})
+        return None
+    return secret
+
+
+def _require_internal(request: Request, *, callers: tuple[str, ...], audience: str) -> str:
+    """Return the verified caller, or raise 401. Fails closed on any doubt."""
     parts = request.META.get("HTTP_AUTHORIZATION", "").split()
     if len(parts) != 2 or parts[0] != "Bearer":
         raise TaraAPIError("Internal auth required.", code="unauthenticated", http_status_code=401)
+    token = parts[1]
     try:
-        verify_internal_token(parts[1], expected_audience="identity-internal")
+        # The claimed caller only selects which key to try. The signature made with
+        # that caller's own secret, and the issuer check, are what prove it.
+        claimed = jwt.decode(token, options={"verify_signature": False}).get("iss")
+    except jwt.PyJWTError as exc:
+        raise _invalid_token() from exc
+    if not isinstance(claimed, str) or claimed not in callers:
+        logger.warning(
+            "internal token from a caller not allowed here", extra={"path": request.path}
+        )
+        raise _invalid_token()
+    secret = _caller_secret(claimed)
+    if secret is None:
+        raise _invalid_token()
+    try:
+        verify_internal_token(
+            token, secret=secret, expected_issuer=claimed, expected_audience=audience
+        )
     except Exception as exc:  # noqa: BLE001
-        raise TaraAPIError(
-            "Invalid internal token.", code="unauthenticated", http_status_code=401
-        ) from exc
+        logger.warning(
+            "internal token rejected", extra={"caller": claimed, "reason": type(exc).__name__}
+        )
+        raise _invalid_token() from exc
+    return claimed
 
 
 def _account_data(account: Account) -> dict:
@@ -62,10 +118,13 @@ class _RoleSerializer(serializers.Serializer):
 class _InternalView(APIView):
     permission_classes = [AllowAny]
     authentication_classes: list = []
+    # Role grants, account lookup and staff lists: only admin may call them.
+    internal_callers: tuple[str, ...] = ("admin",)
+    internal_audience = ROLES_AUDIENCE
 
     def initial(self, request, *args, **kwargs):
         super().initial(request, *args, **kwargs)
-        _require_internal(request)
+        _require_internal(request, callers=self.internal_callers, audience=self.internal_audience)
 
 
 class AccountLookupView(_InternalView):

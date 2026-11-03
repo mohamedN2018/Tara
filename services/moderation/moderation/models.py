@@ -36,6 +36,9 @@ class ModerationCase(models.Model):
     state = models.CharField(max_length=12, choices=State.choices, default=State.OPEN)
     report_count = models.PositiveIntegerField(default=0)
     assigned_to = models.UUIDField(null=True, blank=True)
+    # Who the reported content belongs to: the only account that may appeal.
+    # Null for cases opened by events that predate it, which nobody can appeal.
+    owner_id = models.UUIDField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
