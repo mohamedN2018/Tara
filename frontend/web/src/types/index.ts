@@ -77,10 +77,42 @@ export interface Post {
   share_count: number;
   my_reaction?: string | null;
   is_saved?: boolean;
+  link_preview?: LinkPreview | null;
+  poll?: Poll | null;
+  shared_post_id?: string | null;
+  shared_post?: SharedPost | null;
   created_at: string;
   // Client-side: built from a feed snapshot, so `body` may be a truncated
   // excerpt and it must not be edited.
   partial?: boolean;
+}
+
+export interface LinkPreview {
+  url: string;
+  title: string;
+  description: string;
+  site: string;
+}
+
+export interface Poll {
+  id: string;
+  closes_at: string | null;
+  closed: boolean;
+  total_votes: number;
+  my_option_id: string | null;
+  options: { id: string; text: string; vote_count: number }[];
+}
+
+export interface SharedPost {
+  id: string;
+  author_id: string;
+  author_type: string;
+  type: string;
+  body: string;
+  audience: string;
+  media_ids: string[];
+  link_preview: LinkPreview | null;
+  created_at: string;
 }
 
 export interface FeedItem {

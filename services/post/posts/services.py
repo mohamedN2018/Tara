@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import re
+from datetime import timedelta
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
-from tara_common.exceptions import TaraAPIError
+from tara_common.exceptions import Conflict, TaraAPIError
 
-from . import events
-from .clients import get_relationship
+from . import events, linkpreview
+from .clients import get_relationship, resolve_handles
 from .models import (
     REACTION_TYPES,
     Audience,
@@ -19,6 +20,9 @@ from .models import (
     Comment,
     Hashtag,
     Mention,
+    Poll,
+    PollOption,
+    PollVote,
     Post,
     PostHashtag,
     PostMedia,
@@ -29,8 +33,16 @@ from .models import (
     Share,
 )
 
-_HASHTAG_RE = re.compile(r"#(\w{1,80})")
-_MENTION_RE = re.compile(r"@([a-zA-Z0-9_]{3,30})")
+# Not inside a word, a URL fragment or an email address.
+_HASHTAG_RE = re.compile(r"(?<![\w/&#])#(\w{1,80})")
+_MENTION_RE = re.compile(r"(?<![\w.@/])@([a-zA-Z0-9_]{3,30})")
+MAX_MENTION_NOTIFICATIONS = 10
+AUDIENCE_RANK = {
+    Audience.ONLY_ME: 0,
+    Audience.FRIENDS: 1,
+    Audience.FOLLOWERS: 2,
+    Audience.PUBLIC: 3,
+}
 
 
 def extract_hashtags(body: str) -> list[str]:
@@ -115,6 +127,17 @@ def _attach_tags_and_mentions(post: Post) -> tuple[list[str], list[str]]:
     return tags, mentions
 
 
+def _create_poll(post: Post, spec: dict) -> Poll:
+    hours = spec.get("duration_hours")
+    poll = Poll.objects.create(
+        post=post, closes_at=timezone.now() + timedelta(hours=hours) if hours else None
+    )
+    PollOption.objects.bulk_create(
+        PollOption(poll=poll, text=text, position=i) for i, text in enumerate(spec["options"])
+    )
+    return poll
+
+
 def create_post(
     author_id: str,
     *,
@@ -122,9 +145,9 @@ def create_post(
     post_type: str = Post.Type.TEXT,
     audience: str = Audience.PUBLIC,
     media_ids: list[str] | None = None,
-    shared_post_id: str | None = None,
-    link_preview: dict | None = None,
+    shared_post_id=None,
     author_type: str = "user",
+    poll: dict | None = None,
 ) -> Post:
     if audience not in Audience.values:
         raise TaraAPIError("Invalid audience.", code="validation_error", http_status_code=400)
@@ -135,12 +158,13 @@ def create_post(
         post = Post.objects.create(
             author_id=author_id,
             author_type=author_type,
-            type=post_type,
+            type=Post.Type.POLL if poll else post_type,
             body=body,
             audience=audience,
             shared_post_id=shared_post_id,
-            link_preview=link_preview,
         )
+        if poll:
+            _create_poll(post, poll)
         for i, media_id in enumerate(media_ids or []):
             PostMedia.objects.create(post=post, media_id=media_id, position=i)
         tags, mentions = _attach_tags_and_mentions(post)
@@ -157,6 +181,7 @@ def create_post(
                 "media_ids": [str(m) for m in (media_ids or [])],
                 "hashtags": tags,
                 "mentions": mentions,
+                "shared_post_id": str(shared_post_id) if shared_post_id else None,
                 "created_at": post.created_at.isoformat(),
             },
             actor_id=str(author_id),
@@ -170,11 +195,12 @@ def edit_post(author_id: str, post_id: str, body: str) -> Post:
     if post is None:
         raise TaraAPIError("Post not found.", code="not_found", http_status_code=404)
     with transaction.atomic():
+        mentioned_before = set(post.mentions.values_list("mentioned_handle", flat=True))
         post.body = body
         post.save(update_fields=["body", "updated_at"])
         post.hashtags.all().delete()
         post.mentions.all().delete()
-        _attach_tags_and_mentions(post)
+        _, mentions = _attach_tags_and_mentions(post)
         events.emit(
             "post.updated",
             subject_id=str(post.id),
@@ -183,6 +209,7 @@ def edit_post(author_id: str, post_id: str, body: str) -> Post:
                 "author_id": str(author_id),
                 "audience": post.audience,
                 "excerpt": body[:280],
+                "new_mentions": sorted(set(mentions) - mentioned_before),
             },
             actor_id=str(author_id),
         )
@@ -196,6 +223,10 @@ def delete_post(author_id: str, post_id: str) -> None:
     with transaction.atomic():
         post.deleted_at = timezone.now()
         post.save(update_fields=["deleted_at"])
+        if post.shared_post_id:
+            Post.objects.filter(id=post.shared_post_id, share_count__gt=0).update(
+                share_count=F("share_count") - 1
+            )
         events.emit(
             "post.deleted",
             subject_id=str(post.id),
@@ -208,12 +239,22 @@ def get_post(viewer_id: str, post_id: str) -> Post:
     return _require_visible(viewer_id, post_id)
 
 
+def with_detail(queryset):
+    """What the serializer needs per post, loaded once for the whole list."""
+    return queryset.select_related("poll").prefetch_related("media", "poll__options")
+
+
 def author_posts_queryset(author_id: str | None):
     """Posts by one author (a profile timeline); filter with ``only_visible``."""
     if not author_id:
         raise TaraAPIError("author_id is required.", code="validation_error", http_status_code=400)
-    return Post.objects.filter(author_id=author_id, deleted_at__isnull=True).prefetch_related(
-        "media"
+    return with_detail(Post.objects.filter(author_id=author_id, deleted_at__isnull=True))
+
+
+def hashtag_posts_queryset(tag: str):
+    """Posts carrying a hashtag; filter with ``only_visible``."""
+    return with_detail(
+        Post.objects.filter(hashtags__hashtag__tag=tag.lstrip("#").lower(), deleted_at__isnull=True)
     )
 
 
@@ -225,15 +266,24 @@ def only_visible(viewer_id: str, posts) -> list[Post]:
 
 def posts_by_ids(viewer_id: str, post_ids: list) -> list[Post]:
     """The posts the viewer may see, in the order requested. Others are left out."""
-    posts = Post.objects.filter(id__in=post_ids).prefetch_related("media")
+    posts = with_detail(Post.objects.filter(id__in=post_ids))
     by_id = {p.id: p for p in only_visible(viewer_id, posts)}
     return [by_id[i] for i in post_ids if i in by_id]
 
 
 def viewer_state(viewer_id: str, posts: list[Post]) -> dict:
-    """The viewer's own reaction and saved flag for a list of posts."""
+    """The viewer's own state for a list of posts, and the originals they may see."""
     ids = [p.id for p in posts]
+    poll_ids = [p.poll.id for p in posts if p.type == Post.Type.POLL and hasattr(p, "poll")]
+    shared_ids = {p.shared_post_id for p in posts if p.shared_post_id}
+    originals = only_visible(viewer_id, with_detail(Post.objects.filter(id__in=shared_ids)))
     return {
+        "votes": dict(
+            PollVote.objects.filter(poll_id__in=poll_ids, account_id=viewer_id).values_list(
+                "poll_id", "option_id"
+            )
+        ),
+        "shared": {p.id: p for p in originals},
         "reactions": dict(
             PostReaction.objects.filter(post_id__in=ids, account_id=viewer_id).values_list(
                 "post_id", "type"
@@ -328,6 +378,7 @@ def add_comment(viewer_id: str, post_id: str, body: str, parent_id: str | None =
                 "parent_id": str(parent_id) if parent_id else None,
                 "parent_author_id": str(parent.author_id) if parent else None,
                 "post_author_id": str(post.author_id),
+                "mentions": extract_mentions(body),
             },
             actor_id=str(viewer_id),
         )
@@ -346,18 +397,122 @@ def list_comments(viewer_id: str, post_id: str):
 # ---- shares -----------------------------------------------------------------
 
 
-def share(viewer_id: str, post_id: str) -> Share:
+def share(viewer_id: str, post_id: str, *, body: str = "", audience: str | None = None) -> Post:
+    """Create the sharer's own post pointing at the original.
+
+    Sharing a share points at the first post. The new post cannot reach further
+    than the original, and readers see the original only if they could anyway
+    (``viewer_state`` checks each one), so a share never widens who can read it.
+    """
     post = _require_visible(viewer_id, post_id)
+    if post.shared_post_id:
+        post = _require_visible(viewer_id, post.shared_post_id)
+    audience = audience or post.audience
+    if AUDIENCE_RANK[audience] > AUDIENCE_RANK[post.audience]:
+        raise TaraAPIError(
+            "A share cannot reach further than the original post.",
+            code="validation_error",
+            http_status_code=400,
+        )
     with transaction.atomic():
-        share_row = Share.objects.create(post=post, account_id=viewer_id)
+        shared = create_post(
+            viewer_id,
+            body=body,
+            post_type=Post.Type.SHARE,
+            audience=audience,
+            shared_post_id=post.id,
+        )
+        Share.objects.create(post=post, account_id=viewer_id)
         Post.objects.filter(id=post.id).update(share_count=F("share_count") + 1)
         events.emit(
             "post.shared",
             subject_id=str(post.id),
-            payload={"post_id": str(post.id), "sharer": str(viewer_id)},
+            payload={
+                "post_id": str(post.id),
+                "share_post_id": str(shared.id),
+                "sharer": str(viewer_id),
+                "author_id": str(post.author_id),
+            },
             actor_id=str(viewer_id),
         )
-    return share_row
+    return shared
+
+
+# ---- polls ------------------------------------------------------------------
+
+
+def vote(viewer_id: str, post_id: str, option_id: str) -> Post:
+    post = _require_visible(viewer_id, post_id)
+    poll = Poll.objects.filter(post=post).first()
+    if poll is None:
+        raise TaraAPIError("This post has no poll.", code="not_found", http_status_code=404)
+    if poll.closes_at and poll.closes_at <= timezone.now():
+        raise Conflict("This poll has closed.", code="conflict")
+    option = poll.options.filter(id=option_id).first()
+    if option is None:
+        raise TaraAPIError("Option not found.", code="not_found", http_status_code=404)
+    try:
+        with transaction.atomic():
+            PollVote.objects.create(poll=poll, option=option, account_id=viewer_id)
+            PollOption.objects.filter(id=option.id).update(vote_count=F("vote_count") + 1)
+    except IntegrityError as exc:
+        raise Conflict("You have already voted.", code="conflict") from exc
+    return with_detail(Post.objects.filter(id=post.id)).get()
+
+
+# ---- link previews and mentions (run by the event consumer) ------------------
+
+
+def refresh_link_preview(post_id: str) -> None:
+    """Build the preview from the first URL in the post; the client never supplies one."""
+    post = Post.objects.filter(id=post_id, deleted_at__isnull=True).first()
+    if post is None:
+        return
+    url = linkpreview.first_url(post.body)
+    current = post.link_preview or {}
+    if not url:
+        preview = None
+    elif current.get("source_url") == url:
+        return
+    else:
+        preview = linkpreview.fetch_preview(url)
+        if preview:
+            preview["source_url"] = url
+    Post.objects.filter(id=post_id).update(link_preview=preview)
+
+
+def notify_mentions(
+    *,
+    actor_id: str,
+    post_id: str,
+    handles: list[str],
+    comment_id: str | None = None,
+) -> int:
+    """Tell mentioned accounts, but only those who can actually open the post."""
+    post = Post.objects.filter(id=post_id).first()
+    handles = list(dict.fromkeys(handles))[:MAX_MENTION_NOTIFICATIONS]
+    if post is None or not handles:
+        return 0
+    sent = 0
+    for account in resolve_handles(handles).values():
+        if account == str(actor_id) or _is_locally_blocked(actor_id, account):
+            continue
+        if not visible_to_viewer(account, post):
+            continue
+        with transaction.atomic():
+            events.emit(
+                "user.mentioned",
+                subject_id=str(post_id),
+                payload={
+                    "recipient": account,
+                    "actor": str(actor_id),
+                    "post_id": str(post_id),
+                    "comment_id": comment_id,
+                },
+                actor_id=str(actor_id),
+            )
+        sent += 1
+    return sent
 
 
 # ---- saved content ----------------------------------------------------------

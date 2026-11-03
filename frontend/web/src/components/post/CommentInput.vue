@@ -3,6 +3,8 @@ import { Send } from "lucide-vue-next";
 import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
+import MentionField from "@/components/post/MentionField.vue";
+
 const props = withDefaults(
   defineProps<{ submitting?: boolean; placeholder?: string; autofocus?: boolean }>(),
   { submitting: false, placeholder: "", autofocus: false },
@@ -11,7 +13,7 @@ const emit = defineEmits<{ submit: [body: string] }>();
 
 const { t } = useI18n();
 const body = ref("");
-const field = ref<HTMLInputElement | null>(null);
+const field = ref<InstanceType<typeof MentionField> | null>(null);
 
 onMounted(() => {
   if (props.autofocus) field.value?.focus();
@@ -27,13 +29,11 @@ function submit() {
 
 <template>
   <form class="flex items-center gap-2" @submit.prevent="submit">
-    <input
+    <MentionField
       ref="field"
       v-model="body"
-      class="input rounded-full bg-gray-100 dark:bg-gray-800"
-      dir="auto"
+      field-class="input rounded-full bg-gray-100 dark:bg-gray-800"
       :placeholder="placeholder || t('post.addComment')"
-      :aria-label="placeholder || t('post.addComment')"
     />
     <button
       type="submit"

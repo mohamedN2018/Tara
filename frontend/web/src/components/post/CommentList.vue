@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import CommentInput from "@/components/post/CommentInput.vue";
+import RichText from "@/components/post/RichText.vue";
 import { relativeTime } from "@/lib/format";
 import type { Comment } from "@/services/post";
 import { useDirectoryStore } from "@/stores/directory";
@@ -121,7 +122,7 @@ function toggle(rootId: string) {
         <div class="min-w-0 flex-1">
           <div class="inline-block rounded-2xl bg-gray-100 px-3 py-1.5 dark:bg-gray-800">
             <span class="block text-xs font-semibold" dir="auto">{{ nameFor(th.root.author_id) }}</span>
-            <span class="whitespace-pre-wrap break-words text-sm" dir="auto">{{ th.root.body }}</span>
+            <span class="whitespace-pre-wrap break-words text-sm" dir="auto"><RichText :body="th.root.body" /></span>
           </div>
           <div class="mt-0.5 flex items-center gap-3 ps-2 text-[11px] text-gray-400">
             <time>{{ relativeTime(th.root.created_at) }}</time>
@@ -147,7 +148,7 @@ function toggle(rootId: string) {
                 <div class="inline-block rounded-2xl bg-gray-100 px-3 py-1.5 dark:bg-gray-800">
                   <span class="block text-xs font-semibold" dir="auto">{{ nameFor(r.author_id) }}</span>
                   <span class="whitespace-pre-wrap break-words text-sm" dir="auto">
-                    <span v-if="r.toName" class="font-medium text-brand-600">@{{ r.toName }} </span>{{ r.body }}
+                    <span v-if="r.toName" class="font-medium text-brand-600">@{{ r.toName }} </span><RichText :body="r.body" />
                   </span>
                 </div>
                 <div class="mt-0.5 flex items-center gap-3 ps-2 text-[11px] text-gray-400">

@@ -98,7 +98,7 @@ Events are **never** published directly inside the business transaction. Instead
 |-------|---------|-------------|-----------|
 | `profile.updated` | account | changed_fields, public_snapshot | Search, Feed/Post/Chat (refresh author cache) |
 | `page.created` | page | handle, category | Search |
-| `page.member.changed` | page | member_id, role, action | Notification, Audit |
+| `page.member.changed` | page | member, role, action | (none yet) |
 
 ### Social Graph
 | Event | Subject | Key payload | Consumers |
@@ -120,7 +120,8 @@ Events are **never** published directly inside the business transaction. Instead
 | `post.reacted` | post | reactor, reaction_type | Notification |
 | `post.commented` | comment | post_id, author | Notification, Feed (signal) |
 | `comment.replied` | comment | parent_id, author | Notification |
-| `post.shared` | share | sharer, post_id | Feed, Notification |
+| `post.shared` | post | sharer, post_id, share_post_id, author_id | Notification |
+| `user.mentioned` | post | recipient, actor, post_id, comment_id (only readers who can open the post) | Notification |
 | `post.reported` | report | reporter, reason | Moderation |
 
 ### Feed
@@ -142,7 +143,7 @@ Events are **never** published directly inside the business transaction. Instead
 | `message.read` | receipt | conversation_id, reader, up_to | Realtime |
 | `message.reacted` | reaction | message_id, reactor, type | Realtime, Notification |
 | `conversation.typing` | conversation | actor (ephemeral, Realtime-only) | Realtime |
-| `conversation.member.changed` | conversation | member, action | Realtime, Notification |
+| `conversation.member.changed` | conversation | conversation_id, action, recipients[] | Realtime |
 | `user.presence.changed` | account | status, last_seen? (privacy-filtered) | Realtime |
 
 ### Marketplace

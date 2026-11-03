@@ -1,28 +1,11 @@
 import { chromium, expect, type Page, test } from "@playwright/test";
 
-import { API, apiAs, dmWith, expectNoUuid, pageAs, sharedAccounts, unique } from "./helpers";
+import { API, apiAs, befriend, dmWith, expectNoUuid, pageAs, sharedAccounts, unique } from "./helpers";
 
 const bubbleText = (page: Page, text: string) => page.getByTestId("message-scroller").getByText(text);
 
 async function hoverTools(page: Page, text: string) {
   await bubbleText(page, text).hover();
-}
-
-async function ensureFriends() {
-  const { a, b, c } = await sharedAccounts();
-  for (const [from, to] of [[a, b], [a, c]] as const) {
-    const api = await apiAs(from);
-    const friends = (await (await api.get(`${API}/friends/`)).json()).data.friends as string[];
-    if (friends.includes(to.id)) continue;
-    // Either side may already have a pending request from an earlier test.
-    await api.post(`${API}/friends/requests/`, { data: { to_user_id: to.id } });
-    const other = await apiAs(to);
-    for (const [client, sender] of [[other, from], [api, to]] as const) {
-      const rows = (await (await client.get(`${API}/friends/requests/`)).json()).data as { id: string; requested_by: string }[];
-      const row = rows.find((r) => r.requested_by === sender.id);
-      if (row) await client.post(`${API}/friends/requests/${row.id}/accept/`);
-    }
-  }
 }
 
 test("message reactions appear live on the other side and can be removed", async ({ browser }) => {
@@ -83,7 +66,8 @@ test("pin and mute persist across a reload", async ({ browser }) => {
 
 test("a group is created from friends, chats, and manages members", async ({ browser }) => {
   const { a, b, c } = await sharedAccounts();
-  await ensureFriends();
+  await befriend(a, b);
+  await befriend(a, c);
   const tag = unique();
 
   const alice = await pageAs(browser, a);

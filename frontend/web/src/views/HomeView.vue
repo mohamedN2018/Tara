@@ -147,7 +147,7 @@ onUnmounted(() => {
 
       <template v-else>
         <template v-for="(post, i) in posts" :key="post.id">
-          <PostCard :post="post" @removed="onRemoved" />
+          <PostCard :post="post" @removed="onRemoved" @shared="onCreated" />
           <SponsoredCard
             v-if="i % 5 === 4 && sponsored[Math.floor(i / 5)]"
             :ad="sponsored[Math.floor(i / 5)]"

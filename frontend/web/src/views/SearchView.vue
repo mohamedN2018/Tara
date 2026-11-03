@@ -44,6 +44,12 @@ async function run() {
   searched.value = true;
   error.value = false;
   try {
+    if (q.startsWith("#") && q.length > 1) {
+      people.value = [];
+      listings.value = [];
+      posts.value = await postService.byHashtag(q.slice(1));
+      return;
+    }
     const hits = await searchService.query(q, "all");
     people.value = hits.filter((h) => h.type === "user");
     // Resolve full objects so posts/listings render as real cards.

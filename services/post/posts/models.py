@@ -25,7 +25,7 @@ class Post(models.Model):
         VIDEO = "video", "Video"
         LINK = "link", "Link"
         SHARE = "share", "Shared post"
-        POLL = "poll", "Poll"  # architecture placeholder
+        POLL = "poll", "Poll"
 
     class ModerationStatus(models.TextChoices):
         OK = "ok", "OK"
@@ -57,6 +57,43 @@ class Post(models.Model):
     @property
     def is_visible(self) -> bool:
         return self.deleted_at is None and self.moderation_status != self.ModerationStatus.REMOVED
+
+
+class Poll(models.Model):
+    """One question per post (the post body), with fixed options and one vote per account."""
+
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    post = models.OneToOneField(Post, on_delete=models.CASCADE, related_name="poll")
+    closes_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "poll"
+
+
+class PollOption(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    poll = models.ForeignKey(Poll, on_delete=models.CASCADE, related_name="options")
+    text = models.CharField(max_length=120)
+    position = models.PositiveSmallIntegerField(default=0)
+    vote_count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "poll_option"
+        ordering = ["position"]
+
+
+class PollVote(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    poll = models.ForeignKey(Poll, on_delete=models.CASCADE, related_name="votes")
+    option = models.ForeignKey(PollOption, on_delete=models.CASCADE, related_name="votes")
+    account_id = models.UUIDField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "poll_vote"
+        constraints = [
+            models.UniqueConstraint(fields=["poll", "account_id"], name="poll_vote_uniq"),
+        ]
 
 
 class PostMedia(models.Model):

@@ -1,14 +1,20 @@
 <script setup lang="ts">
 import { Bookmark, Flag, Globe, Lock, MoreHorizontal, PenSquare, Trash2, UserCheck, Users } from "lucide-vue-next";
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type { RouteLocationRaw } from "vue-router";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import CommentInput from "@/components/post/CommentInput.vue";
 import CommentList from "@/components/post/CommentList.vue";
+import LinkPreviewCard from "@/components/post/LinkPreviewCard.vue";
+import PollCard from "@/components/post/PollCard.vue";
 import PostActions from "@/components/post/PostActions.vue";
+import RichText from "@/components/post/RichText.vue";
+import ShareBox from "@/components/post/ShareBox.vue";
+import SharedPostCard from "@/components/post/SharedPostCard.vue";
 import { relativeTime } from "@/lib/format";
+import { hasLink } from "@/lib/richText";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import { useMediaUrls } from "@/lib/useMediaUrl";
 import { type Comment, postService } from "@/services/post";
@@ -27,7 +33,7 @@ const props = withDefaults(
   }>(),
   { startCommentsOpen: false },
 );
-const emit = defineEmits<{ removed: [id: string] }>();
+const emit = defineEmits<{ removed: [id: string]; shared: [post: Post] }>();
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -44,7 +50,26 @@ const authorTo = computed<RouteLocationRaw>(() => ({
 }));
 const isAuthor = computed(() => auth.account?.id === props.post.author_id);
 // A feed snapshot holds at most an excerpt: saving it would truncate the post.
-const canEdit = computed(() => isAuthor.value && !props.post.partial);
+const canEdit = computed(
+  () => isAuthor.value && !props.post.partial && props.post.type !== "poll",
+);
+const isShare = computed(() => !!props.post.shared_post_id);
+
+// The server builds the preview after the post is saved, so a post just written
+// doesn't have it yet.
+const PREVIEW_REFETCH_MS = 2500;
+const linkPreview = ref(props.post.link_preview ?? null);
+let previewTimer: number | undefined;
+function refetchPreviewSoon() {
+  window.clearTimeout(previewTimer);
+  previewTimer = window.setTimeout(async () => {
+    try {
+      linkPreview.value = (await postService.get(props.post.id)).link_preview ?? null;
+    } catch {
+      // Shown on the next load.
+    }
+  }, PREVIEW_REFETCH_MS);
+}
 
 const AUDIENCE_ICON: Record<string, typeof Globe> = {
   public: Globe,
@@ -98,6 +123,7 @@ async function saveEdit() {
     localBody.value = updated.body;
     edited.value = true;
     editing.value = false;
+    refetchPreviewSoon();
   } catch (e) {
     toasts.error(e);
   } finally {
@@ -172,9 +198,13 @@ async function onUnreact() {
   }
 }
 
+const JUST_POSTED_MS = 15_000;
 onMounted(() => {
   if (props.startCommentsOpen) toggleComments();
+  const fresh = Date.now() - new Date(props.post.created_at).getTime() < JUST_POSTED_MS;
+  if (fresh && !linkPreview.value && isAuthor.value && hasLink(localBody.value)) refetchPreviewSoon();
 });
+onBeforeUnmount(() => window.clearTimeout(previewTimer));
 
 async function toggleComments() {
   showComments.value = !showComments.value;
@@ -237,13 +267,11 @@ async function submitReply({ targetId, body }: { targetId: string; body: string 
   }
 }
 
-async function share() {
-  try {
-    await postService.share(props.post.id);
-    shareCount.value += 1;
-  } catch (e) {
-    toasts.error(e);
-  }
+const sharing = ref(false);
+function onShared(post: Post) {
+  sharing.value = false;
+  shareCount.value += 1;
+  emit("shared", post);
 }
 
 async function toggleSave() {
@@ -338,9 +366,13 @@ async function toggleSave() {
       </div>
     </div>
     <p v-else-if="localBody" class="mt-3 whitespace-pre-wrap break-words text-[15px] leading-relaxed" dir="auto">
-      {{ localBody }}
+      <RichText :body="localBody" />
       <span v-if="edited" class="text-xs text-gray-400">· {{ t("messages.edited") }}</span>
     </p>
+
+    <LinkPreviewCard v-if="linkPreview && !editing" :preview="linkPreview" />
+    <PollCard v-if="post.poll" :post-id="post.id" :poll="post.poll" />
+    <SharedPostCard v-if="isShare" :post="post.shared_post" />
 
     <!-- Report box -->
     <div v-if="showReport" class="mt-3 rounded-xl border border-gray-200 p-3 dark:border-gray-800">
@@ -378,9 +410,10 @@ async function toggleSave() {
         @react="onReact"
         @unreact="onUnreact"
         @comment="toggleComments"
-        @share="share"
+        @share="sharing = !sharing"
       />
     </div>
+    <ShareBox v-if="sharing" :post="post" @cancel="sharing = false" @shared="onShared" />
 
     <section v-if="showComments" class="mt-3 space-y-3 border-t border-gray-100 pt-3 dark:border-gray-800">
       <CommentInput :submitting="submitting" @submit="submitComment" />

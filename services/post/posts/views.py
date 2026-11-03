@@ -26,11 +26,17 @@ from .serializers import (
     ReportSerializer,
     SavedItemSerializer,
     SaveSerializer,
+    ShareCreateSerializer,
+    VoteSerializer,
 )
 
 
 def _me(request: Request) -> str:
     return request.user.account_id
+
+
+def _one(viewer_id: str, post) -> dict:
+    return _serialize(viewer_id, [post])[0]
 
 
 def _serialize(viewer_id: str, posts: list) -> list:
@@ -43,12 +49,17 @@ class PostCreateView(APIView):
 
     @extend_schema(responses={200: PostSerializer(many=True)}, tags=["posts"])
     def get(self, request: Request) -> Response:
-        """Posts by ``author_id`` (a profile's timeline), newest first.
+        """Posts by ``author_id`` (a profile's timeline) or ``hashtag``, newest first.
 
         Audience filtering runs after paging, so a page can be short. Keep
         following ``page.next_cursor`` until ``has_more`` is false.
         """
-        queryset = services.author_posts_queryset(request.query_params.get("author_id"))
+        hashtag = request.query_params.get("hashtag")
+        queryset = (
+            services.hashtag_posts_queryset(hashtag)
+            if hashtag
+            else services.author_posts_queryset(request.query_params.get("author_id"))
+        )
         paginator = CursorPagination()
         page = paginator.paginate_queryset(queryset, request)
         posts = services.only_visible(_me(request), page)
@@ -67,10 +78,9 @@ class PostCreateView(APIView):
                 post_type=v["type"],
                 audience=v["audience"],
                 media_ids=[str(m) for m in v["media_ids"]],
-                shared_post_id=str(v["shared_post_id"]) if v.get("shared_post_id") else None,
-                link_preview=v.get("link_preview"),
+                poll=v.get("poll"),
             )
-            return data_response(PostSerializer(post).data, status=status.HTTP_201_CREATED)
+            return data_response(_one(_me(request), post), status=status.HTTP_201_CREATED)
 
         return idempotent(IdempotencyRecord, request, handler)
 
@@ -107,7 +117,7 @@ class PostDetailView(APIView):
         serializer = PostEditSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         post = services.edit_post(_me(request), post_id, serializer.validated_data["body"])
-        return data_response(PostSerializer(post).data)
+        return data_response(_one(_me(request), post))
 
     @extend_schema(responses={204: None}, tags=["posts"])
     def delete(self, request: Request, post_id: str) -> Response:
@@ -182,10 +192,24 @@ class RepliesView(APIView):
 class ShareView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(responses={201: None}, tags=["posts"])
+    @extend_schema(request=ShareCreateSerializer, responses={201: PostSerializer}, tags=["posts"])
     def post(self, request: Request, post_id: str) -> Response:
-        services.share(_me(request), post_id)
-        return data_response({"detail": "shared"}, status=status.HTTP_201_CREATED)
+        serializer = ShareCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        v = serializer.validated_data
+        post = services.share(_me(request), post_id, body=v["body"], audience=v.get("audience"))
+        return data_response(_one(_me(request), post), status=status.HTTP_201_CREATED)
+
+
+class VoteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=VoteSerializer, responses={200: PostSerializer}, tags=["posts"])
+    def post(self, request: Request, post_id: str) -> Response:
+        serializer = VoteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        post = services.vote(_me(request), post_id, str(serializer.validated_data["option_id"]))
+        return data_response(_one(_me(request), post))
 
 
 class SaveView(APIView):

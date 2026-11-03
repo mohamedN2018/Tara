@@ -48,6 +48,31 @@ def on_comment_replied(e: EventEnvelope) -> None:
     )
 
 
+@on_event("user.mentioned")
+def on_user_mentioned(e: EventEnvelope) -> None:
+    p = e.payload
+    notify(
+        p["recipient"],
+        "mention",
+        actor_id=p.get("actor"),
+        subject_ref=f"post:{p['post_id']}",
+        body="mentioned you",
+    )
+
+
+@on_event("post.shared")
+def on_post_shared(e: EventEnvelope) -> None:
+    p = e.payload
+    if p.get("author_id"):
+        notify(
+            p["author_id"],
+            "post.share",
+            actor_id=p.get("sharer"),
+            subject_ref=f"post:{p.get('share_post_id') or p['post_id']}",
+            body="shared your post",
+        )
+
+
 @on_event("friendship.requested")
 def on_friend_requested(e: EventEnvelope) -> None:
     p = e.payload

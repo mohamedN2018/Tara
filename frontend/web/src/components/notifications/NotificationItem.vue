@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Bell, Heart, MessageSquare, ShoppingBag, UserPlus } from "lucide-vue-next";
+import { AtSign, Bell, Heart, MessageSquare, Share2, ShoppingBag, UserPlus } from "lucide-vue-next";
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -19,6 +19,8 @@ const icon = computed(() => {
     "post.reaction": Heart,
     "post.comment": MessageSquare,
     "comment.reply": MessageSquare,
+    "post.share": Share2,
+    mention: AtSign,
     "friend.request": UserPlus,
     "friend.accepted": UserPlus,
     follow: UserPlus,

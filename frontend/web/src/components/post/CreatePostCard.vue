@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ChevronDown, Globe, ImagePlus, Lock, UserCheck, Users, X } from "lucide-vue-next";
+import { BarChart3, ChevronDown, Globe, ImagePlus, Lock, Plus, UserCheck, Users, X } from "lucide-vue-next";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
+import MentionField from "@/components/post/MentionField.vue";
 import { errorMessage } from "@/lib/errors";
 import { mediaService } from "@/services/media";
 import { postService } from "@/services/post";
@@ -32,6 +33,20 @@ const AUDIENCES = [
 const audience = ref("public");
 const showAudience = ref(false);
 const currentAudience = computed(() => AUDIENCES.find((a) => a.v === audience.value) ?? AUDIENCES[0]);
+
+// Poll: the post body is the question.
+const POLL_MAX_OPTIONS = 6;
+const pollOpen = ref(false);
+const pollOptions = ref(["", ""]);
+const pollHours = ref<number | null>(null);
+const POLL_DURATIONS = [
+  { hours: null, label: "feed.pollNoEnd" },
+  { hours: 24, label: "feed.pollDay" },
+  { hours: 72, label: "feed.pollThreeDays" },
+  { hours: 168, label: "feed.pollWeek" },
+];
+const filledOptions = computed(() => pollOptions.value.map((o) => o.trim()).filter(Boolean));
+const pollReady = computed(() => filledOptions.value.length >= 2 && !!body.value.trim());
 
 const authorName = () => auth.profile?.display_name || auth.account?.email?.split("@")[0] || "?";
 
@@ -64,11 +79,18 @@ function reset() {
   previews.value = [];
   audience.value = "public";
   expanded.value = false;
+  pollOpen.value = false;
+  pollOptions.value = ["", ""];
+  pollHours.value = null;
 }
 
 async function submit() {
   const text = body.value.trim();
   if ((!text && mediaIds.value.length === 0) || submitting.value) return;
+  if (pollOpen.value && !pollReady.value) {
+    error.value = t("feed.pollIncomplete");
+    return;
+  }
   submitting.value = true;
   error.value = "";
   try {
@@ -76,6 +98,9 @@ async function submit() {
       body: text,
       media_ids: mediaIds.value,
       audience: audience.value,
+      ...(pollOpen.value
+        ? { poll: { options: filledOptions.value, duration_hours: pollHours.value } }
+        : {}),
     });
     emit("created", post);
     reset();
@@ -131,14 +156,38 @@ async function submit() {
     </div>
 
     <div v-if="expanded" class="mt-3">
-      <textarea
+      <MentionField
         v-model="body"
-        class="input min-h-[88px] resize-none border-0 bg-gray-50 text-base focus:ring-0 dark:bg-gray-800/60"
-        :placeholder="t('feed.composerPlaceholder')"
-        :aria-label="t('feed.composerPlaceholder')"
-        dir="auto"
-        autofocus
+        multiline
+        field-class="input min-h-[88px] resize-none border-0 bg-gray-50 text-base focus:ring-0 dark:bg-gray-800/60"
+        :placeholder="pollOpen ? t('feed.pollQuestion') : t('feed.composerPlaceholder')"
       />
+
+      <div v-if="pollOpen" class="mt-2 space-y-2" data-testid="poll-editor">
+        <input
+          v-for="(_, i) in pollOptions"
+          :key="i"
+          v-model="pollOptions[i]"
+          class="input"
+          dir="auto"
+          maxlength="120"
+          :placeholder="t('feed.pollOption', { n: i + 1 })"
+          :aria-label="t('feed.pollOption', { n: i + 1 })"
+        />
+        <div class="flex items-center justify-between gap-2">
+          <button
+            v-if="pollOptions.length < POLL_MAX_OPTIONS"
+            type="button"
+            class="btn-ghost text-sm"
+            @click="pollOptions.push('')"
+          >
+            <Plus class="h-4 w-4" /> {{ t("feed.pollAddOption") }}
+          </button>
+          <select v-model="pollHours" class="input ms-auto w-auto" :aria-label="t('feed.pollDuration')">
+            <option v-for="d in POLL_DURATIONS" :key="d.label" :value="d.hours">{{ t(d.label) }}</option>
+          </select>
+        </div>
+      </div>
 
       <div v-if="previews.length" class="mt-2 grid grid-cols-4 gap-2">
         <div v-for="(src, i) in previews" :key="i" class="relative">
@@ -155,13 +204,17 @@ async function submit() {
 
       <p v-if="error" class="mt-2 text-xs text-red-500">{{ error }}</p>
 
-      <div class="mt-3 flex items-center justify-between border-t border-gray-100 pt-3 dark:border-gray-800">
+      <div class="mt-3 flex flex-wrap items-center gap-1 border-t border-gray-100 pt-3 dark:border-gray-800">
         <label class="btn-ghost cursor-pointer focus-within:ring-2 focus-within:ring-brand-300" :class="uploading ? 'opacity-50' : ''" :title="t('feed.addPhotos')">
           <ImagePlus class="h-5 w-5 text-green-600" />
           <span class="text-sm">{{ uploading ? t("states.loading") : t("feed.photo") }}</span>
           <input type="file" accept="image/*" multiple class="sr-only" :aria-label="t('feed.addPhotos')" @change="onFiles" />
         </label>
-        <div class="flex gap-2">
+        <button type="button" class="btn-ghost" :aria-pressed="pollOpen" :class="pollOpen ? 'text-brand-600' : ''" @click="pollOpen = !pollOpen">
+          <BarChart3 class="h-5 w-5" />
+          <span class="text-sm">{{ t("feed.poll") }}</span>
+        </button>
+        <div class="ms-auto flex gap-2">
           <button class="btn-ghost" @click="reset">{{ t("feed.cancel") }}</button>
           <button class="btn-primary" :disabled="submitting || uploading" @click="submit">
             {{ submitting ? t("feed.posting") : t("feed.post") }}

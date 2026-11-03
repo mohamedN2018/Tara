@@ -122,3 +122,21 @@ export async function dmWith(api: APIRequestContext, otherId: string): Promise<s
   expect(res.ok()).toBe(true);
   return (await res.json()).data.id;
 }
+
+/** Make two accounts friends. Either side may already have a pending request. */
+export async function befriend(one: Account, other: Account) {
+  const a = await apiAs(one);
+  const friends = (await (await a.get(`${API}/friends/`)).json()).data.friends as string[];
+  if (friends.includes(other.id)) return;
+  await a.post(`${API}/friends/requests/`, { data: { to_user_id: other.id } });
+  const b = await apiAs(other);
+  for (const [client, sender] of [[b, one], [a, other]] as const) {
+    const rows = (await (await client.get(`${API}/friends/requests/`)).json()).data as { id: string; requested_by: string }[];
+    const row = rows.find((r) => r.requested_by === sender.id);
+    if (row) await client.post(`${API}/friends/requests/${row.id}/accept/`);
+  }
+}
+
+export async function unfriend(one: Account, other: Account) {
+  await (await apiAs(one)).delete(`${API}/friends/${other.id}/`);
+}

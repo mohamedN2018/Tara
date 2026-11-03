@@ -13,6 +13,7 @@ export interface Comment {
 const BATCH_LIMIT = 50;
 // Upper bound on empty pages followed in a row, so one call can't run away.
 const MAX_EMPTY_PAGES = 25;
+const MAX_HASHTAG_PAGES = 3;
 
 export const postService = {
   async create(payload: {
@@ -20,6 +21,7 @@ export const postService = {
     audience?: string;
     media_ids?: string[];
     type?: string;
+    poll?: { options: string[]; duration_hours?: number | null };
   }): Promise<Post> {
     const mediaIds = payload.media_ids ?? [];
     const { data } = await api.post<{ data: Post }>("/posts/", {
@@ -27,6 +29,7 @@ export const postService = {
       audience: payload.audience ?? "public",
       media_ids: mediaIds,
       body: payload.body,
+      ...(payload.poll ? { poll: payload.poll } : {}),
     });
     return data.data;
   },
@@ -106,9 +109,29 @@ export const postService = {
     return data.data;
   },
 
-  async share(id: string, body = ""): Promise<Post> {
-    const { data } = await api.post<{ data: Post }>(`/posts/${id}/share/`, { body });
+  async share(id: string, body = "", audience?: string): Promise<Post> {
+    const { data } = await api.post<{ data: Post }>(`/posts/${id}/share/`, { body, audience });
     return data.data;
+  },
+
+  async vote(id: string, optionId: string): Promise<Post> {
+    const { data } = await api.post<{ data: Post }>(`/posts/${id}/vote/`, { option_id: optionId });
+    return data.data;
+  },
+
+  /** Posts with a hashtag the viewer may see. Filtering runs after paging, as on a timeline. */
+  async byHashtag(tag: string): Promise<Post[]> {
+    const posts: Post[] = [];
+    let cursor: string | undefined;
+    for (let i = 0; i < MAX_HASHTAG_PAGES; i++) {
+      const { data } = await api.get<CursorPage<Post>>("/posts/", {
+        params: { hashtag: tag, cursor },
+      });
+      posts.push(...data.data);
+      if (!data.page.next_cursor) break;
+      cursor = data.page.next_cursor;
+    }
+    return posts;
   },
 
   // SaveView is POST/DELETE.

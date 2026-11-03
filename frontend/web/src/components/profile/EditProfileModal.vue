@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Camera, Plus, Trash2, X } from "lucide-vue-next";
-import { reactive, ref } from "vue";
+import { onMounted, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
@@ -9,7 +9,7 @@ import { useEscapeKey } from "@/lib/useEscapeKey";
 import { useFocusTrap } from "@/lib/useFocusTrap";
 import { useMediaUrl } from "@/lib/useMediaUrl";
 import { mediaService } from "@/services/media";
-import { profileService } from "@/services/profile";
+import { type FieldPrivacy, profileService } from "@/services/profile";
 import { useAuthStore } from "@/stores/auth";
 import type { Profile, ProfileEducation, ProfileLink, ProfileWork } from "@/types";
 
@@ -155,11 +155,24 @@ async function dropEducation(id: number) {
   }
 }
 
+// Per-field privacy, loaded separately: failing to load must not block editing,
+// and nothing is saved unless it loaded.
+const PRIVACY_LEVELS = ["public", "friends_only", "private"];
+const fieldPrivacy = ref<FieldPrivacy[] | null>(null);
+onMounted(async () => {
+  try {
+    fieldPrivacy.value = await profileService.fieldPrivacy();
+  } catch {
+    fieldPrivacy.value = null;
+  }
+});
+
 async function save() {
   if (saving.value) return;
   saving.value = true;
   error.value = "";
   try {
+    if (fieldPrivacy.value) await profileService.setFieldPrivacy(fieldPrivacy.value);
     await profileService.update({
       display_name: form.display_name.trim(),
       intro: form.intro.trim(),
@@ -256,6 +269,20 @@ async function save() {
             </select>
           </div>
         </div>
+
+        <!-- Field privacy -->
+        <section v-if="fieldPrivacy" data-testid="field-privacy">
+          <h3 class="mb-1 text-sm font-bold">{{ t("profile.fieldPrivacy") }}</h3>
+          <p class="mb-2 text-xs text-gray-500">{{ t("profile.fieldPrivacyHint") }}</p>
+          <div class="space-y-1.5">
+            <label v-for="item in fieldPrivacy" :key="item.field_key" class="flex items-center justify-between gap-3 text-sm">
+              <span>{{ t(`profile.privacyFields.${item.field_key}`) }}</span>
+              <select v-model="item.visibility" class="input w-auto py-1 text-sm">
+                <option v-for="level in PRIVACY_LEVELS" :key="level" :value="level">{{ t(`profile.privacyLevels.${level}`) }}</option>
+              </select>
+            </label>
+          </div>
+        </section>
 
         <!-- Links -->
         <section>

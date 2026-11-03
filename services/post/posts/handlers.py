@@ -26,3 +26,41 @@ def on_moderation_actioned(event: EventEnvelope) -> None:
     p = event.payload
     if p.get("target_type") == "post":
         services.apply_moderation(p["target_id"], p.get("action", ""))
+
+
+@on_event("post.created")
+def on_post_created_preview(event: EventEnvelope) -> None:
+    services.refresh_link_preview(event.payload["post_id"])
+
+
+@on_event("post.updated")
+def on_post_updated_preview(event: EventEnvelope) -> None:
+    services.refresh_link_preview(event.payload["post_id"])
+
+
+@on_event("post.created")
+def on_post_created_mentions(event: EventEnvelope) -> None:
+    p = event.payload
+    services.notify_mentions(
+        actor_id=p["author_id"], post_id=p["post_id"], handles=p.get("mentions", [])
+    )
+
+
+@on_event("post.updated")
+def on_post_updated_mentions(event: EventEnvelope) -> None:
+    p = event.payload
+    services.notify_mentions(
+        actor_id=p["author_id"], post_id=p["post_id"], handles=p.get("new_mentions", [])
+    )
+
+
+@on_event("post.commented")
+@on_event("comment.replied")
+def on_comment_mentions(event: EventEnvelope) -> None:
+    p = event.payload
+    services.notify_mentions(
+        actor_id=p["author"],
+        post_id=p["post_id"],
+        handles=p.get("mentions", []),
+        comment_id=p.get("comment_id"),
+    )

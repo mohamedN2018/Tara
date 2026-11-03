@@ -8,6 +8,11 @@ export interface UserCard {
   avatar_media_id: string | null;
 }
 
+export interface FieldPrivacy {
+  field_key: string;
+  visibility: string;
+}
+
 export const profileService = {
   // Public profile by handle is served at /users/<handle>/ (not /profiles/).
   async get(handle: string): Promise<Profile> {
@@ -34,6 +39,14 @@ export const profileService = {
   async update(payload: Partial<Profile>): Promise<Profile> {
     const { data } = await api.patch<{ data: Profile }>("/profile/me/", payload);
     return data.data;
+  },
+
+  async fieldPrivacy(): Promise<FieldPrivacy[]> {
+    const { data } = await api.get<{ data: { items: FieldPrivacy[] } }>("/profile/me/privacy/");
+    return data.data.items;
+  },
+  async setFieldPrivacy(items: FieldPrivacy[]): Promise<void> {
+    await api.put("/profile/me/privacy/", { items });
   },
 
   // ---- structured detail sections (own profile) ----

@@ -50,6 +50,8 @@ const NOTIF_KINDS = [
   "post.reaction",
   "post.comment",
   "comment.reply",
+  "post.share",
+  "mention",
   "friend.request",
   "friend.accepted",
   "follow",

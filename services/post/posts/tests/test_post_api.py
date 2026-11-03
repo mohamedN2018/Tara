@@ -96,7 +96,7 @@ def test_react_is_idempotent_and_counts(client_for):
     assert PostReaction.objects.filter(post=post).count() == 1
     post.refresh_from_db()
     assert post.reaction_count == 1
-    assert OutboxEvent.objects.filter(event_type="post.reacted").exists()
+    assert OutboxEvent.objects.filter(event_type="post.reacted").count() == 1
 
 
 def test_comment_and_reply_events(client_for):

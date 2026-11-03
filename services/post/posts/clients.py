@@ -67,3 +67,22 @@ def get_relationship(viewer_id: str, author_id: str) -> Relationship:
     except Exception:  # noqa: BLE001
         logger.warning("graph relationship lookup failed; defaulting", exc_info=True)
         return Relationship.unknown()
+
+
+def resolve_handles(handles: list[str]) -> dict[str, str]:
+    """``{handle: account_id}`` from Profile. Raises when Profile is down, so the
+    consumer retries instead of dropping the mention."""
+    now = int(time.time())
+    token = jwt.encode(
+        {"iss": "post", "aud": "profile-internal", "iat": now, "exp": now + 30},
+        settings.TARA_INTERNAL_JWT_SECRET,
+        algorithm="HS256",
+    )
+    resp = requests.post(
+        f"{settings.PROFILE_INTERNAL_URL}/internal/v1/profiles/by-handle/",
+        json={"handles": handles},
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=settings.GRAPH_CALL_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.json().get("data", {})

@@ -9,7 +9,9 @@ from notifications.handlers import (
     on_comment_replied,
     on_message_created,
     on_post_reacted,
+    on_post_shared,
     on_user_followed,
+    on_user_mentioned,
 )
 from notifications.models import Notification, NotificationPreference, OutboxEvent
 from notifications.services import notify
@@ -192,3 +194,31 @@ def test_muted_member_gets_no_message_notification():
     )
     assert not Notification.objects.filter(recipient_id=muted).exists()
     assert Notification.objects.filter(recipient_id=listening, kind="message").exists()
+
+
+def test_mention_and_share_notify():
+    actor, target = _acct(), _acct()
+    post_id = str(uuid.uuid4())
+    on_user_mentioned(
+        EventEnvelope(
+            event_type="user.mentioned",
+            subject_id=post_id,
+            producer="post-service",
+            payload={"recipient": target, "actor": actor, "post_id": post_id},
+        )
+    )
+    on_post_shared(
+        EventEnvelope(
+            event_type="post.shared",
+            subject_id=post_id,
+            producer="post-service",
+            payload={
+                "post_id": post_id,
+                "share_post_id": post_id,
+                "sharer": actor,
+                "author_id": target,
+            },
+        )
+    )
+    kinds = set(Notification.objects.filter(recipient_id=target).values_list("kind", flat=True))
+    assert kinds == {"mention", "post.share"}

@@ -2,6 +2,7 @@
 import {
   Bell,
   Bookmark,
+  Flag,
   Home,
   LayoutGrid,
   MessageCircle,
@@ -45,6 +46,7 @@ const links = computed<AppLink[]>(() => {
     { to: "/connections", icon: UserCheck, label: "nav.connections" },
     { to: "/messages", icon: MessageCircle, label: "nav.messages" },
     { to: "/marketplace", icon: Store, label: "nav.marketplace" },
+    { to: "/pages", icon: Flag, label: "nav.pages" },
     { to: "/saved", icon: Bookmark, label: "nav.saved" },
     { to: "/notifications", icon: Bell, label: "nav.notifications" },
     { to: "/search", icon: Search, label: "nav.search" },

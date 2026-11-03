@@ -11,6 +11,7 @@ urlpatterns = [
     path("posts/<uuid:post_id>/reactions/", views.ReactionView.as_view(), name="post-reactions"),
     path("posts/<uuid:post_id>/comments/", views.CommentsView.as_view(), name="post-comments"),
     path("posts/<uuid:post_id>/share/", views.ShareView.as_view(), name="post-share"),
+    path("posts/<uuid:post_id>/vote/", views.VoteView.as_view(), name="post-vote"),
     path("posts/<uuid:post_id>/save/", views.SaveView.as_view(), name="post-save"),
     path("posts/<uuid:post_id>/report/", views.ReportView.as_view(), name="post-report"),
     path(

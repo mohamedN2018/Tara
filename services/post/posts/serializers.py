@@ -1,17 +1,62 @@
 from __future__ import annotations
 
+from django.utils import timezone
 from rest_framework import serializers
 
 from .models import REACTION_TYPES, Audience, Comment, Post, SavedItem
 
 
+class PollCreateSerializer(serializers.Serializer):
+    options = serializers.ListField(
+        child=serializers.CharField(max_length=120), min_length=2, max_length=6
+    )
+    duration_hours = serializers.IntegerField(
+        min_value=1, max_value=24 * 7, required=False, allow_null=True
+    )
+
+    def validate_options(self, value):
+        if len({o.strip().lower() for o in value}) != len(value):
+            raise serializers.ValidationError("Options must be different.")
+        return [o.strip() for o in value]
+
+
 class PostCreateSerializer(serializers.Serializer):
+    """Shares go through ``posts/<id>/share/``, and link previews are built by the
+    server, so neither ``shared_post_id`` nor ``link_preview`` is accepted here."""
+
     body = serializers.CharField(required=False, allow_blank=True, default="", max_length=20000)
-    type = serializers.ChoiceField(choices=Post.Type.values, default=Post.Type.TEXT)
+    type = serializers.ChoiceField(
+        choices=[Post.Type.TEXT, Post.Type.IMAGE, Post.Type.VIDEO], default=Post.Type.TEXT
+    )
     audience = serializers.ChoiceField(choices=Audience.values, default=Audience.PUBLIC)
     media_ids = serializers.ListField(child=serializers.UUIDField(), required=False, default=list)
-    shared_post_id = serializers.UUIDField(required=False, allow_null=True)
-    link_preview = serializers.DictField(required=False, allow_null=True)
+    poll = PollCreateSerializer(required=False)
+
+    def validate(self, attrs):
+        if attrs.get("poll") and not attrs.get("body", "").strip():
+            raise serializers.ValidationError({"body": "A poll needs a question."})
+        return attrs
+
+
+class ShareCreateSerializer(serializers.Serializer):
+    body = serializers.CharField(required=False, allow_blank=True, default="", max_length=20000)
+    audience = serializers.ChoiceField(choices=Audience.values, required=False)
+
+
+class VoteSerializer(serializers.Serializer):
+    option_id = serializers.UUIDField()
+
+
+def poll_data(poll, my_option_id) -> dict:
+    options = list(poll.options.all())
+    return {
+        "id": str(poll.id),
+        "closes_at": poll.closes_at.isoformat() if poll.closes_at else None,
+        "closed": bool(poll.closes_at and poll.closes_at <= timezone.now()),
+        "total_votes": sum(o.vote_count for o in options),
+        "my_option_id": str(my_option_id) if my_option_id else None,
+        "options": [{"id": str(o.id), "text": o.text, "vote_count": o.vote_count} for o in options],
+    }
 
 
 class PostSerializer(serializers.ModelSerializer):
@@ -20,6 +65,8 @@ class PostSerializer(serializers.ModelSerializer):
     media_ids = serializers.SerializerMethodField()
     my_reaction = serializers.SerializerMethodField()
     is_saved = serializers.SerializerMethodField()
+    poll = serializers.SerializerMethodField()
+    shared_post = serializers.SerializerMethodField()
 
     class Meta:
         model = Post
@@ -38,6 +85,8 @@ class PostSerializer(serializers.ModelSerializer):
             "share_count",
             "my_reaction",
             "is_saved",
+            "poll",
+            "shared_post",
             "created_at",
             "updated_at",
         ]
@@ -52,6 +101,35 @@ class PostSerializer(serializers.ModelSerializer):
     def get_is_saved(self, obj: Post) -> bool:
         state = self.context.get("viewer_state")
         return obj.id in state["saved"] if state else False
+
+    def get_poll(self, obj: Post) -> dict | None:
+        if obj.type != Post.Type.POLL:
+            return None
+        poll = getattr(obj, "poll", None)
+        if poll is None:
+            return None
+        state = self.context.get("viewer_state") or {}
+        return poll_data(poll, state.get("votes", {}).get(poll.id))
+
+    def get_shared_post(self, obj: Post) -> dict | None:
+        """The original, if this viewer may see it; ``shared_post_id`` alone means they may not."""
+        if not obj.shared_post_id:
+            return None
+        state = self.context.get("viewer_state") or {}
+        original = state.get("shared", {}).get(obj.shared_post_id)
+        if original is None:
+            return None
+        return {
+            "id": str(original.id),
+            "author_id": str(original.author_id),
+            "author_type": original.author_type,
+            "type": original.type,
+            "body": original.body,
+            "audience": original.audience,
+            "media_ids": [str(m.media_id) for m in original.media.all()],
+            "link_preview": original.link_preview,
+            "created_at": original.created_at.isoformat(),
+        }
 
 
 class PostBatchSerializer(serializers.Serializer):
