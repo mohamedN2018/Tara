@@ -9,7 +9,7 @@ import AppShell from "@/components/layout/AppShell.vue";
 import { errorMessage } from "@/lib/errors";
 import { relativeTime } from "@/lib/format";
 import { identityService, type UserSession } from "@/services/identity";
-import { notificationService, type NotificationPrefs } from "@/services/notification";
+import { notificationService, type NotificationPreferences, type NotificationPrefs } from "@/services/notification";
 import { profileService } from "@/services/profile";
 import { useAuthStore } from "@/stores/auth";
 import { useToastStore } from "@/stores/toasts";
@@ -58,7 +58,7 @@ const NOTIF_KINDS = [
 ];
 const CHANNEL = "in_app";
 const prefs = ref<NotificationPrefs>({});
-const quiet = ref<{ start?: string; end?: string }>({});
+const quiet = ref<NotificationPreferences["quiet_hours"]>({});
 const prefsLoading = ref(true);
 const prefsError = ref(false);
 
@@ -94,11 +94,26 @@ async function togglePref(kind: string, enabled: boolean) {
 }
 
 async function saveQuietHours() {
+  const { start, end } = quiet.value;
+  if (!start !== !end) return; // Half a window: wait for the other end.
+  if (start && start === end) {
+    toasts.push({ text: t("settings.quietSameTime"), icon: "error" });
+    return;
+  }
   try {
-    await notificationService.updatePreferences({ quiet_hours: quiet.value });
+    await notificationService.updatePreferences({
+      quiet_hours: start
+        ? { start, end, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }
+        : {},
+    });
   } catch (e) {
     toasts.error(e);
   }
+}
+
+function clearQuietHours() {
+  quiet.value = {};
+  void saveQuietHours();
 }
 
 // --- Active sessions ---
@@ -198,6 +213,9 @@ onMounted(() => {
                 <span class="text-gray-500">{{ t("settings.quietTo") }}</span>
                 <input v-model="quiet.end" type="time" class="input w-auto" @change="saveQuietHours" />
               </label>
+              <button v-if="quiet.start || quiet.end" class="btn-ghost text-sm" @click="clearQuietHours">
+                {{ t("settings.quietClear") }}
+              </button>
             </div>
           </div>
         </div>

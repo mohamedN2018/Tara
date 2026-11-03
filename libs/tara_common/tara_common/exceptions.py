@@ -22,6 +22,7 @@ from typing import Any
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.http import Http404
 from rest_framework import status as http_status
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import exception_handler as drf_exception_handler
 
@@ -179,7 +180,7 @@ def tara_exception_handler(exc: Exception, context: dict) -> Response | None:
             "code": code,
             "message": message,
             "request_id": request_id,
-            "details": details if len(details) > 1 else [],
+            "details": details if isinstance(exc, ValidationError) or len(details) > 1 else [],
         }
     }
     new_response = Response(body, status=response.status_code)

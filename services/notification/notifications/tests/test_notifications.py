@@ -5,7 +5,7 @@ import uuid
 import pytest
 from django.urls import reverse
 
-from notifications.handlers import on_post_reacted, on_user_followed
+from notifications.handlers import on_comment_replied, on_post_reacted, on_user_followed
 from notifications.models import Notification, NotificationPreference, OutboxEvent
 from notifications.services import notify
 from tara_events.envelope import EventEnvelope
@@ -112,3 +112,58 @@ def test_old_flat_preferences_do_not_break_delivery():
     user = _acct()
     NotificationPreference.objects.create(account_id=user, prefs={"follow": True})
     assert notify(user, "follow", actor_id=_acct()) is not None
+
+
+def test_comment_reply_notifies_the_parent_comment_author():
+    post_author, parent_author, replier = _acct(), _acct(), _acct()
+    on_comment_replied(
+        EventEnvelope(
+            event_type="comment.replied",
+            subject_id=str(uuid.uuid4()),
+            producer="post-service",
+            payload={
+                "post_id": str(uuid.uuid4()),
+                "author": replier,
+                "post_author_id": post_author,
+                "parent_author_id": parent_author,
+            },
+        )
+    )
+    assert Notification.objects.filter(recipient_id=parent_author, kind="comment.reply").exists()
+    assert not Notification.objects.filter(recipient_id=post_author).exists()
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "22:00",
+        {"start": "22:00"},
+        {"start": "25:00", "end": "07:00"},
+        {"start": "7:00", "end": "22:00"},
+        {"start": "22:00", "end": "22:00"},
+        {"start": "22:00", "end": "07:00", "timezone": "Mars/Base"},
+        {"start": "22:00", "end": "07:00", "extra": 1},
+    ],
+)
+def test_bad_quiet_hours_are_rejected_with_field_details(client_for, value):
+    resp = client_for(_acct()).patch(
+        reverse("notifications:preferences"), {"quiet_hours": value}, format="json"
+    )
+    assert resp.status_code == 400
+    error = resp.json()["error"]
+    assert error["code"] == "validation_error"
+    assert [d["field"] for d in error["details"]] == ["quiet_hours"]
+
+
+def test_quiet_hours_are_stored_and_can_be_cleared(client_for):
+    client = client_for(_acct())
+    url = reverse("notifications:preferences")
+    resp = client.patch(
+        url,
+        {"quiet_hours": {"start": "22:00", "end": "07:00", "timezone": "Africa/Cairo"}},
+        format="json",
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["quiet_hours"]["timezone"] == "Africa/Cairo"
+    resp = client.patch(url, {"quiet_hours": {}}, format="json")
+    assert resp.json()["data"]["quiet_hours"] == {}

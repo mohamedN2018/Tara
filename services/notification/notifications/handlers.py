@@ -40,11 +40,11 @@ def on_post_commented(e: EventEnvelope) -> None:
 def on_comment_replied(e: EventEnvelope) -> None:
     p = e.payload
     notify(
-        p["post_author_id"],
+        p.get("parent_author_id") or p["post_author_id"],  # older events lack the parent author
         "comment.reply",
         actor_id=p.get("author"),
         subject_ref=f"post:{p['post_id']}",
-        body="replied to a comment",
+        body="replied to your comment",
     )
 
 

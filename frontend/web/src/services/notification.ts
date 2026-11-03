@@ -6,7 +6,7 @@ export type NotificationPrefs = Record<string, Record<string, boolean>>;
 
 export interface NotificationPreferences {
   prefs: NotificationPrefs;
-  quiet_hours: { start?: string; end?: string };
+  quiet_hours: { start?: string; end?: string; timezone?: string };
 }
 
 export const notificationService = {
