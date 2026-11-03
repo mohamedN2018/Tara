@@ -19,6 +19,12 @@ urlpatterns = [
     path("profile/me/work/", views.WorkView.as_view(), name="work"),
     path("profile/me/work/<int:pk>/", views.WorkDetailView.as_view(), name="work-detail"),
     # Public profile
+    path("users/lookup/", views.ProfileLookupView.as_view(), name="profile-lookup"),
+    path(
+        "users/id/<uuid:account_id>/",
+        views.PublicProfileByIdView.as_view(),
+        name="public-profile-by-id",
+    ),
     path("users/<str:handle>/", views.PublicProfileView.as_view(), name="public-profile"),
     # Pages
     path("pages/", views.PageCreateView.as_view(), name="page-create"),

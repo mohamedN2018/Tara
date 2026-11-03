@@ -50,7 +50,8 @@ def _is_locally_blocked(a: str, b: str) -> bool:
     ).exists()
 
 
-def visible_to_viewer(viewer_id: str, post: Post) -> bool:
+def visible_to_viewer(viewer_id: str, post: Post, rel_cache: dict | None = None) -> bool:
+    """``rel_cache`` keeps one Graph call per author when checking many posts."""
     if not post.is_visible:
         return False
     if str(post.author_id) == str(viewer_id):
@@ -61,7 +62,13 @@ def visible_to_viewer(viewer_id: str, post: Post) -> bool:
         return False
     if post.audience == Audience.PUBLIC:
         return True
-    rel = get_relationship(str(viewer_id), str(post.author_id))
+    author = str(post.author_id)
+    if rel_cache is not None and author in rel_cache:
+        rel = rel_cache[author]
+    else:
+        rel = get_relationship(str(viewer_id), author)
+        if rel_cache is not None:
+            rel_cache[author] = rel
     if rel.blocked_either_way:
         return False
     if post.audience == Audience.FRIENDS:
@@ -155,7 +162,7 @@ def edit_post(author_id: str, post_id: str, body: str) -> Post:
         events.emit(
             "post.updated",
             subject_id=str(post.id),
-            payload={"post_id": str(post.id)},
+            payload={"post_id": str(post.id), "excerpt": body[:280]},
             actor_id=str(author_id),
         )
     return post
@@ -180,18 +187,42 @@ def get_post(viewer_id: str, post_id: str) -> Post:
     return _require_visible(viewer_id, post_id)
 
 
-def list_author_posts(viewer_id: str, author_id: str | None, limit: int = 30) -> list[Post]:
-    """Recent posts by one author that the viewer is allowed to see (profile timeline).
-
-    Over-fetches then applies per-post audience/block filtering via
-    ``visible_to_viewer`` so the result honours each post's audience.
-    """
+def author_posts_queryset(author_id: str | None):
+    """Posts by one author (a profile timeline); filter with ``only_visible``."""
     if not author_id:
         raise TaraAPIError("author_id is required.", code="validation_error", http_status_code=400)
-    candidates = Post.objects.filter(author_id=author_id, deleted_at__isnull=True).order_by(
-        "-created_at"
-    )[: limit * 2]
-    return [p for p in candidates if visible_to_viewer(viewer_id, p)][:limit]
+    return Post.objects.filter(author_id=author_id, deleted_at__isnull=True).prefetch_related(
+        "media"
+    )
+
+
+def only_visible(viewer_id: str, posts) -> list[Post]:
+    rel_cache: dict = {}
+    return [p for p in posts if visible_to_viewer(viewer_id, p, rel_cache)]
+
+
+def posts_by_ids(viewer_id: str, post_ids: list) -> list[Post]:
+    """The posts the viewer may see, in the order requested. Others are left out."""
+    posts = Post.objects.filter(id__in=post_ids).prefetch_related("media")
+    by_id = {p.id: p for p in only_visible(viewer_id, posts)}
+    return [by_id[i] for i in post_ids if i in by_id]
+
+
+def viewer_state(viewer_id: str, posts: list[Post]) -> dict:
+    """The viewer's own reaction and saved flag for a list of posts."""
+    ids = [p.id for p in posts]
+    return {
+        "reactions": dict(
+            PostReaction.objects.filter(post_id__in=ids, account_id=viewer_id).values_list(
+                "post_id", "type"
+            )
+        ),
+        "saved": set(
+            SavedItem.objects.filter(
+                owner_id=viewer_id, item_type="post", item_id__in=ids
+            ).values_list("item_id", flat=True)
+        ),
+    }
 
 
 # ---- reactions --------------------------------------------------------------

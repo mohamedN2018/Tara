@@ -136,3 +136,7 @@ class MemberAddSerializer(serializers.Serializer):
 
 class MemberRoleSerializer(serializers.Serializer):
     role = serializers.ChoiceField(choices=[r for r in PageRole.values if r != PageRole.OWNER])
+
+
+class ProfileLookupSerializer(serializers.Serializer):
+    ids = serializers.ListField(child=serializers.UUIDField(), max_length=100)

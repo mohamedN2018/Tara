@@ -15,7 +15,11 @@ class PostCreateSerializer(serializers.Serializer):
 
 
 class PostSerializer(serializers.ModelSerializer):
+    """Pass ``context={"viewer_state": ...}`` to include the viewer's own state."""
+
     media_ids = serializers.SerializerMethodField()
+    my_reaction = serializers.SerializerMethodField()
+    is_saved = serializers.SerializerMethodField()
 
     class Meta:
         model = Post
@@ -32,12 +36,26 @@ class PostSerializer(serializers.ModelSerializer):
             "reaction_count",
             "comment_count",
             "share_count",
+            "my_reaction",
+            "is_saved",
             "created_at",
             "updated_at",
         ]
 
     def get_media_ids(self, obj: Post) -> list[str]:
         return [str(m.media_id) for m in obj.media.all()]
+
+    def get_my_reaction(self, obj: Post) -> str | None:
+        state = self.context.get("viewer_state")
+        return state["reactions"].get(obj.id) if state else None
+
+    def get_is_saved(self, obj: Post) -> bool:
+        state = self.context.get("viewer_state")
+        return obj.id in state["saved"] if state else False
+
+
+class PostBatchSerializer(serializers.Serializer):
+    ids = serializers.ListField(child=serializers.UUIDField(), max_length=50)
 
 
 class PostEditSerializer(serializers.Serializer):

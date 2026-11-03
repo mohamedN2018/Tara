@@ -100,6 +100,8 @@ def register(
     password: str,
     language: str = "en",
     theme: str = "system",
+    display_name: str = "",
+    handle: str = "",
     ip_region: str = "",
     user_agent: str = "",
     correlation_id: str | None = None,
@@ -128,7 +130,13 @@ def register(
         emit_domain_event(
             "account.registered",
             subject_id=str(account.id),
-            payload={"email": email, "email_verified": False, "language": language},
+            payload={
+                "email": email,
+                "email_verified": False,
+                "language": language,
+                "display_name": display_name,
+                "handle": handle,
+            },
             actor_id=str(account.id),
             correlation_id=correlation_id,
         )

@@ -20,7 +20,13 @@ logger = logging.getLogger("tara.profile.handlers")
 @on_event("account.registered")
 def on_account_registered(event: EventEnvelope) -> None:
     """Provision an empty profile when a new account is created."""
-    ensure_profile(event.subject_id, email=event.payload.get("email", ""))
+    p = event.payload
+    ensure_profile(
+        event.subject_id,
+        email=p.get("email", ""),
+        display_name=p.get("display_name", ""),
+        requested_handle=p.get("handle", ""),
+    )
     logger.info("profile provisioned", extra={"account_id": event.subject_id})
 
 

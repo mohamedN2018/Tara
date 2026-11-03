@@ -32,6 +32,7 @@ from .serializers import (
     PageCreateSerializer,
     PageMemberSerializer,
     PageSerializer,
+    ProfileLookupSerializer,
     ProfileUpdateSerializer,
     WorkSerializer,
 )
@@ -50,6 +51,8 @@ def _build_public_profile(profile: UserProfile, ctx) -> dict:
     from .privacy import profile_visible
 
     base = {
+        "account_id": str(profile.account_id),
+        "created_at": profile.created_at.isoformat(),
         "handle": profile.handle,
         "display_name": profile.display_name,
         "avatar_media_id": str(profile.avatar_media_id) if profile.avatar_media_id else None,
@@ -170,19 +173,46 @@ class WorkDetailView(_OwnedDestroy):
 # ---- public profile ---------------------------------------------------------
 
 
+def _public_profile_response(request: Request, profile: UserProfile | None) -> Response:
+    if profile is None:
+        raise TaraAPIError("Profile not found.", code="not_found", http_status_code=404)
+    ctx = resolve_context(request.user.account_id, profile)
+    if ctx.blocked:
+        # Blocked either way -> behave as if the profile does not exist.
+        raise TaraAPIError("Profile not found.", code="not_found", http_status_code=404)
+    return data_response(_build_public_profile(profile, ctx))
+
+
 class PublicProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(responses={200: None}, tags=["profile"])
     def get(self, request: Request, handle: str) -> Response:
         profile = UserProfile.objects.filter(handle=handle.lower(), deleted_at__isnull=True).first()
-        if profile is None:
-            raise TaraAPIError("Profile not found.", code="not_found", http_status_code=404)
-        ctx = resolve_context(request.user.account_id, profile)
-        if ctx.blocked:
-            # Blocked either way -> behave as if the profile does not exist.
-            raise TaraAPIError("Profile not found.", code="not_found", http_status_code=404)
-        return data_response(_build_public_profile(profile, ctx))
+        return _public_profile_response(request, profile)
+
+
+class PublicProfileByIdView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: None}, tags=["profile"])
+    def get(self, request: Request, account_id: str) -> Response:
+        profile = UserProfile.objects.filter(account_id=account_id, deleted_at__isnull=True).first()
+        return _public_profile_response(request, profile)
+
+
+class ProfileLookupView(APIView):
+    """Names and avatars for a batch of accounts, for rendering lists."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=ProfileLookupSerializer, responses={200: None}, tags=["profile"])
+    def post(self, request: Request) -> Response:
+        serializer = ProfileLookupSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return data_response(
+            services.profile_cards(request.user.account_id, serializer.validated_data["ids"])
+        )
 
 
 # ---- pages ------------------------------------------------------------------

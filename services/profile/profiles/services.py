@@ -11,6 +11,7 @@ from tara_common.exceptions import Conflict, TaraAPIError
 
 from . import events
 from .models import (
+    BlockedPair,
     Page,
     PageMember,
     PageRole,
@@ -42,17 +43,39 @@ def _completion(profile: UserProfile) -> int:
 # ---- profile provisioning (event-driven) ------------------------------------
 
 
-def ensure_profile(account_id: str, *, email: str = "", display_name: str = "") -> UserProfile:
+def ensure_profile(
+    account_id: str, *, email: str = "", display_name: str = "", requested_handle: str = ""
+) -> UserProfile:
     """Idempotently create a profile for an account (called on account.registered)."""
     existing = UserProfile.objects.filter(account_id=account_id).first()
     if existing:
         return existing
-    handle = generate_handle(email or f"user{secrets.randbelow(99999)}")
+    # A taken requested handle falls back to a numbered variant of it.
+    handle = generate_handle(requested_handle or email or f"user{secrets.randbelow(99999)}")
     return UserProfile.objects.create(
         account_id=account_id,
         handle=handle,
         display_name=display_name or handle,
     )
+
+
+def profile_cards(viewer_id: str, account_ids: list) -> list[dict]:
+    """Public identity of each account, leaving out anyone blocked either way."""
+    blocked = set(
+        BlockedPair.objects.filter(blocker_id=viewer_id).values_list("blocked_id", flat=True)
+    ) | set(BlockedPair.objects.filter(blocked_id=viewer_id).values_list("blocker_id", flat=True))
+    profiles = UserProfile.objects.filter(
+        account_id__in=account_ids, deleted_at__isnull=True
+    ).exclude(account_id__in=blocked)
+    return [
+        {
+            "account_id": str(p.account_id),
+            "handle": p.handle,
+            "display_name": p.display_name,
+            "avatar_media_id": str(p.avatar_media_id) if p.avatar_media_id else None,
+        }
+        for p in profiles
+    ]
 
 
 # ---- profile editing --------------------------------------------------------

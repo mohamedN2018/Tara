@@ -120,3 +120,41 @@ def test_unfollow_removes_author_items(monkeypatch):
         )
     )
     assert not FeedItem.objects.filter(recipient_id=follower, author_id=author).exists()
+
+
+# ---- keeping feeds in step with the post -------------------------------------
+
+
+def _item(recipient: str, author: str, audience: str = "public") -> FeedItem:
+    return FeedItem.objects.create(
+        recipient_id=recipient,
+        post_id=uuid.uuid4(),
+        author_id=author,
+        reason="friend",
+        snapshot={"excerpt": "old", "audience": audience},
+        post_created_at=timezone.now(),
+    )
+
+
+def test_deleted_post_leaves_feeds():
+    item = _item(_acct(), _acct())
+    services.remove_post(str(item.post_id))
+    assert not FeedItem.objects.filter(pk=item.pk).exists()
+
+
+def test_edited_post_updates_the_stored_excerpt():
+    item = _item(_acct(), _acct())
+    services.update_post_excerpt(str(item.post_id), "new")
+    item.refresh_from_db()
+    assert item.snapshot["excerpt"] == "new"
+
+
+def test_unfriending_removes_only_friends_only_posts():
+    a, b = _acct(), _acct()
+    friends_only = _item(a, b, "friends")
+    public = _item(a, b, "public")
+
+    services.remove_friends_only_posts(a, b)
+
+    assert not FeedItem.objects.filter(pk=friends_only.pk).exists()
+    assert FeedItem.objects.filter(pk=public.pk).exists()

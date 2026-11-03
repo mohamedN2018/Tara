@@ -6,6 +6,7 @@ app_name = "posts"
 
 urlpatterns = [
     path("posts/", views.PostCreateView.as_view(), name="post-create"),
+    path("posts/batch/", views.PostBatchView.as_view(), name="post-batch"),
     path("posts/<uuid:post_id>/", views.PostDetailView.as_view(), name="post-detail"),
     path("posts/<uuid:post_id>/reactions/", views.ReactionView.as_view(), name="post-reactions"),
     path("posts/<uuid:post_id>/comments/", views.CommentsView.as_view(), name="post-comments"),

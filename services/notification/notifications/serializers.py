@@ -35,3 +35,11 @@ class PreferenceSerializer(serializers.ModelSerializer):
 class PushTokenSerializer(serializers.Serializer):
     platform = serializers.ChoiceField(choices=["ios", "android", "web"])
     token = serializers.CharField(max_length=400)
+
+
+class PreferenceUpdateSerializer(serializers.Serializer):
+    """``{kind: {channel: bool}}``, for example ``{"follow": {"in_app": false}}``."""
+
+    prefs = serializers.DictField(
+        child=serializers.DictField(child=serializers.BooleanField()),
+    )

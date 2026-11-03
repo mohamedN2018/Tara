@@ -34,3 +34,20 @@ def on_user_blocked(event: EventEnvelope) -> None:
     # Remove each party's posts from the other's feed.
     services.remove_author_from_recipient(p["blocker_id"], p["blocked_id"])
     services.remove_author_from_recipient(p["blocked_id"], p["blocker_id"])
+
+
+@on_event("post.deleted")
+def on_post_deleted(event: EventEnvelope) -> None:
+    services.remove_post(event.payload["post_id"])
+
+
+@on_event("post.updated")
+def on_post_updated(event: EventEnvelope) -> None:
+    p = event.payload
+    services.update_post_excerpt(p["post_id"], p.get("excerpt", ""))
+
+
+@on_event("friendship.removed")
+def on_friendship_removed(event: EventEnvelope) -> None:
+    p = event.payload
+    services.remove_friends_only_posts(p["a"], p["b"])

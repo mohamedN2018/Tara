@@ -101,6 +101,8 @@ class RegisterView(APIView):
                 password=data["password"],
                 language=data["language"],
                 theme=data["theme"],
+                display_name=data["display_name"],
+                handle=data["handle"],
                 ip_region=meta["ip_region"],
                 user_agent=meta["user_agent"],
                 correlation_id=meta["correlation_id"],

@@ -12,6 +12,12 @@ class RegisterSerializer(serializers.Serializer):
     )
     language = serializers.ChoiceField(choices=["en", "ar"], default="en")
     theme = serializers.ChoiceField(choices=["light", "dark", "system"], default="system")
+    display_name = serializers.CharField(
+        required=False, allow_blank=True, default="", max_length=120
+    )
+    handle = serializers.RegexField(
+        r"^[a-zA-Z0-9_]{3,30}$", required=False, allow_blank=True, default=""
+    )
 
 
 class LoginSerializer(serializers.Serializer):

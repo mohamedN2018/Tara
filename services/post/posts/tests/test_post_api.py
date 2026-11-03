@@ -162,3 +162,58 @@ def test_list_author_posts_honours_audience(client_for, monkeypatch):
     monkeypatch.setattr("posts.services.get_relationship", _friends(True))
     resp = client_for(_acct()).get(reverse("posts:post-create"), {"author_id": author})
     assert [p["body"] for p in resp.json()["data"]] == ["p2 friends", "p1 public"]
+
+
+# ---- batch + viewer state ----------------------------------------------------
+
+
+def test_timeline_is_cursor_paginated(client_for):
+    author = _acct()
+    for i in range(3):
+        services.create_post(author, body=f"p{i}", audience="public")
+    client = client_for(_acct())
+
+    first = client.get(reverse("posts:post-create"), {"author_id": author, "limit": 2}).json()
+    assert [p["body"] for p in first["data"]] == ["p2", "p1"]
+    assert first["page"]["has_more"] is True
+
+    params = {"author_id": author, "limit": 2, "cursor": first["page"]["next_cursor"]}
+    second = client.get(reverse("posts:post-create"), params).json()
+    assert [p["body"] for p in second["data"]] == ["p0"]
+
+
+def test_batch_keeps_order_and_viewer_state_and_drops_invisible(client_for):
+    author, viewer = _acct(), _acct()
+    one = services.create_post(author, body="one", audience="public")
+    two = services.create_post(author, body="two", audience="public")
+    private = services.create_post(author, body="private", audience="only_me")
+    gone = services.create_post(author, body="gone", audience="public")
+    services.delete_post(author, str(gone.id))
+    services.react(viewer, str(two.id), "like")
+    services.save_item(viewer, "post", str(two.id))
+
+    resp = client_for(viewer).post(
+        reverse("posts:post-batch"),
+        {"ids": [str(two.id), str(private.id), str(gone.id), str(one.id)]},
+        format="json",
+    )
+
+    data = resp.json()["data"]
+    assert [p["body"] for p in data] == ["two", "one"]
+    assert (data[0]["my_reaction"], data[0]["is_saved"]) == ("like", True)
+    assert (data[1]["my_reaction"], data[1]["is_saved"]) == (None, False)
+
+
+def test_timeline_checks_each_author_with_graph_only_once(client_for, monkeypatch):
+    author = _acct()
+    services.create_post(author, body="a", audience="friends")
+    services.create_post(author, body="b", audience="friends")
+    calls = []
+
+    def relationship(a, b):
+        calls.append(b)
+        return Relationship(are_friends=True)
+
+    monkeypatch.setattr("posts.services.get_relationship", relationship)
+    client_for(_acct()).get(reverse("posts:post-create"), {"author_id": author})
+    assert len(calls) == 1

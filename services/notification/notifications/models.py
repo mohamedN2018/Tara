@@ -35,7 +35,8 @@ class NotificationPreference(models.Model):
         db_table = "notification_preference"
 
     def channel_enabled(self, kind: str, channel: str, default: bool = True) -> bool:
-        return self.prefs.get(kind, {}).get(channel, default)
+        kind_prefs = self.prefs.get(kind)
+        return kind_prefs.get(channel, default) if isinstance(kind_prefs, dict) else default
 
 
 class PushDeviceToken(models.Model):

@@ -6,7 +6,7 @@ import pytest
 from django.urls import reverse
 
 from notifications.handlers import on_post_reacted, on_user_followed
-from notifications.models import Notification, OutboxEvent
+from notifications.models import Notification, NotificationPreference, OutboxEvent
 from notifications.services import notify
 from tara_events.envelope import EventEnvelope
 
@@ -94,3 +94,21 @@ def test_preferences_mute_suppresses_notification(client_for):
     )
     notify(me, "follow", actor_id=_acct(), body="should be suppressed")
     assert Notification.objects.filter(recipient_id=me, kind="follow").count() == 0
+
+
+def test_flat_preferences_are_rejected_and_nested_ones_mute(client_for):
+    user = _acct()
+    client = client_for(user)
+    url = reverse("notifications:preferences")
+
+    assert client.patch(url, {"prefs": {"follow": True}}, format="json").status_code == 400
+
+    body = {"prefs": {"follow": {"in_app": False}}}
+    assert client.patch(url, body, format="json").status_code == 200
+    assert notify(user, "follow", actor_id=_acct()) is None
+
+
+def test_old_flat_preferences_do_not_break_delivery():
+    user = _acct()
+    NotificationPreference.objects.create(account_id=user, prefs={"follow": True})
+    assert notify(user, "follow", actor_id=_acct()) is not None

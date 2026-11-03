@@ -170,3 +170,55 @@ def test_internal_snapshot_requires_internal_token(api_client):
     ok = api_client.get(url)
     assert ok.status_code == 200
     assert ok.json()["data"]["handle"]
+
+
+# ---- lookups used to render other people ------------------------------------
+
+
+def _profile(handle: str, name: str = "Name") -> UserProfile:
+    return UserProfile.objects.create(account_id=_acct(), handle=handle, display_name=name)
+
+
+def test_public_profile_exposes_account_id(auth_client):
+    target = _profile("target")
+    url = reverse("profiles:public-profile", args=["target"])
+    data = auth_client(_acct()).get(url).json()["data"]
+    assert data["account_id"] == str(target.account_id)
+
+
+def test_profile_by_account_id_hides_blocked_users(auth_client):
+    target = _profile("target2")
+    viewer = _acct()
+    url = reverse("profiles:public-profile-by-id", args=[target.account_id])
+    assert auth_client(viewer).get(url).json()["data"]["handle"] == "target2"
+
+    BlockedPair.objects.create(blocker_id=target.account_id, blocked_id=viewer)
+    assert auth_client(viewer).get(url).status_code == 404
+
+
+def test_lookup_returns_cards_without_blocked_users(auth_client):
+    visible, blocked = _profile("visible", "Visible"), _profile("hidden")
+    viewer = _acct()
+    BlockedPair.objects.create(blocker_id=viewer, blocked_id=blocked.account_id)
+
+    resp = auth_client(viewer).post(
+        reverse("profiles:profile-lookup"),
+        {"ids": [str(visible.account_id), str(blocked.account_id)]},
+        format="json",
+    )
+
+    assert [c["display_name"] for c in resp.json()["data"]] == ["Visible"]
+
+
+def test_registration_keeps_the_chosen_name_and_handle():
+    account_id = _acct()
+    event = EventEnvelope(
+        event_type="account.registered",
+        subject_id=account_id,
+        producer="identity-service",
+        payload={"email": "a@b.co", "display_name": "نور", "handle": "noor_1"},
+    )
+    on_account_registered(event)
+
+    profile = UserProfile.objects.get(account_id=account_id)
+    assert (profile.display_name, profile.handle) == ("نور", "noor_1")

@@ -28,6 +28,7 @@ def _snapshot(payload: dict) -> dict:
         "author_id": payload["author_id"],
         "author_type": payload.get("author_type", "user"),
         "type": payload.get("type", "text"),
+        "audience": payload.get("audience", "public"),
         "excerpt": payload.get("excerpt", ""),
         "media_ids": payload.get("media_ids", []),
         "created_at": payload.get("created_at"),
@@ -105,6 +106,24 @@ def fan_out_post(payload: dict) -> int:
 
 def remove_author_from_recipient(recipient_id: str, author_id: str) -> None:
     FeedItem.objects.filter(recipient_id=recipient_id, author_id=author_id).delete()
+
+
+def remove_post(post_id: str) -> None:
+    FeedItem.objects.filter(post_id=post_id).delete()
+
+
+def update_post_excerpt(post_id: str, excerpt: str) -> None:
+    for item in FeedItem.objects.filter(post_id=post_id):
+        item.snapshot["excerpt"] = excerpt
+        item.save(update_fields=["snapshot"])
+
+
+def remove_friends_only_posts(a: str, b: str) -> None:
+    """After an unfriend, neither side keeps the other's friends-only posts."""
+    for recipient, author in ((a, b), (b, a)):
+        FeedItem.objects.filter(
+            recipient_id=recipient, author_id=author, snapshot__audience="friends"
+        ).delete()
 
 
 def home_feed(recipient_id: str):

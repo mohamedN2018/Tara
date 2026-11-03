@@ -9,6 +9,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from tara_common.pagination import CursorPagination
 from tara_common.responses import data_response
 from tara_resilience.idempotency import idempotent
 
@@ -17,6 +18,7 @@ from .models import IdempotencyRecord
 from .serializers import (
     CommentCreateSerializer,
     CommentSerializer,
+    PostBatchSerializer,
     PostCreateSerializer,
     PostEditSerializer,
     PostSerializer,
@@ -31,15 +33,26 @@ def _me(request: Request) -> str:
     return request.user.account_id
 
 
+def _serialize(viewer_id: str, posts: list) -> list:
+    context = {"viewer_state": services.viewer_state(viewer_id, posts)}
+    return PostSerializer(posts, many=True, context=context).data
+
+
 class PostCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(responses={200: PostSerializer(many=True)}, tags=["posts"])
     def get(self, request: Request) -> Response:
-        """List recent posts by ``author_id`` (a profile's timeline)."""
-        author_id = request.query_params.get("author_id")
-        posts = services.list_author_posts(_me(request), author_id)
-        return data_response(PostSerializer(posts, many=True).data)
+        """Posts by ``author_id`` (a profile's timeline), newest first.
+
+        Audience filtering runs after paging, so a page can be short. Keep
+        following ``page.next_cursor`` until ``has_more`` is false.
+        """
+        queryset = services.author_posts_queryset(request.query_params.get("author_id"))
+        paginator = CursorPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        posts = services.only_visible(_me(request), page)
+        return paginator.get_paginated_response(_serialize(_me(request), posts))
 
     @extend_schema(request=PostCreateSerializer, responses={201: PostSerializer}, tags=["posts"])
     def post(self, request: Request) -> Response:
@@ -62,13 +75,32 @@ class PostCreateView(APIView):
         return idempotent(IdempotencyRecord, request, handler)
 
 
+class PostBatchView(APIView):
+    """Current content, counts and viewer state for a batch of posts.
+
+    The feed stores snapshots; clients use this to show live data, and any id
+    missing from the response was deleted or is no longer visible.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        request=PostBatchSerializer, responses={200: PostSerializer(many=True)}, tags=["posts"]
+    )
+    def post(self, request: Request) -> Response:
+        serializer = PostBatchSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        posts = services.posts_by_ids(_me(request), serializer.validated_data["ids"])
+        return data_response(_serialize(_me(request), posts))
+
+
 class PostDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(responses={200: PostSerializer}, tags=["posts"])
     def get(self, request: Request, post_id: str) -> Response:
         post = services.get_post(_me(request), post_id)
-        return data_response(PostSerializer(post).data)
+        return data_response(_serialize(_me(request), [post])[0])
 
     @extend_schema(request=PostEditSerializer, responses={200: PostSerializer}, tags=["posts"])
     def patch(self, request: Request, post_id: str) -> Response:

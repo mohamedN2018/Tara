@@ -15,6 +15,7 @@ from . import services
 from .serializers import (
     NotificationSerializer,
     PreferenceSerializer,
+    PreferenceUpdateSerializer,
     PushTokenSerializer,
     ReadSerializer,
 )
@@ -70,7 +71,9 @@ class PreferencesView(APIView):
     def patch(self, request: Request) -> Response:
         pref = services.get_or_create_preferences(_me(request))
         if "prefs" in request.data:
-            pref.prefs = request.data["prefs"]
+            serializer = PreferenceUpdateSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            pref.prefs = serializer.validated_data["prefs"]
         if "quiet_hours" in request.data:
             pref.quiet_hours = request.data["quiet_hours"]
         pref.save()
