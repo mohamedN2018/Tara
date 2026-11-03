@@ -112,6 +112,7 @@ CELERY_TASK_DEFAULT_QUEUE = f"{SERVICE_NAME}.tasks"
 CELERY_RESULT_BACKEND = None
 CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", not bool(RABBITMQ_URL))
 CELERY_BEAT_SCHEDULE = {
+    "purge-events": {"task": "tara_events.purge_events", "schedule": 3600.0},
     "drain-outbox": {"task": "tara_events.publish_outbox", "schedule": 2.0},
 }
 

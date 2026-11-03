@@ -8,6 +8,7 @@ Celery task runs to drain unpublished rows to the broker.
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from django.db import connection, transaction
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("tara.events.outbox")
 
 MAX_ATTEMPTS = 8
+PURGE_BATCH_SIZE = 5000
 
 
 def record_event(outbox_model: type[AbstractOutboxEvent], envelope: EventEnvelope):
@@ -83,3 +85,40 @@ def publish_pending(
     if published:
         logger.info("outbox published batch", extra={"count": published})
     return published
+
+
+def _delete_in_batches(queryset, batch_size: int) -> int:
+    """Short deletes, so a big backlog never holds one long transaction."""
+    deleted = 0
+    while True:
+        ids = list(queryset.order_by().values_list("pk", flat=True)[:batch_size])
+        if not ids:
+            return deleted
+        deleted += queryset.model.objects.filter(pk__in=ids).delete()[0]
+
+
+def purge_old_events(
+    outbox_model,
+    processed_model=None,
+    *,
+    retention_days: int = 7,
+    batch_size: int = PURGE_BATCH_SIZE,
+) -> dict[str, int]:
+    """Delete published outbox rows and processed-event rows past the retention window.
+
+    Unpublished rows stay, even parked ones: they are the evidence of a failure.
+    """
+    cutoff = timezone.now() - timedelta(days=retention_days)
+    counts = {
+        "outbox": _delete_in_batches(
+            outbox_model.objects.filter(published_at__lt=cutoff), batch_size
+        ),
+        "processed": 0,
+    }
+    if processed_model is not None:
+        counts["processed"] = _delete_in_batches(
+            processed_model.objects.filter(processed_at__lt=cutoff), batch_size
+        )
+    if counts["outbox"] or counts["processed"]:
+        logger.info("purged old events", extra=counts)
+    return counts
