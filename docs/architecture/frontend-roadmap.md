@@ -1,88 +1,110 @@
-# Tara Frontend — Development Roadmap
+# Tara Frontend — Status and Roadmap
 
-Status snapshot + a prioritized plan for closing the gap between what the
-backend already exposes and what the web app surfaces. Constraint: **frontend
-only, no backend changes, real API data only, full Arabic RTL.**
+What the web app (`frontend/web`) does today against the live APIs, what is
+deliberately left out, and what remains. Real API data only, Arabic RTL by
+default with English LTR (`ar.ts` and `en.ts` are kept in parity by a unit test).
 
-## ✅ Already built & verified
-Auth (login/register) · Home feed (real-time `feed.item.added`, composer with
-audience + media) · Profile (two-column overview, intro/work/education/links,
-photos, friends, completion, edit modal with avatar/cover upload) · Follow &
-Friends (real state, requests/sent/all, mutual, counts) · Chat (DMs, image
-messages, replies, "Seen" receipts, typing, presence, date dividers) ·
-Marketplace (browse/mine/saved, categories, create+publish, detail, contact,
-seller transitions) · Notifications (actor avatars, pagination, live toasts) ·
-Search (typed tabs, people/posts/listings) · Saved (posts + listings) ·
-Settings · Admin (health + moderation queue) · Post detail page · Navbar (apps
-grid, create menu, live search) · Name directory · Media pipeline (eager
-processing + dev storage proxy).
+Last updated: 2026-11-03.
 
-## ❌ Gaps — backend exists, frontend does not surface it
+## ✅ Built and verified in a browser on the live stack
 
-### Auth / account (identity service)
-- Email verification page (`auth/verify-email/`) — register returns `pending`.
-- Forgot / reset password (`auth/password/forgot|reset/`).
-- Active sessions list + revoke (`auth/sessions/`).
+**Account** — register, email verification, login, forgot/reset password,
+active sessions with revoke, settings (theme, language, quiet hours, per-kind
+in-app notification toggles).
 
-### Profile (profile service)
-- **Pages** (business/brand profiles): `pages/`, `pages/<handle>/`, members,
-  roles — entirely missing.
-- Field-level privacy (`profile/me/privacy/`) — per-field visibility control.
+**Feed and posts** — home feed with live `feed.item.added` (one summary event
+per fan-out), composer with audience, photos, polls and `@mention`
+autocomplete; edit, delete, report; reactions; comments paged with "view more",
+replies with notifications to the parent comment's author; saved posts and
+listings paged. Text renders clickable `#hashtags` (search shows only posts the
+viewer may see), `@mentions` (profile links, and a notification to mentioned
+people who can open the post) and links. Link previews are built by the server
+(text only). Sharing creates a real post with the original embedded as a card;
+a share never reaches further than the original, and readers outside the
+original's audience see "This post isn't available".
 
-### Chat (chat service)
-- **Message reactions** (`messages/<id>/reactions/` + `chat.message.reacted`).
-- **Voice messages** (`conversations/<id>/voice-messages/`) — record/send/play.
-- **Mute / Pin** conversation (`.../mute`, `.../pin`).
-- **Group conversations** (group create) — only DMs surfaced today.
+**Profiles and Pages** — profile overview, intro/work/education/links, photos,
+friends, edit modal with avatar/cover and per-field privacy (Everyone /
+Friends / Only me). Pages: browse and search, "My pages", create, view, edit
+(owners/admins also publish or hide as draft), team list with roles, add by
+handle, change role, remove, leave.
 
-### Posts (post service)
-- Edit post (`PostEditSerializer` / PATCH) — only delete exists in UI.
-- Report post (endpoint exists; no UI action on PostCard).
-- Link previews (`link_preview`), shared-post rendering (`shared_post_id`),
-  polls (`type=poll` placeholder), hashtags (tags are extracted server-side),
-  @mentions.
+**Chat** — DMs and groups (create from friends, rename, add/remove members,
+make/remove admin, leave; members are updated live), inbox ordered by latest
+activity, image and voice messages (record with MediaRecorder, upload, play),
+replies, reactions (live via `chat.message.reacted`), pin/unpin with a pinned
+bar, mute for 1h/8h/1 week (no notification or toast while muted), typing,
+presence, and "Seen" that survives a reload (per-member read state).
 
-### Graph
-- Followers / Following / Blocked **list views** (counts shown, lists not).
+**Social graph** — follow, friends (requests/sent/all, mutual), followers /
+following / blocked lists with unblock.
 
-### Notifications
-- Preferences page (`notifications/preferences/`).
-- Web Push registration (`devices/push-token/`).
+**Marketplace** — browse/mine/saved, categories, create and publish, detail,
+contact seller, seller transitions.
 
-### Admin / moderation / ads
-- Admin: feature flags (`admin/feature-flags/`), role management (`admin/roles/`).
-- Moderation: file a report UI (`moderation/reports/file/`).
-- Ads: advertiser dashboard (`ads/campaigns/`, ad-sets, creatives review).
+**Notifications** — list with actor avatars and paging, live toasts, Web Push
+(Settings → Browser notifications) when VAPID keys are configured.
 
-## 🛣️ Roadmap (recommended order)
+**Ads** — advertiser dashboard (campaigns, pause/resume, ad sets, creatives,
+spend, impressions, clicks, CTR per campaign and creative), ad review queue for
+`ad_reviewer`/`admin`, sponsored card in the feed that reports impression and
+click with the serve token it was given.
 
-### Phase 1 — Finish the core (high value, low effort)
-1. Auth completeness: email-verify page, forgot/reset password, sessions list.
-2. Post ⋯ menu: **edit** + **report** (alongside existing delete).
-3. Chat: **message reactions** (live) + **mute/pin** conversation.
-4. Relationship list views: Followers / Following / Blocked (+ unblock).
-5. Notification **preferences** page.
+**Admin** — service health, moderation queue (sorted by report count), role
+management (grant/revoke `admin`, `moderator`, `ad_reviewer`, `analyst` by
+email; Identity holds the roles), feature flags (add, toggle, rollout %).
 
-### Phase 2 — New surfaces (medium effort)
-6. **Pages** (business profiles): browse, view, create, manage members/roles.
-7. **Group chats**: create group + group conversation UI.
-8. **Voice messages**: record (MediaRecorder) → upload → send → playback.
-9. **Field privacy** controls inside the edit-profile modal.
-10. **Hashtags & mentions**: clickable `#tag` → search, `@mention` autocomplete.
+**PWA** — manifest and icons (installable; "Install" in Settings when the
+browser offers it), service worker that caches the whole build so the app
+starts offline, and push display in the app's language. The service worker runs
+only in production builds (`npm run build`), not in `vite` dev.
 
-### Phase 3 — Growth / advanced (higher effort)
-11. **Web Push + PWA**: service worker, push-token registration, installable,
-    offline shell.
-12. Ads **advertiser dashboard** (campaigns / ad-sets / creatives).
-13. Admin: feature flags + role management.
-14. Posts: link previews, shared-post cards, polls.
+## 🧪 How it is tested
+
+- Unit (Vitest): token refresh, sockets, chat ordering/receipts/reactions,
+  rich text tokenizing, feed hydration and the sponsored slot, VAPID key
+  decoding, i18n parity.
+- E2E (Playwright, live stack): `auth`, `names`, `posts`, `profile`, `chat`,
+  `chat-features`, `lists`, `social`, `growth`, and `pwa`. `pwa.spec.ts` needs a
+  production preview on :4173 and skips without one. `growth.spec.ts` runs
+  `docker exec tara-identity-1 python manage.py create_admin` to make an admin.
+
+## ⚠️ Known limits
+
+- Web Push: automated Chromium refuses real push subscriptions, so the e2e
+  test stubs `PushManager.subscribe` (real P-256 keys, an FCM URL) and checks
+  the server's real send to FCM and its handling of the answer. Delivery to a
+  real browser has not been seen end to end.
+- Offline: the shell and its code load from cache and the app reports it is
+  offline, but no data is cached, so signed-in pages stay empty until the
+  connection returns.
+- Link previews have no image on purpose: loading a remote image would give
+  every reader's IP address to whoever wrote the post.
+- Group members can be added from friends in the UI; the API accepts any
+  account that hasn't blocked the admin (as DMs do).
+- Push has one on/off switch per browser. The backend already honours a
+  per-kind `push` channel in preferences, but there is no UI for it.
+- Ads: budgets are tracked numbers, with no payment. Ad set `targeting` is
+  stored but not evaluated. Creatives have no image upload in the dashboard.
+- The `analyst` role reaches the token, but nothing uses it yet.
+- Role changes reach the token on the next refresh (access tokens live for
+  minutes); an existing access token keeps its old roles until it expires.
+
+## 🛣️ Next
+
+1. Pages as authors: post as a page (`author_type=page`), page avatar/cover
+   upload, follow a page.
+2. Per-kind push toggles in Settings; quiet-hours UI already exists.
+3. Offline data: cache the last feed page and conversations for reading.
+4. Ads: creative images, targeting, and an analyst view of campaign stats.
+5. Split `MessagesView` and `PostCard` further (both grew with this work), and
+   an accessibility pass on the new dialogs and menus.
 
 ## 🧩 Cross-cutting (quality & infra)
-- **Frontend tests**: component/unit (Vitest) + a few E2E happy paths.
-- **Production media serving**: the dev `/__s3` Vite proxy is dev-only; prod
-  needs the gateway to route storage (or a public S3 endpoint).
-- **Celery queue isolation** (infra, with sign-off): per-service default queues
-  instead of one shared `celery` queue — the proper fix behind the media
-  `CELERY_TASK_ALWAYS_EAGER` workaround; affects any service-specific task.
-- Accessibility audit (keyboard, ARIA, focus, contrast).
-- Consistency pass on empty/error/loading states + i18n completeness.
+
+- **Production media serving**: the dev `/__s3` Vite proxy is dev-only;
+  production goes through the web container's `/tara-media/` route.
+- **Celery queue isolation**: per-service default queues are in place
+  (`<service>.tasks`); web push runs on the notification relay worker.
+- Deploy needs `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` for
+  the notification service, and `ADS_AUTO_APPROVE` now defaults to off.
