@@ -5,6 +5,8 @@
 SHELL := /bin/bash
 COMPOSE := docker compose -f infra/compose/docker-compose.yml --env-file .env
 SERVICE ?=
+DB_SERVICES := identity profile graph media post feed chat marketplace notification search moderation admin ads
+ALL_SERVICES := $(DB_SERVICES) realtime bff
 
 .DEFAULT_GOAL := help
 
@@ -46,12 +48,16 @@ logs: ## Tail logs. Use SERVICE=identity to scope.
 	$(COMPOSE) logs -f $(SERVICE)
 
 .PHONY: migrate
-migrate: ## Run Django migrations for the identity service
-	$(COMPOSE) exec identity python manage.py migrate --noinput
+migrate: ## Apply migrations on every service (web containers also do this at boot)
+	@for s in $(DB_SERVICES); do echo "== $$s"; $(COMPOSE) exec -T $$s python manage.py migrate --noinput || exit 1; done
 
 .PHONY: makemigrations
-makemigrations: ## Generate migrations for the identity service
-	$(COMPOSE) exec identity python manage.py makemigrations
+makemigrations: ## Generate migrations (SERVICE=post, default all); review and commit the files
+	@for s in $(or $(SERVICE),$(DB_SERVICES)); do 		$(COMPOSE) run --rm --no-deps -v "$(PWD)/services/$$s:/app" -e RUN_MIGRATIONS=false $$s python manage.py makemigrations || exit 1; 	done
+
+.PHONY: check-migrations
+check-migrations: ## Fail if any model change has no committed migration
+	@for s in $(DB_SERVICES); do echo "== $$s"; 		$(COMPOSE) run --rm --no-deps -e RUN_MIGRATIONS=false $$s python manage.py makemigrations --check --dry-run || exit 1; 	done
 
 .PHONY: superuser
 superuser: ## Create a Django superuser in identity
@@ -62,12 +68,16 @@ shell: ## Open a shell in a service (SERVICE=identity default)
 	$(COMPOSE) exec $(or $(SERVICE),identity) bash
 
 .PHONY: test
-test: ## Run tests. Use SERVICE=identity to scope to one service.
-	@if [ "$(SERVICE)" = "bff" ]; then \
-		cd services/bff && pytest -q; \
-	else \
-		cd services/identity && pytest -q; \
-	fi
+test: ## Run tests in throwaway containers. SERVICE=post scopes to one service.
+	@for s in $(or $(SERVICE),$(ALL_SERVICES)); do echo "== $$s"; scripts/test-service.sh $$s || exit 1; done
+
+.PHONY: lock
+lock: ## Regenerate constraints.txt files from the built images
+	scripts/lock-deps.sh
+
+.PHONY: smoke
+smoke: ## End-to-end API check against the running stack
+	python scripts/smoke_test.py
 
 .PHONY: lint
 lint: ## Lint Python (ruff) across libs and services

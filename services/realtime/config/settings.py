@@ -30,6 +30,7 @@ SERVICE_NAME = "realtime"
 INSTALLED_APPS = [
     "django_prometheus",
     "channels",
+    "realtime",
 ]
 
 MIDDLEWARE = [

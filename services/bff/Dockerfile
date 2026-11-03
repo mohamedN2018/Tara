@@ -13,8 +13,8 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY requirements.txt /app/requirements.txt
-RUN pip install -r /app/requirements.txt
+COPY requirements.txt constraints.txt /app/
+RUN pip install -r /app/requirements.txt -c /app/constraints.txt
 
 COPY . /app
 

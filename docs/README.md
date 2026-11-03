@@ -4,9 +4,10 @@
 (web today; iOS/Android-ready API contracts). This directory holds the living
 architecture and engineering documentation.
 
-> **Status: Phase 0 — Discovery & Architecture (awaiting approval).**
-> No application code has been written yet. The documents below are the Phase 0
-> deliverable. Implementation does not begin until these are approved.
+> **Status:** all phases have been implemented and are being hardened. Start with
+> the [review and plan](architecture/project-review-and-plan.md). Deployment:
+> [Dokploy guide](deploy/DOKPLOY.md). The Phase 0 documents below describe the
+> original design; where they differ from the code, the code wins.
 
 ## Phase 0 deliverables
 
@@ -31,7 +32,7 @@ architecture and engineering documentation.
 
 ## Phase roadmap (high level)
 
-`Phase 0` Discovery & Architecture → **you are here** ·
+`Phase 0` Discovery & Architecture ·
 `Phase 1` Foundation (gateway, identity, observability, CI) ·
 `Phase 2` Profile & Social Graph ·
 `Phase 3` Posts & Feed & Media ·

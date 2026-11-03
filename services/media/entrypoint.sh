@@ -5,10 +5,6 @@ set -euo pipefail
 python /app/scripts/wait_for_db.py
 
 if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
-  if [ "${RUN_MAKEMIGRATIONS:-true}" = "true" ]; then
-    echo "[media] makemigrations"
-    python manage.py makemigrations media_app --noinput
-  fi
   echo "[media] migrate"
   python manage.py migrate --noinput
   echo "[media] ensure bucket"

@@ -19,6 +19,7 @@ ignore = [
 "**/tests/**" = ["S105", "S106", "S311"]  # test fixtures may use dummy secrets/random
 "**/conftest.py" = ["S105", "S106"]
 "**/management/commands/seed_dev_data.py" = ["S105", "S106"]  # synthetic dev creds
+"scripts/smoke_test.py" = ["S310"]  # fixed http(s) URLs only
 
 [tool.ruff.lint.isort]
 known-first-party = ["tara_common", "tara_events", "tara_resilience", "tara_observability"]

@@ -101,3 +101,24 @@ def test_password_reset_revokes_all_sessions(active_account):
         tokens.rotate_refresh_token(issued.refresh_token)
     active_account.refresh_from_db()
     assert active_account.check_password("BrandNewPassw0rd!")
+
+
+@pytest.mark.parametrize(
+    ("is_staff", "is_superuser", "expected"),
+    [
+        (False, False, []),
+        (True, False, ["moderator"]),
+        (True, True, ["admin", "moderator"]),
+    ],
+)
+def test_access_token_carries_roles_from_account_flags(
+    active_account, is_staff, is_superuser, expected
+):
+    active_account.is_staff = is_staff
+    active_account.is_superuser = is_superuser
+    active_account.save(update_fields=["is_staff", "is_superuser"])
+
+    token, _ = tokens.issue_access_token(active_account, session_id="sess-1")
+    claims = jwt.decode(token, options={"verify_signature": False})
+
+    assert claims["roles"] == expected

@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Tara: local secrets, keys and virtualenvs
+.env.*
+!.env*.example
+.keys*/
+.venv*/

@@ -16,6 +16,10 @@ RUN apt-get update \
 WORKDIR /app
 
 # 1) Shared kernel (changes rarely -> cached layer)
+# Exact versions for every dependency (regenerate with `make lock`).
+COPY constraints.txt /opt/tara/constraints.txt
+ENV PIP_CONSTRAINT=/opt/tara/constraints.txt
+
 COPY libs /opt/tara/libs
 RUN pip install \
     /opt/tara/libs/tara_common \

@@ -1,9 +1,9 @@
 # Realtime gateway runtime dependencies. Shared libs installed in the Dockerfile.
-Django>=5.0,<5.2
+Django>=5.2,<5.3
 channels>=4.0
 channels-redis>=4.2
 daphne>=4.1
 PyJWT[crypto]>=2.8
 cryptography>=42
-redis>=5.0
+redis>=5.0,<6
 django-prometheus>=2.3

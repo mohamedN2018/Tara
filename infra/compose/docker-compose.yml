@@ -66,7 +66,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ../postgres/init:/docker-entrypoint-initdb.d:ro
     ports:
-      - "5435:5432"   # host 5435 (5432 is used by another local project)
+      - "127.0.0.1:5435:5432"   # host 5435 (5432 is used by another local project)
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
       interval: 5s
@@ -80,7 +80,7 @@ services:
     volumes:
       - redisdata:/data
     ports:
-      - "6381:6379"   # host 6381 (6379 is used by another local project)
+      - "127.0.0.1:6381:6379"   # host 6381 (6379 is used by another local project)
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -96,8 +96,8 @@ services:
     volumes:
       - rabbitmqdata:/var/lib/rabbitmq
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
@@ -105,7 +105,8 @@ services:
       retries: 10
 
   minio:
-    image: minio/minio:latest
+    # Official minio/minio images are no longer published; pinned by digest.
+    image: cgr.dev/chainguard/minio@sha256:090010a3f73f6aa2dff606c61cd0de3640b22748abe19f4e48cce6dc9de7a53f
     profiles: ["core"]
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
@@ -114,24 +115,25 @@ services:
     volumes:
       - miniodata:/data
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      # The image has no shell or curl; media itself retries S3 and creates the bucket.
+      test: ["CMD", "minio", "--version"]
       interval: 10s
       timeout: 5s
       retries: 10
 
   mailpit:
-    image: axllent/mailpit:latest
+    image: axllent/mailpit:v1.27
     profiles: ["core"]
     ports:
-      - "1025:1025"
-      - "8025:8025"
+      - "127.0.0.1:${MAILPIT_SMTP_HOST_PORT:-1026}:1025"
+      - "127.0.0.1:${MAILPIT_UI_HOST_PORT:-8026}:8025"
 
   # ---- Edge ----------------------------------------------------------------
   traefik:
-    image: traefik:v3.1
+    image: traefik:v3.6
     profiles: ["core"]
     command:
       - --api.dashboard=true
@@ -144,8 +146,8 @@ services:
       # Apply security headers + rate limiting to ALL routed traffic at the edge.
       - --entrypoints.web.http.middlewares=tara-secure-headers@file,tara-ratelimit@file
     ports:
-      - "8080:80"     # edge
-      - "8081:8080"   # dashboard
+      - "127.0.0.1:8080:80"     # edge
+      - "127.0.0.1:8081:8080"   # dashboard
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ../traefik/dynamic:/etc/traefik/dynamic:ro
@@ -174,7 +176,7 @@ services:
     expose:
       - "8000"
     ports:
-      - "8000:8000"
+      - "127.0.0.1:${IDENTITY_HOST_PORT:-8100}:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -189,7 +191,7 @@ services:
       retries: 10
     labels:
       - traefik.enable=true
-      - "traefik.http.routers.identity.rule=PathPrefix(`/api/v1/auth`) || PathPrefix(`/api/v1/me`) || PathPrefix(`/.well-known`) || PathPrefix(`/admin`) || PathPrefix(`/healthz`) || PathPrefix(`/readyz`) || PathPrefix(`/metrics`) || PathPrefix(`/static`) || PathPrefix(`/api/v1/docs`) || PathPrefix(`/api/v1/schema`)"
+      - "traefik.http.routers.identity.rule=PathPrefix(`/api/v1/auth`) || Path(`/api/v1/me`) || PathPrefix(`/api/v1/me/`) || PathPrefix(`/.well-known`) || PathPrefix(`/admin`) || PathPrefix(`/healthz`) || PathPrefix(`/readyz`) || PathPrefix(`/metrics`) || PathPrefix(`/static`) || PathPrefix(`/api/v1/docs`) || PathPrefix(`/api/v1/schema`)"
       - traefik.http.routers.identity.entrypoints=web
       - traefik.http.services.identity.loadbalancer.server.port=8000
 
@@ -239,7 +241,7 @@ services:
       BFF_IDENTITY_BASE_URL: http://identity:8000
       BFF_JWKS_URL: http://identity:8000/.well-known/jwks.json
     ports:
-      - "8090:8090"
+      - "127.0.0.1:8090:8090"
     depends_on:
       identity:
         condition: service_healthy
@@ -336,7 +338,7 @@ services:
       TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
       RUN_MIGRATIONS: "true"
     ports:
-      - "8002:8000"
+      - "127.0.0.1:8002:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -407,7 +409,7 @@ services:
       # become "ready" reliably without depending on the shared-queue lottery.
       CELERY_TASK_ALWAYS_EAGER: "true"
     ports:
-      - "8003:8000"
+      - "127.0.0.1:8003:8000"
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -456,7 +458,7 @@ services:
       GRAPH_INTERNAL_URL: http://graph:8000
       RUN_MIGRATIONS: "true"
     ports:
-      - "8004:8000"
+      - "127.0.0.1:8004:8000"
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -517,7 +519,7 @@ services:
       GRAPH_INTERNAL_URL: http://graph:8000
       RUN_MIGRATIONS: "true"
     ports:
-      - "8005:8000"
+      - "127.0.0.1:8005:8000"
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -578,7 +580,7 @@ services:
       TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
       RUN_MIGRATIONS: "true"
     ports:
-      - "8006:8000"
+      - "127.0.0.1:8006:8000"
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -636,7 +638,7 @@ services:
       RABBITMQ_URL: ${RABBITMQ_URL}
       TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
     ports:
-      - "8010:8000"
+      - "127.0.0.1:8010:8000"
     depends_on:
       redis: {condition: service_healthy}
     healthcheck:
@@ -679,7 +681,7 @@ services:
       TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
       RUN_MIGRATIONS: "true"
     ports:
-      - "8007:8000"
+      - "127.0.0.1:8007:8000"
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -735,7 +737,7 @@ services:
       RABBITMQ_URL: ${RABBITMQ_URL}
       TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
       RUN_MIGRATIONS: "true"
-    ports: ["8008:8000"]
+    ports: ["127.0.0.1:8008:8000"]
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -779,7 +781,7 @@ services:
       RABBITMQ_URL: ${RABBITMQ_URL}
       TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
       RUN_MIGRATIONS: "true"
-    ports: ["8009:8000"]
+    ports: ["127.0.0.1:8009:8000"]
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -815,7 +817,7 @@ services:
       RABBITMQ_URL: ${RABBITMQ_URL}
       TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
       RUN_MIGRATIONS: "true"
-    ports: ["8011:8000"]
+    ports: ["127.0.0.1:8011:8000"]
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -858,7 +860,7 @@ services:
       REDIS_URL: redis://redis:6379/12
       TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
       RUN_MIGRATIONS: "true"
-    ports: ["8012:8000"]
+    ports: ["127.0.0.1:8012:8000"]
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -882,7 +884,7 @@ services:
       DISABLE_SECURITY_PLUGIN: "true"
       OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
     ports:
-      - "9200:9200"
+      - "127.0.0.1:9200:9200"
     volumes:
       - opensearchdata:/usr/share/opensearch/data
 
@@ -898,7 +900,7 @@ services:
       RABBITMQ_URL: ${RABBITMQ_URL}
       TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
       RUN_MIGRATIONS: "true"
-    ports: ["8013:8000"]
+    ports: ["127.0.0.1:8013:8000"]
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -924,17 +926,17 @@ services:
 
   # ---- Observability (profile: observability) -------------------------------
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.5.0
     profiles: ["observability"]
     volumes:
       - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ../observability/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheusdata:/prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:12.1.0
     profiles: ["observability"]
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${MINIO_ROOT_PASSWORD:-admin}
@@ -943,19 +945,19 @@ services:
       - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - grafanadata:/var/lib/grafana
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     depends_on:
       - prometheus
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
+    image: otel/opentelemetry-collector-contrib:0.131.0
     profiles: ["observability"]
     command: ["--config=/etc/otel/config.yaml"]
     volumes:
       - ../observability/otel-collector-config.yaml:/etc/otel/config.yaml:ro
     ports:
-      - "4317:4317"
-      - "4318:4318"
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
 
 volumes:
   pgdata:

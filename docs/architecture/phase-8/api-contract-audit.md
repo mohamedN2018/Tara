@@ -34,6 +34,8 @@ Base: the web client prefixes every path with `VITE_API_BASE=/api/v1`.
 | 20 | friends list (V2) | `[{user_id}]` | `{friends: [id, ...]}` |
 | 21 | incoming requests (V2) | `[{from_user_id}]` | `Friendship[]` → mapped (`requested_by` → `from_user_id`) |
 | 22 | follow-state probe (V2) | `GET /follows/{id}/` | removed — no such endpoint; follow state defaults to unknown |
+| 23 | **login response (found at local run)** | assumed `{account, tokens}` + auto-login | real: flat `{access_token, refresh_token, ...}`; account fetched from `/me/` |
+| 24 | **register response (found at local run)** | assumed `{account, tokens}` → home | real: `{account_id, email, status:"pending"}`, **no tokens**; email verification required → RegisterView shows a "verify then sign in" notice |
 
 ## B. Verified correct (no change)
 

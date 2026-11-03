@@ -11,34 +11,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Detect which parts changed so we only run relevant jobs.
-  changes:
-    runs-on: ubuntu-latest
-    outputs:
-      libs: ${{ steps.filter.outputs.libs }}
-      identity: ${{ steps.filter.outputs.identity }}
-      bff: ${{ steps.filter.outputs.bff }}
-      frontend: ${{ steps.filter.outputs.frontend }}
-      infra: ${{ steps.filter.outputs.infra }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            libs:
-              - 'libs/**'
-            identity:
-              - 'services/identity/**'
-              - 'libs/**'
-            bff:
-              - 'services/bff/**'
-            frontend:
-              - 'frontend/web/**'
-            infra:
-              - 'infra/**'
-              - '.github/workflows/ci.yml'
-
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -46,101 +18,88 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ruff
+      - run: pip install ruff==0.17.3
       - name: Ruff lint
-        run: ruff check libs services
+        run: ruff check libs services scripts
       - name: Ruff format check
-        run: ruff format --check libs services
+        run: ruff format --check libs services scripts
 
-  identity-tests:
-    needs: changes
-    if: needs.changes.outputs.identity == 'true'
+  # Every service, in its own image: real migrations, none missing, tests green.
+  service-tests:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: identity
-          POSTGRES_PASSWORD: identity-dev-pass
-          POSTGRES_DB: identity_db
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U identity"
-          --health-interval 5s --health-timeout 3s --health-retries 10
-      redis:
-        image: redis:7-alpine
-        ports: ["6379:6379"]
-    env:
-      POSTGRES_HOST: localhost
-      POSTGRES_PORT: "5432"
-      IDENTITY_DB_NAME: identity_db
-      IDENTITY_DB_USER: identity
-      IDENTITY_DB_PASSWORD: identity-dev-pass
-      REDIS_URL: redis://localhost:6379/0
-      IDENTITY_DEBUG: "true"
-      RABBITMQ_URL: ""
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - identity
+          - profile
+          - graph
+          - media
+          - post
+          - feed
+          - chat
+          - realtime
+          - marketplace
+          - notification
+          - search
+          - moderation
+          - admin
+          - ads
+          - bff
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install shared libs + service deps
-        working-directory: services/identity
+      - name: Start Postgres + Redis
         run: |
-          pip install ../../libs/tara_common ../../libs/tara_events \
-                      ../../libs/tara_resilience ../../libs/tara_observability
-          pip install -r requirements-dev.txt
-      - name: Run tests
-        working-directory: services/identity
-        run: pytest
+          cp .env.example .env
+          docker compose -f infra/compose/docker-compose.yml --env-file .env             --profile core up -d --wait postgres redis
+      - name: Build the service image
+        run: |
+          docker compose -f infra/compose/docker-compose.yml --env-file .env             --profile core build ${{ matrix.service }}
+      - name: Migrations check + tests
+        run: scripts/test-service.sh ${{ matrix.service }}
 
-  bff-tests:
-    needs: changes
-    if: needs.changes.outputs.bff == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install deps
-        working-directory: services/bff
-        run: pip install -r requirements-dev.txt
-      - name: Run tests
-        working-directory: services/bff
-        run: pytest
-
+  # Building from the checkout is what catches files missing from git.
   docker-build:
     needs: [lint]
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: identity, context: ., file: services/identity/Dockerfile}
+          - {name: profile, context: ., file: services/profile/Dockerfile}
+          - {name: graph, context: ., file: services/graph/Dockerfile}
+          - {name: media, context: ., file: services/media/Dockerfile}
+          - {name: post, context: ., file: services/post/Dockerfile}
+          - {name: feed, context: ., file: services/feed/Dockerfile}
+          - {name: chat, context: ., file: services/chat/Dockerfile}
+          - {name: realtime, context: ., file: services/realtime/Dockerfile}
+          - {name: marketplace, context: ., file: services/marketplace/Dockerfile}
+          - {name: notification, context: ., file: services/notification/Dockerfile}
+          - {name: search, context: ., file: services/search/Dockerfile}
+          - {name: moderation, context: ., file: services/moderation/Dockerfile}
+          - {name: admin, context: ., file: services/admin/Dockerfile}
+          - {name: ads, context: ., file: services/ads/Dockerfile}
+          - {name: bff, context: services/bff, file: services/bff/Dockerfile}
+          - {name: web, context: frontend/web, file: frontend/web/Dockerfile}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - name: Build identity image
-        uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v6
         with:
-          context: .
-          file: services/identity/Dockerfile
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
           push: false
-          tags: tara/identity:ci
-      - name: Build bff image
-        uses: docker/build-push-action@v6
-        with:
-          context: services/bff
-          file: services/bff/Dockerfile
-          push: false
-          tags: tara/bff:ci
+          tags: tara/${{ matrix.name }}:ci
 
-  # Phase 8: type-check + production build of the Vue web client.
+  # Type-check + production build of the Vue web client.
   frontend:
-    needs: changes
-    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: frontend/web/package-lock.json
       - name: Install
@@ -150,10 +109,8 @@ jobs:
         working-directory: frontend/web
         run: npm run build   # vue-tsc --noEmit && vite build
 
-  # Phase 9: validate deployment artifacts (compose, K8s manifests, alert rules).
+  # Validate deployment artifacts (compose, K8s manifests, alert rules).
   manifests:
-    needs: changes
-    if: needs.changes.outputs.infra == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -162,7 +119,8 @@ jobs:
         run: |
           cp .env.example .env
           docker compose -f infra/compose/docker-compose.yml --env-file .env config -q
-          echo "compose OK"
+          docker network create dokploy-network
+          DOMAIN=example.com docker compose -f docker-compose.dokploy.yml --env-file .env config -q
       - name: Validate Kustomize overlays + cluster
         run: |
           for d in infra/k8s/overlays/*/ infra/k8s/cluster/; do
@@ -171,5 +129,5 @@ jobs:
       - name: Validate Prometheus rules + config
         run: |
           docker run --rm -v "$PWD/infra/observability:/etc/prometheus:ro" \
-            --entrypoint promtool prom/prometheus:latest \
+            --entrypoint promtool prom/prometheus:v3.5.0 \
             check config /etc/prometheus/prometheus.yml
