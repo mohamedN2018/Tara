@@ -1,8 +1,9 @@
 """Kombu-based event-bus consumer.
 
-Binds a durable queue to the topic exchange for every registered event type,
-dispatches each message to its handler(s) under an idempotency guard, and
-dead-letters anything that fails (after which it can be inspected/replayed).
+Binds a durable queue to the topic exchange for every registered event type and
+dispatches each message to its handler(s) under an idempotency guard. A failed
+message waits in a delay queue and comes back, up to ``RETRY_DELAYS_SECONDS``
+times. After that it is dead-lettered, and ``replay_dead_letters`` puts it back.
 
 Used by each service's ``consume_events`` management command. Kept transport-
 specific to RabbitMQ here; the publisher side stays abstract (ADR-003).
@@ -12,13 +13,21 @@ from __future__ import annotations
 
 import logging
 
-from kombu import Connection, Exchange, Queue, binding
+from django.db import close_old_connections
+from kombu import Connection, Exchange, Producer, Queue, binding
 from kombu.mixins import ConsumerMixin
 
 from .dispatch import handlers_for, registered_event_types
 from .envelope import EventEnvelope
 
 logger = logging.getLogger("tara.events.worker")
+
+RETRY_DELAYS_SECONDS = (5, 30, 120, 600, 1800)
+ATTEMPT_HEADER = "x-tara-attempt"
+
+
+def _retry_queue_name(queue_name: str, delay: int) -> str:
+    return f"{queue_name}.retry.{delay}s"
 
 
 class EventWorker(ConsumerMixin):
@@ -42,6 +51,20 @@ class EventWorker(ConsumerMixin):
         self.dlq = Queue(f"{queue_name}.dlq", exchange=self.dlx, routing_key="#", durable=True)
 
         bindings = [binding(self.exchange, routing_key=rk) for rk in registered_event_types()]
+        self.queue_name = queue_name
+        # An expired message goes back to the main queue through the default exchange.
+        self.retry_queues = [
+            Queue(
+                _retry_queue_name(queue_name, delay),
+                durable=True,
+                queue_arguments={
+                    "x-message-ttl": delay * 1000,
+                    "x-dead-letter-exchange": "",
+                    "x-dead-letter-routing-key": queue_name,
+                },
+            )
+            for delay in RETRY_DELAYS_SECONDS
+        ]
         self.queue = Queue(
             queue_name,
             exchange=self.exchange,
@@ -54,6 +77,9 @@ class EventWorker(ConsumerMixin):
         # Ensure the dead-letter topology exists before consuming.
         self.dlx(channel).declare()
         self.dlq(channel).declare()
+        for queue in self.retry_queues:
+            queue(channel).declare()
+        self.producer = Producer(channel)
         return [
             Consumer(
                 queues=[self.queue],
@@ -71,12 +97,29 @@ class EventWorker(ConsumerMixin):
             message.reject(requeue=False)
             return
 
+        close_old_connections()
         try:
             self._dispatch(envelope)
         except Exception:
-            logger.exception("handler failed for event %s; dead-lettering", body.get("event_id"))
+            logger.exception("handler failed for event %s", body.get("event_id"))
+            self._retry_or_dead_letter(body, message)
+            return
+        finally:
+            close_old_connections()
+        message.ack()
+
+    def _retry_or_dead_letter(self, body, message) -> None:
+        attempt = int((message.headers or {}).get(ATTEMPT_HEADER, 0))
+        if attempt >= len(RETRY_DELAYS_SECONDS):
             message.reject(requeue=False)  # -> DLX/DLQ for inspection + replay
             return
+        self.producer.publish(
+            body,
+            exchange="",
+            routing_key=_retry_queue_name(self.queue_name, RETRY_DELAYS_SECONDS[attempt]),
+            delivery_mode=2,
+            headers={**(message.headers or {}), ATTEMPT_HEADER: attempt + 1},
+        )
         message.ack()
 
     def _dispatch(self, envelope: EventEnvelope) -> None:
@@ -114,3 +157,30 @@ def run_worker(
             processed_model=processed_model,
             consumer_name=consumer_name,
         ).run()
+
+
+def replay_dead_letters(*, broker_url: str, queue_name: str) -> int:
+    """Move everything in ``<queue_name>.dlq`` back to the main queue, with fresh retries."""
+    moved = 0
+    with Connection(broker_url) as conn:
+        dlq = conn.SimpleQueue(f"{queue_name}.dlq", no_ack=False)
+        # Passive: never redeclare a queue with different arguments.
+        producer = conn.Producer()
+        while True:
+            try:
+                message = dlq.get(block=False)
+            except dlq.Empty:
+                break
+            headers = {k: v for k, v in (message.headers or {}).items() if k != ATTEMPT_HEADER}
+            headers.pop("x-death", None)
+            producer.publish(
+                message.payload,
+                exchange="",
+                routing_key=queue_name,
+                delivery_mode=2,
+                headers=headers,
+            )
+            message.ack()
+            moved += 1
+        dlq.close()
+    return moved

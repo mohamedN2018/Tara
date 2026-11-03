@@ -19,7 +19,6 @@ import time
 from typing import Any
 
 import jwt
-import requests
 from django.conf import settings
 from jwt import PyJWKClient
 from rest_framework import authentication, exceptions
@@ -111,10 +110,10 @@ class JWTAuthentication(authentication.BaseAuthentication):
             )
         except jwt.ExpiredSignatureError as exc:
             raise exceptions.AuthenticationFailed("Access token has expired.") from exc
+        except jwt.PyJWKClientError as exc:  # unknown kid, or JWKS unreachable
+            raise exceptions.AuthenticationFailed("Unable to verify token signature.") from exc
         except jwt.InvalidTokenError as exc:
             raise exceptions.AuthenticationFailed("Invalid access token.") from exc
-        except requests.RequestException as exc:  # JWKS endpoint unreachable
-            raise exceptions.AuthenticationFailed("Unable to verify token signature.") from exc
 
     def _resolve_key(self, token: str):
         pem = getattr(settings, "TARA_JWT_PUBLIC_KEY", None)

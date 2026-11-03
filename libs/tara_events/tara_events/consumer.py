@@ -9,7 +9,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
-from django.db import IntegrityError, transaction
+from django.db import transaction
 
 if TYPE_CHECKING:
     from .models import AbstractProcessedEvent
@@ -24,10 +24,6 @@ def idempotent(processed_model: type[AbstractProcessedEvent], event_id: str, con
             if fresh:
                 handle(env)
     """
-    try:
-        with transaction.atomic():
-            processed_model.objects.create(event_id=event_id, consumer=consumer)
-            yield True
-    except IntegrityError:
-        # Already processed by this consumer — swallow and signal "skip".
-        yield False
+    with transaction.atomic():
+        _, created = processed_model.objects.get_or_create(event_id=event_id, consumer=consumer)
+        yield created

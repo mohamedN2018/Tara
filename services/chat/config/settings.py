@@ -51,6 +51,7 @@ TEMPLATES = []
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
+        "ATOMIC_REQUESTS": True,
         "NAME": os.getenv("CHAT_DB_NAME", "chat_db"),
         "USER": os.getenv("CHAT_DB_USER", "chat"),
         "PASSWORD": os.getenv("CHAT_DB_PASSWORD", "chat-dev-pass"),

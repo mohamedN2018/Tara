@@ -15,6 +15,17 @@ def ingest_report(
     *, reporter_id: str, target_type: str, target_id: str, reason: str = ""
 ) -> ModerationCase:
     """Record a report and attach it to the open case for that target (created if none)."""
+    open_case = ModerationCase.objects.filter(
+        target_type=target_type,
+        target_id=str(target_id),
+        state__in=[ModerationCase.State.OPEN, ModerationCase.State.IN_REVIEW],
+    ).first()
+    already_reported = Report.objects.filter(
+        reporter_id=reporter_id, target_type=target_type, target_id=str(target_id)
+    ).exists()
+    if open_case and already_reported:
+        return open_case  # one person cannot inflate a case
+
     with transaction.atomic():
         Report.objects.create(
             reporter_id=reporter_id,

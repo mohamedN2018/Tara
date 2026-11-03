@@ -91,3 +91,49 @@ def test_autocomplete(client_for):
     resp = client_for(str(uuid.uuid4())).get(reverse("searchsvc:autocomplete"), {"q": "na"})
     titles = {r["title"] for r in resp.json()["data"]["results"]}
     assert titles == {"naomi", "nathan"}
+
+
+# ---- what must never be found ------------------------------------------------
+
+
+def _event(event_type, payload, subject=None):
+    return EventEnvelope(
+        event_type=event_type,
+        subject_id=subject or payload.get("listing_id", "s"),
+        producer="test",
+        payload=payload,
+    )
+
+
+def test_listing_is_searchable_only_while_active():
+    from searchsvc.handlers import on_listing_status
+    from searchsvc.models import SearchDocument
+
+    payload = {"listing_id": "l1", "title": "chair", "seller_id": None}
+    on_listing_status(_event("listing.status.changed", {**payload, "to": "active"}))
+    assert SearchDocument.objects.filter(doc_id="l1").exists()
+    on_listing_status(_event("listing.status.changed", {**payload, "to": "sold"}))
+    assert not SearchDocument.objects.filter(doc_id="l1").exists()
+
+
+def test_private_profile_leaves_the_index():
+    from searchsvc.handlers import on_profile_updated
+    from searchsvc.models import SearchDocument
+
+    subject = "01a19eed-9326-7fd4-a005-3fb0712a234c"
+    on_profile_updated(_event("profile.updated", {"handle": "h"}, subject))
+    assert SearchDocument.objects.filter(doc_type="user").exists()
+    on_profile_updated(_event("profile.updated", {"handle": "h", "visibility": "private"}, subject))
+    assert not SearchDocument.objects.filter(doc_type="user").exists()
+
+
+def test_blocked_people_are_not_returned():
+    from searchsvc import backend
+    from searchsvc.models import BlockedPair
+
+    viewer = "01a19eed-9326-7fd4-a005-3fb0712a234c"
+    owner = "01a19eed-9326-7fd4-a005-3fb0712a234d"
+    backend.index_document("post", "p1", body="findme", owner_id=owner)
+    assert backend.query("findme", viewer_id=viewer)[0]
+    BlockedPair.objects.create(blocker_id=owner, blocked_id=viewer)
+    assert backend.query("findme", viewer_id=viewer)[0] == []

@@ -137,9 +137,9 @@ REST_FRAMEWORK = {
     "NUM_PROXIES": NUM_PROXIES,
     "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.ScopedRateThrottle"],
     "DEFAULT_THROTTLE_RATES": {
-        "auth_register": "10/hour",
-        "auth_login": "20/min",
-        "auth_password": "5/hour",
+        "auth_register": os.getenv("AUTH_REGISTER_RATE", "10/hour"),
+        "auth_login": os.getenv("AUTH_LOGIN_RATE", "20/min"),
+        "auth_password": os.getenv("AUTH_PASSWORD_RATE", "5/hour"),
         "auth_refresh": "60/min",
     },
 }

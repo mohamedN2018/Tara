@@ -19,11 +19,19 @@ if [ "$service" = "bff" ]; then
   pytest_args=""
 fi
 
+# Test tools live in a derived image, so only the first run after a build downloads them.
+MSYS_NO_PATHCONV=1 docker build -q -t "tara/${service}:test" - > /dev/null <<EOF
+FROM tara/${service}:dev
+USER root
+ENV PIP_CONSTRAINT=
+RUN pip install -q --timeout 20 --retries 5 --root-user-action=ignore \
+    "pytest>=8" "pytest-django>=4.8" pytest-cov pytest-asyncio httpx
+EOF
+
 # shellcheck disable=SC2086
 MSYS_NO_PATHCONV=1 docker run --rm $network --env-file "$env_file" \
   -e POSTGRES_HOST=postgres -e REDIS_URL=redis://redis:6379/15 -e RABBITMQ_URL= \
-  -e PIP_CONSTRAINT= --user root --entrypoint sh -e PYTEST_ARGS="$pytest_args" "tara/${service}:dev" -ec '
-    pip install -q --root-user-action=ignore -r requirements-dev.txt pytest-asyncio
+  -e PYTEST_ARGS="$pytest_args" --entrypoint sh "tara/${service}:test" -ec '
     if [ -d "$(ls -d */migrations 2>/dev/null | head -1)" ]; then
       python manage.py makemigrations --check --dry-run
     fi

@@ -10,11 +10,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from .envelope import EventEnvelope
-from .publisher import EventPublisher, get_publisher
+from .publisher import EventPublisher, PublisherUnavailable, get_publisher
 
 if TYPE_CHECKING:
     from .models import AbstractOutboxEvent
@@ -25,7 +25,9 @@ MAX_ATTEMPTS = 8
 
 
 def record_event(outbox_model: type[AbstractOutboxEvent], envelope: EventEnvelope):
-    """Persist an event to the outbox. MUST run inside the caller's transaction."""
+    """Persist an event to the outbox, inside the caller's transaction."""
+    if not connection.in_atomic_block:
+        raise RuntimeError("record_event must run inside a transaction.")
     return outbox_model.objects.create(
         id=envelope.event_id,
         event_type=envelope.event_type,
@@ -46,7 +48,8 @@ def publish_pending(
 
     Each row is locked (``select_for_update(skip_locked)``) so multiple relay
     workers can run concurrently without double-publishing. Failures increment
-    ``attempts`` and are retried next pass until MAX_ATTEMPTS, then parked.
+    ``attempts`` and are retried next pass until MAX_ATTEMPTS, then parked. A
+    broker outage stops the pass without counting against any row.
     """
     publisher = publisher or get_publisher()
     published = 0
@@ -60,6 +63,10 @@ def publish_pending(
         for row in rows:
             try:
                 publisher.publish(EventEnvelope.from_dict(row.payload))
+            except PublisherUnavailable:
+                # A broker outage is not the event's fault: try again next pass.
+                logger.warning("broker unavailable; outbox relay paused")
+                break
             except Exception as exc:  # noqa: BLE001 - record & continue; relay retries
                 row.attempts += 1
                 row.last_error = str(exc)[:1000]

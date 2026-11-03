@@ -51,6 +51,7 @@ TEMPLATES = []
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
+        "ATOMIC_REQUESTS": True,
         "NAME": os.getenv("MARKET_DB_NAME", "market_db"),
         "USER": os.getenv("MARKET_DB_USER", "market"),
         "PASSWORD": os.getenv("MARKET_DB_PASSWORD", "market-dev-pass"),

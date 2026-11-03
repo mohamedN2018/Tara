@@ -51,6 +51,7 @@ TEMPLATES = []
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
+        "ATOMIC_REQUESTS": True,
         "NAME": os.getenv("POST_DB_NAME", "post_db"),
         "USER": os.getenv("POST_DB_USER", "post"),
         "PASSWORD": os.getenv("POST_DB_PASSWORD", "post-dev-pass"),

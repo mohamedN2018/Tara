@@ -51,6 +51,7 @@ class Listing(models.Model):
         RESERVED = "reserved", "Reserved"
         SOLD = "sold", "Sold"
         REJECTED = "rejected", "Rejected"
+        REMOVED = "removed", "Removed by moderators"
         ARCHIVED = "archived", "Archived"
 
     id = models.UUIDField(primary_key=True, default=uuid7, editable=False)

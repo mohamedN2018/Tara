@@ -194,6 +194,14 @@ def _debit(campaign: Campaign, amount: Decimal, reason: str) -> None:
     )
 
 
+AD_EVENT_DEDUPE_SECONDS = 300
+
+
+def first_in_window(kind: str, creative_id: str, viewer_id: str) -> bool:
+    """One billable event per viewer, creative and kind in a window."""
+    return cache.add(f"ad-event:{kind}:{creative_id}:{viewer_id}", 1, AD_EVENT_DEDUPE_SECONDS)
+
+
 def record_event(kind: str, creative_id: str, viewer_id: str) -> None:
     """Record an impression or click (the view layer dedupes via Idempotency-Key)."""
     creative = (
@@ -203,9 +211,13 @@ def record_event(kind: str, creative_id: str, viewer_id: str) -> None:
     )
     if creative is None:
         raise TaraAPIError("Creative not found.", code="not_found", http_status_code=404)
-    bucket = viewer_bucket(viewer_id)
     ad_set = creative.ad_set
     campaign = ad_set.campaign
+    if creative.review_status != AdCreative.Review.APPROVED or (
+        campaign.status != Campaign.Status.ACTIVE
+    ):
+        raise TaraAPIError("This ad is not running.", code="conflict", http_status_code=409)
+    bucket = viewer_bucket(viewer_id)
     placement = ad_set.placement
 
     with transaction.atomic():

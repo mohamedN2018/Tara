@@ -26,3 +26,10 @@ def on_user_blocked(event: EventEnvelope) -> None:
 def on_user_unblocked(event: EventEnvelope) -> None:
     p = event.payload
     BlockedPair.objects.filter(blocker_id=p["blocker_id"], blocked_id=p["blocked_id"]).delete()
+
+
+@on_event("moderation.actioned")
+def on_moderation_actioned(event: EventEnvelope) -> None:
+    p = event.payload
+    if p.get("target_type") == "message" and p.get("action") == "remove":
+        services.remove_message(p["target_id"])

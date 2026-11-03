@@ -115,7 +115,8 @@ class EventsView(APIView):
         v = serializer.validated_data
 
         def handler() -> Response:
-            services.record_event(v["kind"], str(v["creative_id"]), _me(request))
+            if services.first_in_window(v["kind"], str(v["creative_id"]), _me(request)):
+                services.record_event(v["kind"], str(v["creative_id"]), _me(request))
             return data_response({"detail": "recorded"}, status=status.HTTP_202_ACCEPTED)
 
         return idempotent(IdempotencyRecord, request, handler)

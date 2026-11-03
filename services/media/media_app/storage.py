@@ -56,3 +56,29 @@ def presign_get(storage_key: str) -> str:
         Params={"Bucket": settings.S3_BUCKET, "Key": storage_key},
         ExpiresIn=settings.SIGNED_URL_TTL,
     )
+
+
+def inspect(storage_key: str) -> tuple[int | None, bytes] | None:
+    """(size, first bytes) of an object; (None, b"") if missing; None on the fake backend."""
+    if settings.STORAGE_BACKEND == "fake":
+        return None
+    from botocore.exceptions import ClientError
+
+    try:
+        obj = _client().get_object(Bucket=settings.S3_BUCKET, Key=storage_key, Range="bytes=0-31")
+    except ClientError:
+        return None, b""
+    size = int(obj["ContentRange"].rsplit("/", 1)[1])
+    return size, obj["Body"].read()
+
+
+def read(storage_key: str) -> bytes:
+    return _client().get_object(Bucket=settings.S3_BUCKET, Key=storage_key)["Body"].read()
+
+
+def write(storage_key: str, content: bytes, mime: str) -> None:
+    _client().put_object(Bucket=settings.S3_BUCKET, Key=storage_key, Body=content, ContentType=mime)
+
+
+def delete(storage_key: str) -> None:
+    _client().delete_object(Bucket=settings.S3_BUCKET, Key=storage_key)

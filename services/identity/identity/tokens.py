@@ -13,6 +13,7 @@ from datetime import timedelta
 
 import jwt
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 
 from tara_events.envelope import uuid7
@@ -112,41 +113,48 @@ def rotate_refresh_token(raw: str) -> tuple[Account, UserSession, str, int, str]
     Raises TokenError on any problem; on reuse, revokes the whole family.
     """
     token_hash = hash_token(raw)
-    try:
-        current = RefreshToken.objects.select_related("account", "session").get(
-            token_hash=token_hash
-        )
-    except RefreshToken.DoesNotExist as exc:
-        raise TokenError("Invalid refresh token.") from exc
+    reused = False
+    with transaction.atomic():
+        try:
+            current = (
+                RefreshToken.objects.select_for_update(of=("self",))
+                .select_related("account", "session")
+                .get(token_hash=token_hash)
+            )
+        except RefreshToken.DoesNotExist as exc:
+            raise TokenError("Invalid refresh token.") from exc
 
-    # Reuse / replay detection.
-    if current.revoked_at is not None or current.used_at is not None:
-        _revoke_family(current.family_id, reason="reuse_detected")
-        UserSession.objects.filter(id=current.session_id, revoked_at__isnull=True).update(
-            revoked_at=_now()
-        )
-        emit_security_event(
-            current.account, "refresh_reuse_detected", {"family_id": str(current.family_id)}
-        )
+        # Reuse / replay detection. The revocation must commit, so raise afterwards.
+        if current.revoked_at is not None or current.used_at is not None:
+            reused = True
+            _revoke_family(current.family_id, reason="reuse_detected")
+            UserSession.objects.filter(id=current.session_id, revoked_at__isnull=True).update(
+                revoked_at=_now()
+            )
+            emit_security_event(
+                current.account, "refresh_reuse_detected", {"family_id": str(current.family_id)}
+            )
+        else:
+            if current.expires_at <= _now():
+                raise TokenError("Refresh token has expired.")
+            if current.session.revoked_at is not None:
+                raise TokenError("Session has been revoked.")
+            if not current.account.is_usable:
+                raise TokenError("Account is not active.")
+
+            # Mark current used, issue the next in the family.
+            current.used_at = _now()
+            current.save(update_fields=["used_at"])
+            current.session.last_seen_at = _now()
+            current.session.save(update_fields=["last_seen_at"])
+
+            new_raw, _ = create_refresh_token(
+                current.account, current.session, family_id=current.family_id, rotated_from=current
+            )
+            access, ttl = issue_access_token(current.account, str(current.session_id))
+
+    if reused:
         raise TokenError("Refresh token reuse detected; session revoked.")
-
-    if current.expires_at <= _now():
-        raise TokenError("Refresh token has expired.")
-    if current.session.revoked_at is not None:
-        raise TokenError("Session has been revoked.")
-    if not current.account.is_usable:
-        raise TokenError("Account is not active.")
-
-    # Mark current used, issue the next in the family.
-    current.used_at = _now()
-    current.save(update_fields=["used_at"])
-    current.session.last_seen_at = _now()
-    current.session.save(update_fields=["last_seen_at"])
-
-    new_raw, _ = create_refresh_token(
-        current.account, current.session, family_id=current.family_id, rotated_from=current
-    )
-    access, ttl = issue_access_token(current.account, str(current.session_id))
     return current.account, current.session, access, ttl, new_raw
 
 

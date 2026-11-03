@@ -7,3 +7,4 @@ PyJWT[crypto]>=2.8
 cryptography>=42
 redis>=5.0,<6
 django-prometheus>=2.3
+requests>=2.31

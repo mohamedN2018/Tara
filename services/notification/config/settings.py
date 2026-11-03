@@ -51,6 +51,7 @@ TEMPLATES = []
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
+        "ATOMIC_REQUESTS": True,
         "NAME": os.getenv("NOTIF_DB_NAME", "notif_db"),
         "USER": os.getenv("NOTIF_DB_USER", "notif"),
         "PASSWORD": os.getenv("NOTIF_DB_PASSWORD", "notif-dev-pass"),

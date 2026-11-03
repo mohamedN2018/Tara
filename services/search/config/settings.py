@@ -55,6 +55,7 @@ TEMPLATES = []
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
+        "ATOMIC_REQUESTS": True,
         "NAME": os.getenv("SEARCH_DB_NAME", "search_db"),
         "USER": os.getenv("SEARCH_DB_USER", "search"),
         "PASSWORD": os.getenv("SEARCH_DB_PASSWORD", "search-dev-pass"),

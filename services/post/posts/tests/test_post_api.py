@@ -217,3 +217,13 @@ def test_timeline_checks_each_author_with_graph_only_once(client_for, monkeypatc
     monkeypatch.setattr("posts.services.get_relationship", relationship)
     client_for(_acct()).get(reverse("posts:post-create"), {"author_id": author})
     assert len(calls) == 1
+
+
+def test_moderator_removal_hides_the_post_and_tells_feeds(client_for):
+    author = _acct()
+    post = services.create_post(author, body="bad", audience="public")
+
+    services.apply_moderation(str(post.id), "remove")
+
+    assert client_for(_acct()).get(reverse("posts:post-detail", args=[post.id])).status_code == 404
+    assert OutboxEvent.objects.filter(event_type="post.deleted").exists()

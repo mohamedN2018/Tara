@@ -104,6 +104,7 @@ def update_profile(profile: UserProfile, data: dict) -> UserProfile:
             payload={
                 "handle": profile.handle,
                 "display_name": profile.display_name,
+                "visibility": profile.visibility,
                 "avatar_media_id": str(profile.avatar_media_id)
                 if profile.avatar_media_id
                 else None,

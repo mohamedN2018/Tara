@@ -40,6 +40,13 @@ class AbstractIdempotencyRecord(models.Model):
         ]
 
 
+def _scoped_key(request: Request, key: str) -> str:
+    """The same key from two callers must never replay one caller's response."""
+    user = getattr(request, "user", None)
+    owner = getattr(user, "account_id", None) or "anon"
+    return hashlib.sha256(f"{owner}|{key}".encode()).hexdigest()
+
+
 def _fingerprint(request: Request) -> str:
     # Use DRF's parsed+cached data so we don't touch the (already-consumed)
     # request body stream, which would raise RawPostDataException.
@@ -70,7 +77,9 @@ def idempotent(
     if not key:
         return handler()
 
+    key = _scoped_key(request, key)
     fingerprint = _fingerprint(request)
+    record_model.objects.filter(key=key, expires_at__lte=timezone.now()).delete()
 
     # Try to claim the key.
     try:
@@ -100,7 +109,12 @@ def idempotent(
         return Response(existing.response_body, status=existing.response_status)
 
     # We own the key: run the handler, then persist its response.
-    response = handler()
+    try:
+        response = handler()
+    except Exception:
+        # Let the client retry with the same key.
+        record_model.objects.filter(key=key).delete()
+        raise
     record_model.objects.filter(key=key).update(
         in_progress=False,
         response_status=response.status_code,

@@ -51,6 +51,7 @@ TEMPLATES = []
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
+        "ATOMIC_REQUESTS": True,
         "NAME": os.getenv("GRAPH_DB_NAME", "graph_db"),
         "USER": os.getenv("GRAPH_DB_USER", "graph"),
         "PASSWORD": os.getenv("GRAPH_DB_PASSWORD", "graph-dev-pass"),

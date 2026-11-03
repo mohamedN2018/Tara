@@ -51,6 +51,7 @@ TEMPLATES = []
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
+        "ATOMIC_REQUESTS": True,
         "NAME": os.getenv("FEED_DB_NAME", "feed_db"),
         "USER": os.getenv("FEED_DB_USER", "feed"),
         "PASSWORD": os.getenv("FEED_DB_PASSWORD", "feed-dev-pass"),

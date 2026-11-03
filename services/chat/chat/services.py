@@ -6,6 +6,7 @@ import uuid
 
 from django.db import transaction
 from django.db.models import Q
+from django.utils import timezone
 
 from tara_common.exceptions import Conflict, TaraAPIError
 
@@ -85,6 +86,8 @@ def create_marketplace_conversation(buyer_id: str, seller_id: str, listing_id: s
     Driven by the `marketplace.contact.requested` event (doc 01 §2.10). Keyed so
     repeated contact requests reuse the same thread.
     """
+    if is_blocked(buyer_id, seller_id):
+        raise TaraAPIError("Action not allowed.", code="permission_denied", http_status_code=403)
     if str(buyer_id) == str(seller_id):
         return None  # nothing to do
     key = f"mkt:{listing_id}:{buyer_id}:{seller_id}"
@@ -108,6 +111,8 @@ def create_marketplace_conversation(buyer_id: str, seller_id: str, listing_id: s
 
 
 def create_group(actor_id: str, member_account_ids: list[str], title: str = "") -> Conversation:
+    if any(is_blocked(actor_id, mid) for mid in member_account_ids):
+        raise TaraAPIError("Action not allowed.", code="permission_denied", http_status_code=403)
     with transaction.atomic():
         conversation = Conversation.objects.create(
             type=Conversation.Type.GROUP, created_by=actor_id, title=title
@@ -155,7 +160,19 @@ def send_message(
     require_member(actor_id, conversation_id)
     conversation = Conversation.objects.get(id=conversation_id)
 
-    if conversation.type == Conversation.Type.DM:
+    if (
+        reply_to_id
+        and not Message.objects.filter(
+            id=reply_to_id, conversation_id=conversation_id, deleted_at__isnull=True
+        ).exists()
+    ):
+        raise TaraAPIError(
+            "The message being replied to was not found.",
+            code="validation_error",
+            http_status_code=400,
+        )
+
+    if conversation.type in (Conversation.Type.DM, Conversation.Type.MARKETPLACE):
         others = [m for m in member_ids(conversation) if m != str(actor_id)]
         if others and is_blocked(actor_id, others[0]):
             raise TaraAPIError(
@@ -197,6 +214,11 @@ def send_message(
             partition_key=f"conversation:{conversation.id}",
         )
     return message
+
+
+def remove_message(message_id: str) -> None:
+    """A moderator removed this message."""
+    Message.objects.filter(id=message_id, deleted_at__isnull=True).update(deleted_at=timezone.now())
 
 
 def list_messages(actor_id: str, conversation_id: str):

@@ -10,7 +10,9 @@ class DMCreateSerializer(serializers.Serializer):
 
 
 class GroupCreateSerializer(serializers.Serializer):
-    member_ids = serializers.ListField(child=serializers.UUIDField(), allow_empty=False)
+    member_ids = serializers.ListField(
+        child=serializers.UUIDField(), max_length=256, allow_empty=False
+    )
     title = serializers.CharField(max_length=160, required=False, allow_blank=True, default="")
 
 

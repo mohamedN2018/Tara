@@ -11,6 +11,7 @@ Writes nothing but synthetic users and their content. Exits 1 on any failure.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -24,6 +25,7 @@ API = os.getenv("TARA_API", "http://127.0.0.1:8080/api/v1")
 MAILPIT = os.getenv("TARA_MAILPIT", "http://127.0.0.1:8026/api/v1")
 PASSWORD = "Str0ng-Pass-987!"  # noqa: S105 - synthetic test user
 EVENT_TIMEOUT_SECONDS = 20
+PNG_1X1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 failures: list[str] = []
 
 
@@ -97,7 +99,10 @@ def social(alice, alice_id, bob, bob_id):
     check("public profile returns account_id", data(public).get("account_id") == alice_id, public)
     status, by_id = call("GET", f"/users/id/{alice_id}/", bob)
     check("profile loads by account id", status == 200, by_id)
-    status, cards = call("POST", "/users/lookup/", bob, {"ids": [alice_id, bob_id]})
+    status, cards = eventually(
+        lambda: call("POST", "/users/lookup/", bob, {"ids": [alice_id, bob_id]}),
+        lambda r: len(data(r[1])) == 2,
+    )
     check("bulk profile lookup", status == 200 and len(data(cards)) == 2, cards)
 
     status, body = call("POST", f"/follows/{alice_id}/", bob)
@@ -137,7 +142,7 @@ def posts(alice, alice_id, bob):
 
 
 def media(alice):
-    png = bytes.fromhex("89504e470d0a1a0a0000000d49484452") + b"\0" * 40
+    png = base64.b64decode(PNG_1X1)
     payload = {"kind": "image", "mime": "image/png", "size": len(png), "visibility": "public"}
     status, body = call("POST", "/media/uploads/sign/", alice, payload)
     check("sign upload through the gateway", status == 201, body)

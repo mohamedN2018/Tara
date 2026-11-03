@@ -8,22 +8,29 @@ to conversation groups to send/receive typing indicators.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from urllib.parse import parse_qs
 
 from asgiref.sync import sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
-from . import presence
+from . import chat_client, presence
 from .auth import verify_access_token
 from .groups import conversation_group, user_group
 
 logger = logging.getLogger("tara.realtime.consumer")
 
 CLOSE_UNAUTHENTICATED = 4401
+MAX_SUBSCRIPTIONS = 200
 
 
 class TaraConsumer(AsyncJsonWebsocketConsumer):
+    async def _close_at(self, expires_at: int) -> None:
+        await asyncio.sleep(max(0, expires_at - time.time()))
+        await self.close(code=CLOSE_UNAUTHENTICATED)
+
     async def connect(self) -> None:
         token = self._token_from_scope()
         if not token:
@@ -37,6 +44,8 @@ class TaraConsumer(AsyncJsonWebsocketConsumer):
 
         self.account_id = str(claims["sub"])
         self.subscriptions: set[str] = set()
+        # The socket lives no longer than its token; the client reconnects with a new one.
+        self.expiry_task = asyncio.create_task(self._close_at(claims["exp"]))
         await self.channel_layer.group_add(user_group(self.account_id), self.channel_name)
         await sync_to_async(presence.mark_online)(self.account_id)
         await self.accept()
@@ -46,6 +55,7 @@ class TaraConsumer(AsyncJsonWebsocketConsumer):
         account_id = getattr(self, "account_id", None)
         if account_id is None:
             return
+        self.expiry_task.cancel()
         await self.channel_layer.group_discard(user_group(account_id), self.channel_name)
         for conv_id in getattr(self, "subscriptions", set()):
             await self.channel_layer.group_discard(conversation_group(conv_id), self.channel_name)
@@ -60,7 +70,11 @@ class TaraConsumer(AsyncJsonWebsocketConsumer):
 
         if action == "subscribe":
             conv_id = str(content.get("conversation_id", ""))
-            if conv_id:
+            if (
+                conv_id
+                and len(self.subscriptions) < MAX_SUBSCRIPTIONS
+                and await sync_to_async(chat_client.is_member)(conv_id, self.account_id)
+            ):
                 self.subscriptions.add(conv_id)
                 await self.channel_layer.group_add(conversation_group(conv_id), self.channel_name)
         elif action == "unsubscribe":

@@ -51,6 +51,7 @@ TEMPLATES = []
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
+        "ATOMIC_REQUESTS": True,
         "NAME": os.getenv("MEDIA_DB_NAME", "media_db"),
         "USER": os.getenv("MEDIA_DB_USER", "media"),
         "PASSWORD": os.getenv("MEDIA_DB_PASSWORD", "media-dev-pass"),

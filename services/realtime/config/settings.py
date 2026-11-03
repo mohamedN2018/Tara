@@ -26,6 +26,8 @@ SECRET_KEY = os.getenv("REALTIME_SECRET_KEY", "dev-only-insecure-secret-change-m
 DEBUG = env_bool("REALTIME_DEBUG", False)
 ALLOWED_HOSTS = env_list("REALTIME_ALLOWED_HOSTS", "localhost,127.0.0.1")
 SERVICE_NAME = "realtime"
+CHAT_INTERNAL_URL = os.getenv("CHAT_INTERNAL_URL", "http://chat:8000")
+TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-secret-change-me")
 
 INSTALLED_APPS = [
     "django_prometheus",

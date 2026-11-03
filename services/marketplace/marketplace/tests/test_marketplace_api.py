@@ -179,4 +179,4 @@ def test_moderation_removal_via_handler(category):
         )
     )
     listing.refresh_from_db()
-    assert listing.status == Listing.Status.REJECTED
+    assert listing.status == Listing.Status.REMOVED

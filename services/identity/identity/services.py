@@ -7,11 +7,14 @@ stay thin and call into here.
 
 from __future__ import annotations
 
+import hashlib
 import secrets
 from dataclasses import dataclass
 from datetime import timedelta
 
+from django.contrib.auth.hashers import make_password
 from django.contrib.auth.password_validation import validate_password
+from django.core.cache import cache
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone
@@ -30,6 +33,8 @@ from .models import (
 )
 
 EMAIL_VERIFICATION_TTL = timedelta(hours=24)
+LOGIN_MAX_FAILURES = 10
+LOGIN_LOCK_SECONDS = 900
 PASSWORD_RESET_TTL = timedelta(hours=1)
 
 
@@ -169,9 +174,20 @@ def login(
     correlation_id: str | None = None,
 ) -> IssuedTokens:
     email = email.strip().lower()
+    lock_key = "login-failures:" + hashlib.sha256(email.encode()).hexdigest()
+    if (cache.get(lock_key) or 0) >= LOGIN_MAX_FAILURES:
+        raise TaraAPIError(
+            "Too many failed attempts. Try again later.",
+            code="throttled",
+            http_status_code=429,
+        )
     account = Account.objects.filter(email=email).first()
-    # Constant-ish work whether or not the account exists (mitigate enumeration).
+    # Same work whether or not the account exists (mitigate enumeration).
+    if account is None:
+        make_password(password)
     if account is None or not account.check_password(password):
+        cache.add(lock_key, 0, LOGIN_LOCK_SECONDS)
+        cache.incr(lock_key)
         if account is not None:
             emit_security_event(account, "login_failed", {}, ip_region=ip_region)
         raise InvalidCredentials()
@@ -181,6 +197,7 @@ def login(
         )
         raise AccountNotUsable()
 
+    cache.delete(lock_key)
     with transaction.atomic():
         issued = _create_session_and_tokens(account, ip_region=ip_region, user_agent=user_agent)
         account.last_login_at = timezone.now()

@@ -10,13 +10,18 @@ from django.utils import timezone
 
 from tara_common.exceptions import TaraAPIError
 
-from . import events, storage
+from . import events, storage, validation
 from .models import MediaAsset, UploadSession
 
 
 def sign_upload(owner_id: str, *, kind: str, mime: str, size: int, visibility: str) -> dict:
     if kind not in MediaAsset.Kind.values:
         raise TaraAPIError("Unsupported media kind.", code="validation_error", http_status_code=400)
+    if not validation.is_allowed(kind, mime):
+        raise TaraAPIError(
+            "This file type is not allowed.", code="validation_error", http_status_code=400
+        )
+    mime = validation.normalize_mime(mime)
     if size > settings.MAX_UPLOAD_BYTES:
         raise TaraAPIError(
             "File exceeds the size limit.", code="validation_error", http_status_code=400
@@ -39,12 +44,32 @@ def sign_upload(owner_id: str, *, kind: str, mime: str, size: int, visibility: s
     }
 
 
+def _verify_uploaded_object(asset: MediaAsset) -> None:
+    """The presigned PUT cannot limit size or content, so check what actually arrived."""
+    stored = storage.inspect(asset.storage_key)
+    if stored is None:
+        return  # fake backend
+    size, head = stored
+    problem = ""
+    if size is None:
+        problem = "The upload was not found."
+    elif size > settings.MAX_UPLOAD_BYTES:
+        problem = "File exceeds the size limit."
+    elif not validation.matches_signature(asset.mime, head):
+        problem = "The file content does not match its type."
+    if problem:
+        if size is not None:
+            storage.delete(asset.storage_key)
+        raise TaraAPIError(problem, code="validation_error", http_status_code=400)
+
+
 def complete_upload(owner_id: str, media_id: str) -> MediaAsset:
     asset = MediaAsset.objects.filter(id=media_id, owner_id=owner_id).first()
     if asset is None:
         raise TaraAPIError("Media not found.", code="not_found", http_status_code=404)
     if asset.status != MediaAsset.Status.UPLOADING:
         return asset  # idempotent
+    _verify_uploaded_object(asset)
     with transaction.atomic():
         asset.status = MediaAsset.Status.PROCESSING
         asset.save(update_fields=["status"])

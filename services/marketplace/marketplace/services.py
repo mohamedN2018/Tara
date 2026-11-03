@@ -56,6 +56,7 @@ def _emit_status(listing: Listing, previous: str, actor_id: str) -> None:
             "from": previous,
             "to": listing.status,
             "seller_id": str(listing.seller_id),
+            "title": listing.title,
         },
         actor_id=str(actor_id),
     )
@@ -273,10 +274,15 @@ def apply_moderation(listing_id: str, action: str) -> None:
     if listing is None:
         return
     previous = listing.status
-    if action in ("remove", "reject"):
+    if action == "remove":
+        listing.status = Listing.Status.REMOVED  # sellers cannot republish this
+    elif action == "reject":
         listing.status = Listing.Status.REJECTED
-    elif action == "approve":
-        listing.status = Listing.Status.ACTIVE
+    elif action == "approve" and previous in (
+        Listing.Status.PENDING,
+        Listing.Status.REMOVED,
+    ):
+        listing.status = Listing.Status.ACTIVE  # review passed, or appeal overturned
     else:
         return
     listing.save(update_fields=["status"])

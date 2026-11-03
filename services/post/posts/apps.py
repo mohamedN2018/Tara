@@ -19,5 +19,8 @@ class PostsConfig(AppConfig):
             from tara_common.checks import register_checks
 
             register_checks()
+            from tara_events.metrics import install_outbox_gauge
+
+            install_outbox_gauge()
         except Exception:  # noqa: S110,BLE001 - never block boot on check wiring
             pass

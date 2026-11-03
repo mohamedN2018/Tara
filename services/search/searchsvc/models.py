@@ -31,6 +31,19 @@ class SearchDocument(models.Model):
         indexes = [models.Index(fields=["doc_type"], name="search_doctype_idx")]
 
 
+class BlockedPair(models.Model):
+    """Replica of graph blocks, so people who blocked each other never meet in results."""
+
+    blocker_id = models.UUIDField()
+    blocked_id = models.UUIDField()
+
+    class Meta:
+        db_table = "blocked_pair"
+        constraints = [
+            models.UniqueConstraint(fields=["blocker_id", "blocked_id"], name="search_block_uniq"),
+        ]
+
+
 class ProcessedEvent(AbstractProcessedEvent):
     class Meta(AbstractProcessedEvent.Meta):
         abstract = False

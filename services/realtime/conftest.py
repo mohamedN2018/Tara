@@ -52,3 +52,8 @@ def make_access_token(account_id: str) -> str:
 @pytest.fixture
 def token_for():
     return make_access_token
+
+
+@pytest.fixture(autouse=True)
+def _everyone_is_a_member(monkeypatch):
+    monkeypatch.setattr("realtime.chat_client.is_member", lambda conversation, account: True)

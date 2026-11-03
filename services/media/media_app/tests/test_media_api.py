@@ -102,3 +102,46 @@ def test_internal_media_requires_token(client_for):
     ok = anon.get(url)
     assert ok.status_code == 200
     assert ok.json()["data"]["owner_id"] == owner
+
+
+# ---- upload validation -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("kind", "mime"),
+    [("image", "text/html"), ("image", "image/svg+xml"), ("file", "application/x-msdownload")],
+)
+def test_unsafe_types_are_refused(kind, mime):
+    from media_app import services
+    from tara_common.exceptions import TaraAPIError
+
+    with pytest.raises(TaraAPIError):
+        services.sign_upload(
+            "01a19eed-9326-7fd4-a005-3fb0712a234c",
+            kind=kind,
+            mime=mime,
+            size=10,
+            visibility="public",
+        )
+
+
+def test_signature_check_rejects_html_named_png():
+    from media_app.validation import matches_signature
+
+    assert not matches_signature("image/png", b"<html><script>")
+    assert matches_signature("image/png", b"\x89PNG\r\n\x1a\n....")
+    assert matches_signature("audio/webm; codecs=opus", b"anything")
+
+
+def test_thumbnail_is_a_small_jpeg():
+    import io
+
+    from PIL import Image
+
+    from media_app.tasks import _thumbnail
+
+    source = io.BytesIO()
+    Image.new("RGB", (1000, 500), "red").save(source, "PNG")
+    thumb = Image.open(io.BytesIO(_thumbnail(source.getvalue())))
+    assert thumb.format == "JPEG"
+    assert max(thumb.size) == 320

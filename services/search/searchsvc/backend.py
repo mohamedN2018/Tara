@@ -13,7 +13,7 @@ import logging
 from django.conf import settings
 from django.db.models import Q
 
-from .models import SearchDocument
+from .models import BlockedPair, SearchDocument
 
 logger = logging.getLogger("tara.search.backend")
 
@@ -44,8 +44,14 @@ def _serialize(doc: SearchDocument) -> dict:
     }
 
 
-def _db_query(q: str, doc_type: str | None, limit: int) -> list[dict]:
-    qs = SearchDocument.objects.all()
+def blocked_ids(viewer_id: str) -> set:
+    return set(
+        BlockedPair.objects.filter(blocker_id=viewer_id).values_list("blocked_id", flat=True)
+    ) | set(BlockedPair.objects.filter(blocked_id=viewer_id).values_list("blocker_id", flat=True))
+
+
+def _db_query(q: str, doc_type: str | None, limit: int, hidden: set) -> list[dict]:
+    qs = SearchDocument.objects.exclude(owner_id__in=hidden)
     if doc_type:
         qs = qs.filter(doc_type=doc_type)
     if q:
@@ -53,19 +59,28 @@ def _db_query(q: str, doc_type: str | None, limit: int) -> list[dict]:
     return [_serialize(d) for d in qs.order_by("-updated_at")[:limit]]
 
 
-def query(q: str, *, doc_type: str | None = None, limit: int = 20) -> tuple[list[dict], bool]:
+def query(
+    q: str, *, viewer_id: str, doc_type: str | None = None, limit: int = 20
+) -> tuple[list[dict], bool]:
     """Return (results, degraded). degraded=True if OpenSearch was bypassed."""
+    hidden = blocked_ids(viewer_id)
     if settings.SEARCH_USE_OPENSEARCH:
         try:
-            return _os_query(q, doc_type, limit), False
+            hidden_ids = {str(i) for i in hidden}
+            results = _os_query(q, doc_type, limit + len(hidden))
+            return [r for r in results if r.get("owner_id") not in hidden_ids][:limit], False
         except Exception:  # noqa: BLE001 - degrade to DB
             logger.warning("OpenSearch query failed; falling back to Postgres", exc_info=True)
-            return _db_query(q, doc_type, limit), True
-    return _db_query(q, doc_type, limit), False
+            return _db_query(q, doc_type, limit, hidden), True
+    return _db_query(q, doc_type, limit, hidden), False
 
 
-def autocomplete(prefix: str, *, limit: int = 10) -> list[dict]:
-    qs = SearchDocument.objects.filter(title__istartswith=prefix).order_by("title")[:limit]
+def autocomplete(prefix: str, *, viewer_id: str, limit: int = 10) -> list[dict]:
+    qs = (
+        SearchDocument.objects.filter(title__istartswith=prefix)
+        .exclude(owner_id__in=blocked_ids(viewer_id))
+        .order_by("title")[:limit]
+    )
     return [_serialize(d) for d in qs]
 
 

@@ -55,7 +55,7 @@ groups:
       # The outbox relay should keep pending events near zero. A growing backlog
       # means the relay or broker is unhealthy (events not reaching RabbitMQ).
       - alert: OutboxBacklogGrowing
-        expr: max by (service) (tara_outbox_pending_events) > 500
+        expr: max by (service) (tara_outbox_pending) > 500
         for: 10m
         labels:
           severity: warning

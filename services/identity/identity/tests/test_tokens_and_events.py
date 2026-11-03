@@ -122,3 +122,73 @@ def test_access_token_carries_roles_from_account_flags(
     claims = jwt.decode(token, options={"verify_signature": False})
 
     assert claims["roles"] == expected
+
+
+def test_reused_refresh_token_stays_revoked_after_the_error(active_account):
+    issued = services.login(email=active_account.email, password="DevPassw0rd!")
+    tokens.rotate_refresh_token(issued.refresh_token)
+
+    with pytest.raises(tokens.TokenError):
+        tokens.rotate_refresh_token(issued.refresh_token)
+
+    assert RefreshToken.objects.filter(revoked_at__isnull=True).count() == 0
+
+
+def test_repeated_failures_lock_the_login(active_account):
+    from tara_common.exceptions import TaraAPIError
+
+    for _ in range(services.LOGIN_MAX_FAILURES):
+        with pytest.raises(services.InvalidCredentials):
+            services.login(email=active_account.email, password="wrong-password")
+
+    with pytest.raises(TaraAPIError) as caught:
+        services.login(email=active_account.email, password="wrong-password")
+    assert caught.value.http_status == 429
+
+
+def test_failed_consumer_retries_then_dead_letters():
+    from unittest.mock import MagicMock
+
+    from kombu import Connection
+
+    from tara_events import worker as event_worker
+
+    consumer = event_worker.EventWorker(Connection("memory://"), exchange_name="x", queue_name="q")
+    consumer.producer = MagicMock()
+
+    message = MagicMock(headers={})
+    consumer._retry_or_dead_letter({"event_id": "1"}, message)
+    assert consumer.producer.publish.call_args.kwargs["routing_key"] == "q.retry.5s"
+    message.ack.assert_called_once()
+
+    final = MagicMock(headers={event_worker.ATTEMPT_HEADER: 5})
+    consumer._retry_or_dead_letter({"event_id": "1"}, final)
+    final.reject.assert_called_once_with(requeue=False)
+
+
+def test_broker_outage_does_not_use_up_attempts(active_account):
+    from tara_events.publisher import PublisherUnavailable
+
+    class Down:
+        def publish(self, envelope):
+            raise PublisherUnavailable("down")
+
+    OutboxEvent.objects.all().delete()
+    record_event(
+        OutboxEvent,
+        EventEnvelope(event_type="t", payload={}, subject_id="s", producer="p"),
+    )
+    assert publish_pending(OutboxEvent, publisher=Down()) == 0
+    assert OutboxEvent.objects.get().attempts == 0
+
+
+def test_handler_failure_is_not_recorded_as_processed():
+    from identity.models import ProcessedEvent
+    from tara_events.consumer import idempotent
+
+    event_id = str(uuid7())
+    with pytest.raises(ValueError):
+        with idempotent(ProcessedEvent, event_id, "c"):
+            raise ValueError
+
+    assert not ProcessedEvent.objects.filter(event_id=event_id).exists()

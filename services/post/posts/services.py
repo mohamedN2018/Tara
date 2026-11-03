@@ -162,7 +162,12 @@ def edit_post(author_id: str, post_id: str, body: str) -> Post:
         events.emit(
             "post.updated",
             subject_id=str(post.id),
-            payload={"post_id": str(post.id), "excerpt": body[:280]},
+            payload={
+                "post_id": str(post.id),
+                "author_id": str(author_id),
+                "audience": post.audience,
+                "excerpt": body[:280],
+            },
             actor_id=str(author_id),
         )
     return post
@@ -223,6 +228,26 @@ def viewer_state(viewer_id: str, posts: list[Post]) -> dict:
             ).values_list("item_id", flat=True)
         ),
     }
+
+
+def apply_moderation(post_id: str, action: str) -> None:
+    """Driven by moderation.actioned. Other actions do not change the post."""
+    post = Post.objects.filter(id=post_id).first()
+    if post is None:
+        return
+    if action == "remove":
+        post.moderation_status = Post.ModerationStatus.REMOVED
+        post.save(update_fields=["moderation_status"])
+        # Feeds and search drop it the same way they drop a deleted post.
+        events.emit(
+            "post.deleted",
+            subject_id=str(post.id),
+            payload={"post_id": str(post.id)},
+            actor_id=str(post.author_id),
+        )
+    elif action == "approve":  # appeal overturned; feeds rebuild as people post
+        post.moderation_status = Post.ModerationStatus.OK
+        post.save(update_fields=["moderation_status"])
 
 
 # ---- reactions --------------------------------------------------------------

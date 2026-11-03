@@ -149,3 +149,47 @@ def test_marketplace_contact_creates_conversation():
     convs = Conversation.objects.filter(type="marketplace", listing_id=listing)
     assert convs.count() == 1
     assert set(services.member_ids(convs.first())) == {buyer, seller}
+
+
+# ---- blocks and replies ------------------------------------------------------
+
+
+def test_group_with_a_blocked_member_is_refused():
+    from chat import services as chat_services
+    from chat.models import BlockedPair
+    from tara_common.exceptions import TaraAPIError
+
+    a, b = str(uuid.uuid4()), str(uuid.uuid4())
+    BlockedPair.objects.create(blocker_id=b, blocked_id=a)
+    with pytest.raises(TaraAPIError):
+        chat_services.create_group(a, [b])
+
+
+def test_marketplace_thread_respects_blocks():
+    from chat import services as chat_services
+    from chat.models import BlockedPair
+    from tara_common.exceptions import TaraAPIError
+
+    buyer, seller = str(uuid.uuid4()), str(uuid.uuid4())
+    BlockedPair.objects.create(blocker_id=seller, blocked_id=buyer)
+    with pytest.raises(TaraAPIError):
+        chat_services.create_marketplace_conversation(buyer, seller, str(uuid.uuid4()))
+
+
+def test_reply_must_be_in_the_same_conversation():
+    from chat import services as chat_services
+    from tara_common.exceptions import TaraAPIError
+
+    a, b, c = (str(uuid.uuid4()) for _ in range(3))
+    first = chat_services.create_or_get_dm(a, b)
+    other = chat_services.create_or_get_dm(a, c)
+    message = chat_services.send_message(a, str(other.id), body="hi")
+    with pytest.raises(TaraAPIError):
+        chat_services.send_message(a, str(first.id), body="x", reply_to_id=str(message.id))
+
+
+def test_internal_membership_needs_a_service_token(client):
+    from django.urls import reverse
+
+    url = reverse("chat_internal:membership", args=[uuid.uuid4(), uuid.uuid4()])
+    assert client.get(url).status_code == 401
