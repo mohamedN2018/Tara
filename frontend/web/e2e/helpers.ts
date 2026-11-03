@@ -92,12 +92,12 @@ export async function apiAs(account: Account): Promise<APIRequestContext> {
 }
 
 /** A browser context signed in as `account` (tokens seeded, skipping the login form). */
-export async function pageAs(browser: Browser, account: Account): Promise<Page> {
+export async function pageAs(browser: Browser, account: Account, baseURL = "http://127.0.0.1:5173"): Promise<Page> {
   const anon = await request.newContext();
   const tokens = await apiLogin(anon, account.email);
   await anon.dispose();
   if (!tokens) throw new Error(`cannot log in ${account.email}`);
-  const context = await browser.newContext({ baseURL: "http://127.0.0.1:5173" });
+  const context = await browser.newContext({ baseURL });
   await context.addInitScript(
     ([access, refresh]) => {
       if (localStorage.getItem("e2e.seeded")) return;

@@ -2,11 +2,23 @@
 
 from __future__ import annotations
 
+import hashlib
+import logging
+
 from django.db import transaction
 from django.utils import timezone
 
-from . import events
-from .models import Notification, NotificationPreference
+from . import events, push, tasks
+from .models import Notification, NotificationPreference, PushDeviceToken
+
+logger = logging.getLogger("tara.notification.services")
+
+
+def _queue_push(notification_id: str) -> None:
+    try:
+        tasks.deliver_push.delay(notification_id)
+    except Exception:  # noqa: BLE001 - the in-app notification is already saved
+        logger.warning("could not queue web push", exc_info=True)
 
 
 def notify(
@@ -45,6 +57,8 @@ def notify(
             },
             partition_key=f"recipient:{recipient_id}",
         )
+        notification_id = str(notification.id)
+        transaction.on_commit(lambda: _queue_push(notification_id))
     return notification
 
 
@@ -67,12 +81,35 @@ def mark_read(recipient_id: str, *, ids: list[str] | None = None, mark_all: bool
 
 
 def register_push_token(account_id: str, platform: str, token: str):
-    from .models import PushDeviceToken
-
     obj, _ = PushDeviceToken.objects.update_or_create(
         token=token, defaults={"account_id": account_id, "platform": platform}
     )
     return obj
+
+
+def endpoint_token(endpoint: str) -> str:
+    return hashlib.sha256(endpoint.encode()).hexdigest()
+
+
+def register_web_push(account_id: str, subscription: dict) -> PushDeviceToken:
+    with transaction.atomic():
+        obj, _ = PushDeviceToken.objects.update_or_create(
+            token=endpoint_token(subscription["endpoint"]),
+            defaults={"account_id": account_id, "platform": "web", "subscription": subscription},
+        )
+        stale = (
+            PushDeviceToken.objects.filter(account_id=account_id, platform="web")
+            .order_by("-last_seen_at")
+            .values_list("pk", flat=True)[push.MAX_SUBSCRIPTIONS_PER_ACCOUNT :]
+        )
+        PushDeviceToken.objects.filter(pk__in=list(stale)).delete()
+    return obj
+
+
+def unregister_web_push(account_id: str, endpoint: str) -> None:
+    PushDeviceToken.objects.filter(
+        account_id=account_id, token=endpoint_token(endpoint), platform="web"
+    ).delete()
 
 
 def get_or_create_preferences(account_id: str) -> NotificationPreference:

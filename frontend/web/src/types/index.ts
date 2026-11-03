@@ -129,6 +129,8 @@ export interface SponsoredSlot {
   headline: string;
   body?: string;
   cta?: string;
+  link_url?: string;
+  token: string;
   sponsored: boolean;
 }
 

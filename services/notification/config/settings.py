@@ -94,6 +94,15 @@ TARA_JWT_ISSUER = os.getenv("JWT_ISSUER", "tara-identity")
 TARA_JWT_AUDIENCE = os.getenv("JWT_AUDIENCE", "tara")
 TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-secret-change-me")
 
+# Web Push. Without both keys delivery is a logged no-op.
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
+VAPID_SUBJECT = os.getenv("VAPID_SUBJECT", "mailto:admin@example.com")
+WEB_PUSH_ALLOWED_HOSTS = env_list(
+    "WEB_PUSH_ALLOWED_HOSTS",
+    "fcm.googleapis.com,updates.push.services.mozilla.com,web.push.apple.com,*.notify.windows.com",
+)
+
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")
 TARA_EVENT_PUBLISHER = "rabbitmq" if RABBITMQ_URL else "null"
 TARA_EVENT_BROKER_URL = RABBITMQ_URL

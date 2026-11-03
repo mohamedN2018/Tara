@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from django.conf import settings
 from drf_spectacular.utils import extend_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
@@ -11,12 +12,13 @@ from rest_framework.views import APIView
 from tara_common.pagination import CursorPagination
 from tara_common.responses import data_response
 
-from . import services
+from . import push, services
 from .serializers import (
     NotificationSerializer,
     PreferenceSerializer,
     PreferenceUpdateSerializer,
     PushTokenSerializer,
+    PushUnsubscribeSerializer,
     ReadSerializer,
 )
 
@@ -88,7 +90,28 @@ class PushTokenView(APIView):
     def post(self, request: Request) -> Response:
         serializer = PushTokenSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        services.register_push_token(
-            _me(request), serializer.validated_data["platform"], serializer.validated_data["token"]
-        )
+        v = serializer.validated_data
+        if v["platform"] == "web":
+            services.register_web_push(_me(request), v["subscription"])
+        else:
+            services.register_push_token(_me(request), v["platform"], v["token"])
         return data_response({"detail": "registered"}, status=201)
+
+    @extend_schema(request=PushUnsubscribeSerializer, responses={204: None}, tags=["notifications"])
+    def delete(self, request: Request) -> Response:
+        serializer = PushUnsubscribeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        services.unregister_web_push(_me(request), serializer.validated_data["endpoint"])
+        return Response(status=204)
+
+
+class PushConfigView(APIView):
+    """What a browser needs to subscribe. ``enabled`` is false without VAPID keys."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: None}, tags=["notifications"])
+    def get(self, request: Request) -> Response:
+        return data_response(
+            {"enabled": push.configured(), "public_key": settings.VAPID_PUBLIC_KEY}
+        )

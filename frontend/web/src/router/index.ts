@@ -19,6 +19,9 @@ const routes: RouteRecordRaw[] = [
   { path: "/marketplace/:id", name: "listing", component: () => import("@/views/ListingDetailView.vue"), meta: { auth: true } },
   { path: "/pages", name: "pages", component: () => import("@/views/PagesView.vue"), meta: { auth: true } },
   { path: "/pages/:handle", name: "page", component: () => import("@/views/PageDetailView.vue"), meta: { auth: true } },
+  { path: "/ads", name: "ads", component: () => import("@/views/AdsView.vue"), meta: { auth: true } },
+  { path: "/ads/campaigns/:id", name: "ad-campaign", component: () => import("@/views/AdCampaignView.vue"), meta: { auth: true } },
+  { path: "/ads/review", name: "ad-review", component: () => import("@/views/AdReviewView.vue"), meta: { auth: true, roles: ["admin", "ad_reviewer"] } },
   { path: "/saved", name: "saved", component: () => import("@/views/SavedView.vue"), meta: { auth: true } },
   { path: "/posts/:id", name: "post", component: () => import("@/views/PostDetailView.vue"), meta: { auth: true } },
   { path: "/notifications", name: "notifications", component: () => import("@/views/NotificationsView.vue"), meta: { auth: true } },
@@ -45,6 +48,10 @@ router.beforeEach(async (to) => {
     return { name: "home" };
   }
   if (to.meta.staff && !auth.isStaff) {
+    return { name: "home" };
+  }
+  const roles = to.meta.roles as string[] | undefined;
+  if (roles && !roles.some((role) => auth.roles.includes(role))) {
     return { name: "home" };
   }
   return true;

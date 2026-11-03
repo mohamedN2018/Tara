@@ -43,7 +43,9 @@ class PushDeviceToken(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
     account_id = models.UUIDField()
     platform = models.CharField(max_length=12)  # ios | android | web
+    # Web: a hash of the endpoint, which has no length limit. Others: the device token.
     token = models.CharField(max_length=400, unique=True)
+    subscription = models.JSONField(null=True, blank=True)  # web: endpoint + keys
     created_at = models.DateTimeField(auto_now_add=True)
     last_seen_at = models.DateTimeField(auto_now=True)
 

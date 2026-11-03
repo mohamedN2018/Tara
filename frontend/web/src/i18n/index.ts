@@ -34,4 +34,11 @@ export function setLocale(locale: Locale) {
   localStorage.setItem("tara.locale", locale);
   document.documentElement.lang = locale;
   document.documentElement.dir = locale === "ar" ? "rtl" : "ltr";
+  // The service worker can't read localStorage: leave the language where it can.
+  if ("caches" in window) {
+    caches
+      .open("tara-prefs")
+      .then((cache) => cache.put("/__locale", new Response(locale)))
+      .catch(() => {});
+  }
 }

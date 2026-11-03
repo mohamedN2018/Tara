@@ -4,10 +4,12 @@ import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import LocaleToggle from "@/components/common/LocaleToggle.vue";
+import PushSettings from "@/components/common/PushSettings.vue";
 import ThemeToggle from "@/components/common/ThemeToggle.vue";
 import AppShell from "@/components/layout/AppShell.vue";
 import { errorMessage } from "@/lib/errors";
 import { relativeTime } from "@/lib/format";
+import { canInstall, installApp } from "@/lib/pwa";
 import { identityService, type UserSession } from "@/services/identity";
 import { notificationService, type NotificationPreferences, type NotificationPrefs } from "@/services/notification";
 import { profileService } from "@/services/profile";
@@ -165,6 +167,10 @@ onMounted(() => {
           <span class="text-sm">{{ t("settings.language") }}</span>
           <LocaleToggle />
         </div>
+        <div v-if="canInstall" class="flex items-center justify-between py-2">
+          <span class="text-sm">{{ t("settings.installApp") }}</span>
+          <button class="btn-primary text-sm" @click="installApp">{{ t("settings.install") }}</button>
+        </div>
       </section>
 
       <!-- Account -->
@@ -189,6 +195,7 @@ onMounted(() => {
       <!-- Notification preferences -->
       <section class="card mb-4 p-4">
         <h2 class="mb-3 font-semibold">{{ t("settings.notifications") }}</h2>
+        <PushSettings />
         <p v-if="prefsLoading" class="text-sm text-gray-400">{{ t("states.loading") }}</p>
         <p v-else-if="prefsError" class="flex items-center justify-between gap-2 text-sm text-gray-500">
           {{ t("settings.prefsUnavailable") }}

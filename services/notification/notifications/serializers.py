@@ -5,6 +5,7 @@ from zoneinfo import available_timezones
 
 from rest_framework import serializers
 
+from . import push
 from .models import Notification, NotificationPreference
 
 _TIME_RE = re.compile(r"(?:[01]\d|2[0-3]):[0-5]\d")
@@ -37,9 +38,37 @@ class PreferenceSerializer(serializers.ModelSerializer):
         read_only_fields = ["account_id", "updated_at"]
 
 
+class WebPushKeysSerializer(serializers.Serializer):
+    p256dh = serializers.CharField(max_length=200)
+    auth = serializers.CharField(max_length=100)
+
+
+class WebPushSubscriptionSerializer(serializers.Serializer):
+    endpoint = serializers.URLField(max_length=1000)
+    keys = WebPushKeysSerializer()
+
+    def validate_endpoint(self, value):
+        if not push.is_allowed_endpoint(value):
+            raise serializers.ValidationError("Not a known push service.")
+        return value
+
+
 class PushTokenSerializer(serializers.Serializer):
+    """``subscription`` for web, ``token`` for native devices."""
+
     platform = serializers.ChoiceField(choices=["ios", "android", "web"])
-    token = serializers.CharField(max_length=400)
+    token = serializers.CharField(max_length=400, required=False)
+    subscription = WebPushSubscriptionSerializer(required=False)
+
+    def validate(self, attrs):
+        field = "subscription" if attrs["platform"] == "web" else "token"
+        if field not in attrs:
+            raise serializers.ValidationError({field: "This field is required."})
+        return attrs
+
+
+class PushUnsubscribeSerializer(serializers.Serializer):
+    endpoint = serializers.URLField(max_length=1000)
 
 
 class PreferenceUpdateSerializer(serializers.Serializer):

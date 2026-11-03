@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import type { WebPushSubscription } from "@/lib/pwa";
 import type { CursorPage, Notification } from "@/types";
 
 // { kind: { channel: enabled } }, e.g. { follow: { in_app: false } }.
@@ -10,6 +11,19 @@ export interface NotificationPreferences {
 }
 
 export const notificationService = {
+  async pushConfig(): Promise<{ enabled: boolean; public_key: string }> {
+    const { data } = await api.get<{ data: { enabled: boolean; public_key: string } }>(
+      "/devices/push-config/",
+    );
+    return data.data;
+  },
+  async registerWebPush(subscription: WebPushSubscription): Promise<void> {
+    await api.post("/devices/push-token/", { platform: "web", subscription });
+  },
+  async unregisterWebPush(endpoint: string): Promise<void> {
+    await api.delete("/devices/push-token/", { data: { endpoint } });
+  },
+
   async getPreferences(): Promise<NotificationPreferences> {
     const { data } = await api.get<{ data: NotificationPreferences }>("/notifications/preferences/");
     return { prefs: data.data?.prefs ?? {}, quiet_hours: data.data?.quiet_hours ?? {} };

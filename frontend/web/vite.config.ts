@@ -1,10 +1,25 @@
 import { fileURLToPath, URL } from "node:url";
 
 import vue from "@vitejs/plugin-vue";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
+
+// Lists every built asset, so the service worker can cache the whole app shell
+// (lazy route chunks included) on install, not only what index.html links.
+function precacheList(): Plugin {
+  return {
+    name: "tara-precache-list",
+    apply: "build",
+    generateBundle(_options, bundle) {
+      const files = Object.keys(bundle)
+        .filter((name) => name.startsWith("assets/"))
+        .map((name) => `/${name}`);
+      this.emitFile({ type: "asset", fileName: "precache.json", source: JSON.stringify(files) });
+    },
+  };
+}
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), precacheList()],
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },

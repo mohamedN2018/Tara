@@ -10,4 +10,5 @@ urlpatterns = [
     path("notifications/read/", views.ReadView.as_view(), name="read"),
     path("notifications/preferences/", views.PreferencesView.as_view(), name="preferences"),
     path("devices/push-token/", views.PushTokenView.as_view(), name="push-token"),
+    path("devices/push-config/", views.PushConfigView.as_view(), name="push-config"),
 ]

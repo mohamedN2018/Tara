@@ -4,6 +4,7 @@ import { createApp } from "vue";
 import App from "./App.vue";
 import { i18n } from "./i18n";
 import { setUnauthorizedHandler } from "./lib/api";
+import { setUpPwa } from "./lib/pwa";
 import { jwtClaims, onTokensChangedElsewhere, tokenStore } from "./lib/tokens";
 import { router } from "./router";
 import { useAuthStore } from "./stores/auth";
@@ -38,4 +39,5 @@ onTokensChangedElsewhere(() => {
   else if (owner && owner !== auth.account.id) window.location.reload();
 });
 
+setUpPwa();
 app.mount("#app");
