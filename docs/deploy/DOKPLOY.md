@@ -23,23 +23,27 @@ Files involved (already in the repo):
 
 ## 1. Generate the environment
 
-From a checkout of this repo (locally or on the server):
+From a checkout of this repo:
 
 ```bash
-chmod +x scripts/gen-dokploy-env.sh
 ./scripts/gen-dokploy-env.sh tara.example.com
 ```
 
-This writes `.env` with a unique strong secret for every service + database +
-broker + object store. **Never commit it.** Open the file and copy its contents —
-you'll paste it into Dokploy next.
+This writes `.env.dokploy` with a unique strong secret for every service, database,
+Redis, RabbitMQ and MinIO. Keep it safe and never commit it. Run it once: new
+passwords do not reach an existing database.
+
+**Then fill in the SMTP values** (`EMAIL_HOST`, `EMAIL_HOST_USER`,
+`EMAIL_HOST_PASSWORD`). The stack refuses to start without `EMAIL_HOST`, because
+new accounts must verify their email before they can sign in. Your provider must
+allow sending from `DEFAULT_FROM_EMAIL`.
 
 ## 2. Create the Dokploy service
 
 1. Dokploy → **Create Project** → inside it **Create Service → Compose**.
 2. **Provider:** point it at this Git repository (and branch).
 3. **Compose Path:** `docker-compose.dokploy.yml`.
-4. **Environment:** paste the entire generated `.env` into the Environment panel.
+4. **Environment:** paste the entire generated `.env.dokploy` into the Environment panel.
    Confirm `DOMAIN=tara.example.com` is set there.
 5. **Domain:** the compose already carries Traefik labels for `Host(${DOMAIN})`
    on Dokploy's `dokploy-network` with `certresolver=letsencrypt`, so TLS is
@@ -53,46 +57,60 @@ takes a while. Then, automatically and in order:
 
 - Postgres initializes and **creates every per-service database/role**
   (`infra/postgres/init`).
-- Each service waits for Postgres, **generates JWT keys**, runs
-  **makemigrations + migrate**, and starts serving.
-- `minio-init` creates the media bucket.
+- Each service waits for Postgres, runs the **production safety check**, applies
+  its **committed migrations** and starts serving. Identity generates its JWT keys
+  and media creates the private bucket.
 - Workers (outbox→RabbitMQ) and consumers (event handlers) attach; if any starts
   before its tables exist it simply restarts until ready (self-healing).
 
 ## 4. See it working
 
-Open **`https://tara.example.com`** → the Tara web app (Arabic RTL / English LTR,
-dark/light). Register an account, post, react, comment, add friends, chat in real
-time, browse the marketplace, get notifications. The API is at
-`https://tara.example.com/api/v1/…`, OpenAPI docs at `/api/v1/docs/`, and the
-WebSocket at `wss://tara.example.com/ws/…` — all same-origin through the edge.
+Open **`https://tara.example.com`**, register, and confirm the verification email
+arrives. The API is at `/api/v1/…` and the WebSocket at `wss://tara.example.com/ws/…`,
+all through the same origin. Media is served at `/tara-media/…` by presigned URL;
+the bucket is private.
+
+The first admin is an account you have registered and verified:
+
+```bash
+docker exec tara-identity-1 python manage.py create_admin you@example.com
+```
 
 ## 5. Operations
 
 - **Logs:** Dokploy shows per-container logs. Start with `identity`, then `web`.
-- **Self-healing:** containers restart on failure; the nginx edge re-resolves
-  backends at request time, so a restarted service is picked up with no reload.
-- **Redeploy / update:** push to the branch and redeploy in Dokploy; migrations
-  re-run idempotently on boot.
-- **Scaling:** raise `--concurrency` on a `*-worker`, or run more `*-consumer`
-  replicas (they are competing, idempotent consumers).
+- **Self-healing:** containers restart on failure, and the nginx edge re-resolves
+  backends at request time. A RabbitMQ outage pauses event delivery; events wait in
+  each service's outbox and flow again when it returns.
+- **Update:** push and redeploy. Commit a migration with any model change; services
+  apply migrations at boot and never generate them.
+- **Scaling:** raise `--concurrency` on a `*-worker` or `WEB_CONCURRENCY`, and adjust
+  `mem_limit` to match.
+- **Failed events:** a handler that keeps failing is retried over about 40 minutes
+  and then dead-lettered. After fixing the cause, put them back with
+  `docker exec tara-feed-consumer-1 python manage.py consume_events --replay-dlq`.
+
+### Backups
+
+`scripts/backup.sh` saves all databases, media and the JWT keys. Run it daily from
+Dokploy's Schedules or cron, and copy the output off the server:
+
+```bash
+COMPOSE_PROJECT=tara BACKUP_DIR=/var/backups/tara scripts/backup.sh
+```
+
+To restore, start `postgres` and `minio` on empty volumes, run
+`scripts/restore.sh <backup directory>`, then start the rest of the stack.
 
 ## 6. Notes & options
 
-- **Security:** the generated env sets `*_DEBUG=false` and `*_ALLOWED_HOSTS=*`
-  (traffic only ever reaches services via the nginx edge). To pass
-  `manage.py check --deploy` strictly, pin `*_ALLOWED_HOSTS` to your domain +
-  service names. The `tara_common` production-safety check rejects dev-default
-  secrets — the generator's random values pass it.
-- **Email:** a `mailpit` container catches outbound mail (no real delivery). Swap
-  `EMAIL_HOST`/`EMAIL_PORT`/credentials for a real SMTP provider in the env.
-- **Search** runs on Postgres (`SEARCH_USE_OPENSEARCH=false`) to keep the
-  footprint small; flip it on and add an OpenSearch service for scale.
-- **Media uploads (optional):** browser uploads use presigned URLs to MinIO. For
-  them to work end-to-end, expose MinIO on its own subdomain (e.g.
-  `s3.tara.example.com`) and set `S3_ENDPOINT_URL`/`S3_PUBLIC_BASE` to it (so the
-  presigned URL host matches what the browser hits). Everything else works
-  without this; it's the one feature that needs the extra hostname.
-- **Kubernetes:** for a clustered deployment instead of single-host compose, see
-  `infra/k8s/` (Kustomize overlays for all services).
-```
+- **Server size:** the stack uses about 4.6 GB at idle, and the memory limits add up
+  to more. Use 12 GB; 8 GB will leave nothing for traffic peaks.
+- **Plain HTTP on port 80** redirects to HTTPS through Dokploy's Traefik. If your
+  Dokploy uses other entrypoint or cert-resolver names, adjust the `web` labels.
+- **Search** runs on Postgres (`SEARCH_USE_OPENSEARCH=false`). Add OpenSearch at scale.
+- **MinIO** credentials are the root user, held only by MinIO and the media service.
+  Use S3 or Cloudflare R2 instead by setting `S3_ENDPOINT_URL`, keys and
+  `S3_PUBLIC_ENDPOINT_URL`.
+- **Kubernetes** manifests in `infra/k8s/` have never run on a cluster and need work
+  first. See `docs/architecture/project-review-and-plan.md`.
