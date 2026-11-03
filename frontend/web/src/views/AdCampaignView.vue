@@ -97,7 +97,7 @@ onMounted(load);
 <template>
   <AppShell>
     <div class="mx-auto w-full max-w-[720px] space-y-4">
-      <RouterLink to="/ads" class="text-sm text-brand-600 hover:underline">{{ t("ads.title") }}</RouterLink>
+      <RouterLink to="/ads" class="text-sm text-brand-600 hover:underline dark:text-brand-300">{{ t("ads.title") }}</RouterLink>
       <LoadingSkeleton v-if="loading" :rows="3" />
       <ErrorState v-else-if="error || !campaign" @retry="load" />
       <template v-else>
@@ -110,23 +110,23 @@ onMounted(load);
             </button>
           </div>
           <dl v-if="report" class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4" data-testid="campaign-stats">
-            <div><dt class="text-xs text-gray-500">{{ t("ads.spent") }}</dt><dd class="font-semibold" dir="ltr">{{ report.spent }} / {{ report.budget }}</dd></div>
-            <div><dt class="text-xs text-gray-500">{{ t("ads.impressions") }}</dt><dd class="font-semibold">{{ report.impressions }}</dd></div>
-            <div><dt class="text-xs text-gray-500">{{ t("ads.clicks") }}</dt><dd class="font-semibold">{{ report.clicks }}</dd></div>
-            <div><dt class="text-xs text-gray-500">{{ t("ads.ctr") }}</dt><dd class="font-semibold" dir="ltr">{{ (report.ctr * 100).toFixed(1) }}%</dd></div>
+            <div><dt class="text-xs text-gray-500 dark:text-gray-400">{{ t("ads.spent") }}</dt><dd class="font-semibold" dir="ltr">{{ report.spent }} / {{ report.budget }}</dd></div>
+            <div><dt class="text-xs text-gray-500 dark:text-gray-400">{{ t("ads.impressions") }}</dt><dd class="font-semibold">{{ report.impressions }}</dd></div>
+            <div><dt class="text-xs text-gray-500 dark:text-gray-400">{{ t("ads.clicks") }}</dt><dd class="font-semibold">{{ report.clicks }}</dd></div>
+            <div><dt class="text-xs text-gray-500 dark:text-gray-400">{{ t("ads.ctr") }}</dt><dd class="font-semibold" dir="ltr">{{ (report.ctr * 100).toFixed(1) }}%</dd></div>
           </dl>
         </section>
 
         <section v-for="set in adSets" :key="set.id" class="card p-4" data-testid="ad-set">
           <h2 class="font-semibold" dir="auto">{{ set.name || t("ads.adSet") }}</h2>
-          <p class="text-xs text-gray-500" dir="ltr">{{ t(`ads.placements.${set.placement}`) }} · CPC {{ set.cpc }} · CPM {{ set.cpm }}</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400" dir="ltr">{{ t(`ads.placements.${set.placement}`) }} · CPC {{ set.cpc }} · CPM {{ set.cpm }}</p>
           <ul class="mt-3 space-y-2">
             <li v-for="c in set.creatives" :key="c.id" class="rounded-lg border border-gray-100 p-3 text-sm dark:border-gray-800" data-testid="creative">
               <span class="flex items-center justify-between gap-2">
                 <span class="min-w-0 truncate font-medium" dir="auto">{{ c.headline }}</span>
-                <span class="shrink-0 text-xs text-gray-500">{{ t(`ads.review.${c.review_status}`) }}</span>
+                <span class="shrink-0 text-xs text-gray-500 dark:text-gray-400">{{ t(`ads.review.${c.review_status}`) }}</span>
               </span>
-              <span v-if="statsFor(c.id)" class="block text-xs text-gray-500">
+              <span v-if="statsFor(c.id)" class="block text-xs text-gray-500 dark:text-gray-400">
                 {{ t("ads.impressions") }}: {{ statsFor(c.id)?.impressions }} · {{ t("ads.clicks") }}: {{ statsFor(c.id)?.clicks }}
               </span>
             </li>

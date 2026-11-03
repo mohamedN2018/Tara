@@ -41,7 +41,7 @@ test("#hashtags link to their posts and @mentions autocomplete and notify", asyn
   await expect(option).toContainText(b.handle);
   await composer.press("Enter");
   await expect(composer).toHaveValue(`مرحبا #${tag} @${b.handle} `);
-  await page.getByRole("button", { name: "نشر" }).click();
+  await page.getByRole("button", { name: "نشر", exact: true }).click();
 
   const post = page.locator("article", { hasText: tag }).first();
   await expect(post).toBeVisible();
@@ -113,7 +113,7 @@ test("a poll is created, voted on once, and shows results", async ({ browser }) 
   await page.getByRole("textbox", { name: "اطرح سؤالًا…" }).fill(`سؤال ${tag}؟`);
   await page.getByRole("textbox", { name: "الخيار 1" }).fill("شاي");
   await page.getByRole("textbox", { name: "الخيار 2" }).fill("قهوة");
-  await page.getByRole("button", { name: "نشر" }).click();
+  await page.getByRole("button", { name: "نشر", exact: true }).click();
   const post = page.locator("article", { hasText: tag }).first();
   await expect(post.getByTestId("poll")).toBeVisible();
 
@@ -191,7 +191,7 @@ test("a post with a link gets a server-built preview card", async ({ browser }) 
   await page.goto("/home");
   await page.getByRole("button", { name: "بماذا تفكر" }).first().click().catch(() => {});
   await page.getByRole("textbox", { name: /بماذا تفكر/ }).fill(`link ${tag} https://example.com/`);
-  await page.getByRole("button", { name: "نشر" }).click();
+  await page.getByRole("button", { name: "نشر", exact: true }).click();
   const post = page.locator("article", { hasText: tag }).first();
   await expect(post.getByTestId("link-preview")).toContainText("Example Domain", { timeout: 15_000 });
   await expect(post.getByTestId("link-preview")).toHaveAttribute("rel", /noopener/);

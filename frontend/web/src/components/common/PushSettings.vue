@@ -86,9 +86,9 @@ onMounted(refresh);
   <div class="flex items-center justify-between gap-3 py-2" data-testid="push-settings">
     <span class="min-w-0">
       <span class="block text-sm">{{ t("settings.push") }}</span>
-      <span v-if="state === 'unsupported'" class="block text-xs text-gray-500">{{ t("settings.pushUnsupported") }}</span>
-      <span v-else-if="state === 'unavailable'" class="block text-xs text-gray-500">{{ t("settings.pushUnavailable") }}</span>
-      <span v-else-if="state === 'denied'" class="block text-xs text-gray-500">{{ t("settings.pushDenied") }}</span>
+      <span v-if="state === 'unsupported'" class="block text-xs text-gray-500 dark:text-gray-400">{{ t("settings.pushUnsupported") }}</span>
+      <span v-else-if="state === 'unavailable'" class="block text-xs text-gray-500 dark:text-gray-400">{{ t("settings.pushUnavailable") }}</span>
+      <span v-else-if="state === 'denied'" class="block text-xs text-gray-500 dark:text-gray-400">{{ t("settings.pushDenied") }}</span>
       <span v-else-if="state === 'on'" class="block text-xs text-green-600">{{ t("settings.pushOn") }}</span>
     </span>
     <button v-if="state === 'off'" class="btn-primary shrink-0 text-sm" :disabled="busy" @click="enable">{{ t("settings.pushEnable") }}</button>

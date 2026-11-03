@@ -178,7 +178,7 @@ onMounted(() => {
         <h2 class="mb-3 font-semibold">{{ t("settings.account") }}</h2>
         <div class="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2 text-sm dark:bg-gray-800/60">
           <span class="min-w-0">
-            <span class="block text-xs text-gray-400">{{ t("settings.email") }}</span>
+            <span class="block text-xs text-gray-500 dark:text-gray-400">{{ t("settings.email") }}</span>
             <span class="block truncate">{{ auth.account?.email || "—" }}</span>
           </span>
           <span
@@ -196,8 +196,8 @@ onMounted(() => {
       <section class="card mb-4 p-4">
         <h2 class="mb-3 font-semibold">{{ t("settings.notifications") }}</h2>
         <PushSettings />
-        <p v-if="prefsLoading" class="text-sm text-gray-400">{{ t("states.loading") }}</p>
-        <p v-else-if="prefsError" class="flex items-center justify-between gap-2 text-sm text-gray-500">
+        <p v-if="prefsLoading" class="text-sm text-gray-500 dark:text-gray-400">{{ t("states.loading") }}</p>
+        <p v-else-if="prefsError" class="flex items-center justify-between gap-2 text-sm text-gray-500 dark:text-gray-400">
           {{ t("settings.prefsUnavailable") }}
           <button class="btn-ghost text-sm" @click="loadPrefs">{{ t("states.retry") }}</button>
         </p>
@@ -215,11 +215,11 @@ onMounted(() => {
             <p class="mb-2 text-sm font-medium">{{ t("settings.quietHours") }}</p>
             <div class="flex items-center gap-3 text-sm">
               <label class="flex items-center gap-1.5">
-                <span class="text-gray-500">{{ t("settings.quietFrom") }}</span>
+                <span class="text-gray-500 dark:text-gray-400">{{ t("settings.quietFrom") }}</span>
                 <input v-model="quiet.start" type="time" class="input w-auto" @change="saveQuietHours" />
               </label>
               <label class="flex items-center gap-1.5">
-                <span class="text-gray-500">{{ t("settings.quietTo") }}</span>
+                <span class="text-gray-500 dark:text-gray-400">{{ t("settings.quietTo") }}</span>
                 <input v-model="quiet.end" type="time" class="input w-auto" @change="saveQuietHours" />
               </label>
               <button v-if="quiet.start || quiet.end" class="btn-ghost text-sm" @click="clearQuietHours">
@@ -233,8 +233,8 @@ onMounted(() => {
       <!-- Active sessions -->
       <section class="card mb-4 p-4">
         <h2 class="mb-3 font-semibold">{{ t("settings.sessions") }}</h2>
-        <p v-if="sessionsLoading" class="text-sm text-gray-400">{{ t("states.loading") }}</p>
-        <p v-else-if="sessionsError" class="flex items-center justify-between gap-2 text-sm text-gray-500">
+        <p v-if="sessionsLoading" class="text-sm text-gray-500 dark:text-gray-400">{{ t("states.loading") }}</p>
+        <p v-else-if="sessionsError" class="flex items-center justify-between gap-2 text-sm text-gray-500 dark:text-gray-400">
           {{ t("settings.sessionsUnavailable") }}
           <button class="btn-ghost text-sm" @click="loadSessions">{{ t("states.retry") }}</button>
         </p>
@@ -244,12 +244,12 @@ onMounted(() => {
             :key="s.id"
             class="flex items-center gap-3 rounded-lg bg-gray-50 px-3 py-2 text-sm dark:bg-gray-800/60"
           >
-            <component :is="s.platform === 'web' ? Monitor : Smartphone" class="h-5 w-5 shrink-0 text-gray-400" />
+            <component :is="s.platform === 'web' ? Monitor : Smartphone" class="h-5 w-5 shrink-0 text-gray-500 dark:text-gray-400" />
             <span class="min-w-0 flex-1">
               <span class="block truncate font-medium">
-                {{ s.platform }} <span v-if="s.is_current" class="text-xs text-brand-600">· {{ t("settings.thisDevice") }}</span>
+                {{ s.platform }} <span v-if="s.is_current" class="text-xs text-brand-600 dark:text-brand-300">· {{ t("settings.thisDevice") }}</span>
               </span>
-              <span class="block truncate text-xs text-gray-400">
+              <span class="block truncate text-xs text-gray-500 dark:text-gray-400">
                 {{ s.ip_region || "—" }} · {{ relativeTime(s.last_seen_at) }}
               </span>
             </span>
@@ -281,7 +281,7 @@ onMounted(() => {
             <input v-model="form.country" class="input" dir="auto" :aria-label="t('profile.country')" :placeholder="t('profile.country')" />
           </div>
 
-          <p class="text-xs text-gray-400">{{ t("settings.fullProfileHint") }}</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t("settings.fullProfileHint") }}</p>
           <p v-if="message" class="text-sm text-green-600">{{ message }}</p>
           <p v-if="error" class="text-sm text-red-500">{{ error }}</p>
 

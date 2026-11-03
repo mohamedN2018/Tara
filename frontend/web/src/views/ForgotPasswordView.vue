@@ -2,8 +2,7 @@
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 
-import LocaleToggle from "@/components/common/LocaleToggle.vue";
-import ThemeToggle from "@/components/common/ThemeToggle.vue";
+import AuthLayout from "@/components/brand/AuthLayout.vue";
 import { errorMessage } from "@/lib/errors";
 import { identityService } from "@/services/identity";
 
@@ -29,29 +28,22 @@ async function submit() {
 </script>
 
 <template>
-  <div class="flex min-h-screen items-center justify-center px-4">
-    <div class="absolute end-4 top-4 flex gap-2"><LocaleToggle /><ThemeToggle /></div>
-    <div class="card w-full max-w-sm p-6">
-      <RouterLink to="/" class="mb-1 block text-center text-2xl font-extrabold text-brand-600">
-        {{ t("app.name") }}
-      </RouterLink>
-      <h1 class="mb-6 text-center text-sm text-gray-500">{{ t("auth.forgotTitle") }}</h1>
+  <AuthLayout :title="t('auth.forgotTitle')">
 
       <p v-if="sent" class="rounded-lg bg-green-50 p-3 text-center text-sm text-green-700 dark:bg-green-950/40 dark:text-green-300">
         {{ t("auth.forgotSent") }}
       </p>
       <form v-else class="space-y-4" @submit.prevent="submit">
         <div>
-          <label for="forgot-email" class="mb-1 block text-sm font-medium">{{ t("auth.email") }}</label>
+          <label for="forgot-email" class="label">{{ t("auth.email") }}</label>
           <input id="forgot-email" v-model="email" type="email" class="input" required autocomplete="email" />
         </div>
         <p v-if="error" class="text-sm text-red-500">{{ error }}</p>
-        <button type="submit" class="btn-primary w-full" :disabled="loading">{{ t("auth.forgotCta") }}</button>
+        <button type="submit" class="btn-gradient w-full py-3 text-base" :disabled="loading">{{ t("auth.forgotCta") }}</button>
       </form>
 
       <p class="mt-4 text-center text-sm">
-        <RouterLink to="/login" class="font-medium text-brand-600">{{ t("auth.backToLogin") }}</RouterLink>
+        <RouterLink to="/login" class="font-medium text-brand-600 dark:text-brand-300">{{ t("auth.backToLogin") }}</RouterLink>
       </p>
-    </div>
-  </div>
+  </AuthLayout>
 </template>

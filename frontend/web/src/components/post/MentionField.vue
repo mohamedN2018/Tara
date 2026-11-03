@@ -118,7 +118,7 @@ defineExpose({ focus: () => field.value?.focus() });
     />
     <ul
       v-if="open"
-      class="card absolute inset-x-0 top-full z-50 mt-1 max-h-60 overflow-y-auto p-1"
+      class="popover absolute inset-x-0 top-full z-50 mt-1 max-h-60 overflow-y-auto p-1"
       role="listbox"
       data-testid="mention-list"
     >
@@ -131,7 +131,7 @@ defineExpose({ focus: () => field.value?.focus() });
         >
           <UserAvatar :name="directory.label(c.id)" :media-id="directory.avatarOf(c.id)" :size="28" />
           <span class="min-w-0 truncate" dir="auto">{{ directory.label(c.id) }}</span>
-          <span class="ms-auto text-xs text-gray-400" dir="ltr">@{{ c.handle }}</span>
+          <span class="ms-auto text-xs text-gray-500 dark:text-gray-400" dir="ltr">@{{ c.handle }}</span>
         </button>
       </li>
     </ul>

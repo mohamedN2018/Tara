@@ -42,13 +42,13 @@ async function logout() {
           :title="presence.connected ? t('presence.online') : t('presence.offline')"
         />
       </span>
-      <ChevronDown class="hidden h-4 w-4 text-gray-500 sm:block" />
+      <ChevronDown class="hidden h-4 w-4 text-gray-500 sm:block dark:text-gray-400" />
     </button>
 
     <template v-if="open">
       <div class="fixed inset-0 z-40" @click="open = false" />
       <div
-        class="card absolute end-0 z-50 mt-2 w-64 overflow-hidden p-1.5"
+        class="popover absolute end-0 z-50 mt-2 w-64 overflow-hidden p-1.5"
         role="menu"
       >
         <RouterLink
@@ -61,7 +61,7 @@ async function logout() {
           <UserAvatar :name="displayName()" :media-id="auth.profile.avatar_media_id" :size="40" />
           <span class="min-w-0">
             <span class="block truncate text-sm font-semibold">{{ auth.profile.display_name }}</span>
-            <span class="block truncate text-xs text-gray-500">@{{ auth.profile.handle }}</span>
+            <span class="block truncate text-xs text-gray-500 dark:text-gray-400">@{{ auth.profile.handle }}</span>
           </span>
         </RouterLink>
         <div

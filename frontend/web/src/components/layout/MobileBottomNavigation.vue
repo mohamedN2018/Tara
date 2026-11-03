@@ -1,40 +1,67 @@
 <script setup lang="ts">
-import { Bell, Home, MessageCircle, Search, Users } from "lucide-vue-next";
+import { Bell, Home, MessageCircle, Plus, Users } from "lucide-vue-next";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 
 import { useNotificationStore } from "@/stores/notifications";
+import { useUiStore } from "@/stores/ui";
 
 const { t } = useI18n();
+const router = useRouter();
+const ui = useUiStore();
 const notifications = useNotificationStore();
 
-const items = [
+// Two links either side of the central create button.
+const start = [
   { name: "home", route: "/home", icon: Home, label: "nav.home" },
   { name: "friends", route: "/friends", icon: Users, label: "nav.friends" },
+];
+const end = [
   { name: "messages", route: "/messages", icon: MessageCircle, label: "nav.messages" },
   { name: "notifications", route: "/notifications", icon: Bell, label: "nav.notifications" },
-  { name: "search", route: "/search", icon: Search, label: "nav.search" },
 ];
+
+function createPost() {
+  ui.requestCompose();
+  router.push("/home");
+}
 </script>
 
 <template>
   <nav
-    class="fixed inset-x-0 bottom-0 z-30 flex items-stretch border-t border-gray-200 bg-white pb-[env(safe-area-inset-bottom)] dark:border-gray-800 dark:bg-gray-900 lg:hidden"
+    class="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200/70 bg-white/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl dark:border-gray-800/70 dark:bg-gray-950/90 lg:hidden"
     :aria-label="t('nav.home')"
   >
-    <RouterLink
-      v-for="item in items"
-      :key="item.name"
-      :to="item.route"
-      class="relative flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium text-gray-500"
-      active-class="text-brand-600"
-      :aria-label="t(item.label)"
-    >
-      <component :is="item.icon" class="h-5 w-5" />
-      <span
-        v-if="item.name === 'notifications' && notifications.unread > 0"
-        class="absolute end-[28%] top-1 h-2 w-2 rounded-full bg-red-500"
-      />
-      {{ t(item.label) }}
-    </RouterLink>
+    <div class="mx-auto flex max-w-lg items-stretch">
+      <template v-for="group in [start, null, end]" :key="group ? group[0].name : 'create'">
+        <template v-if="group">
+          <RouterLink
+            v-for="item in group"
+            :key="item.name"
+            :to="item.route"
+            class="relative flex flex-1 flex-col items-center gap-1 py-2.5 text-[11px] font-semibold text-gray-500 transition dark:text-gray-400"
+            active-class="!text-brand-600 dark:!text-brand-300"
+            :aria-label="t(item.label)"
+          >
+            <component :is="item.icon" class="h-[22px] w-[22px]" />
+            <span
+              v-if="item.name === 'notifications' && notifications.unread > 0"
+              class="absolute end-[26%] top-1.5 h-2.5 w-2.5 rounded-full bg-accent-500 ring-2 ring-white dark:ring-gray-950"
+            />
+            {{ t(item.label) }}
+          </RouterLink>
+        </template>
+        <div v-else class="flex flex-1 items-center justify-center">
+          <button
+            type="button"
+            class="-mt-5 flex h-12 w-12 items-center justify-center rounded-full bg-tara-gradient text-white shadow-glow ring-4 ring-white transition active:scale-95 dark:ring-gray-950"
+            :aria-label="t('nav.createPost')"
+            @click="createPost"
+          >
+            <Plus class="h-6 w-6" />
+          </button>
+        </div>
+      </template>
+    </div>
   </nav>
 </template>

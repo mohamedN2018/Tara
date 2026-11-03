@@ -129,7 +129,7 @@ onMounted(async () => {
         v-for="tb in (['browse', 'mine', 'saved'] as Tab[])"
         :key="tb"
         class="flex-1 rounded-lg py-1.5 font-medium transition"
-        :class="tab === tb ? 'bg-white shadow-sm text-brand-600 dark:bg-gray-900' : 'text-gray-500'"
+        :class="tab === tb ? 'bg-white shadow-sm text-brand-600 dark:bg-gray-900 dark:text-brand-300' : 'text-gray-500 dark:text-gray-400'"
         @click="switchTab(tb)"
       >
         {{ tb === "browse" ? t("market.browse") : tb === "mine" ? t("market.myListings") : t("market.savedTab") }}
@@ -144,7 +144,7 @@ onMounted(async () => {
       <div class="mb-4 flex flex-wrap gap-2">
         <button
           class="rounded-full border px-3 py-1 text-xs font-medium transition"
-          :class="!selectedCat ? 'border-brand-600 bg-brand-50 text-brand-600 dark:bg-brand-950/40' : 'border-gray-200 text-gray-500 hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800'"
+          :class="!selectedCat ? 'border-brand-600 bg-brand-50 text-brand-600 dark:bg-brand-950/40 dark:text-brand-300' : 'border-gray-200 text-gray-500 hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800 dark:text-gray-400'"
           @click="selectCat('')"
         >
           {{ t("market.allCategories") }}
@@ -153,7 +153,7 @@ onMounted(async () => {
           v-for="c in categories"
           :key="c.id"
           class="rounded-full border px-3 py-1 text-xs font-medium transition"
-          :class="selectedCat === c.slug ? 'border-brand-600 bg-brand-50 text-brand-600 dark:bg-brand-950/40' : 'border-gray-200 text-gray-500 hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800'"
+          :class="selectedCat === c.slug ? 'border-brand-600 bg-brand-50 text-brand-600 dark:bg-brand-950/40 dark:text-brand-300' : 'border-gray-200 text-gray-500 hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800 dark:text-gray-400'"
           @click="selectCat(c.slug)"
         >
           {{ c.name }}

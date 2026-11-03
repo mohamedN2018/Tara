@@ -62,11 +62,11 @@ onMounted(load);
           <UserAvatar :name="title(c)" :media-id="c.members.length === 2 ? directory.avatarOf(peerId(c)) : null" :size="40" />
           <span class="min-w-0 flex-1">
             <span class="block truncate text-sm font-medium" dir="auto">{{ title(c) }}</span>
-            <span class="block truncate text-xs text-gray-500">
+            <span class="block truncate text-xs text-gray-500 dark:text-gray-400">
               {{ t("messages.membersCount", c.members.length) }}
             </span>
           </span>
-          <time v-if="c.last_message_at" class="shrink-0 text-[10px] text-gray-400">
+          <time v-if="c.last_message_at" class="shrink-0 text-[10px] text-gray-500 dark:text-gray-400">
             {{ relativeTime(c.last_message_at) }}
           </time>
         </RouterLink>

@@ -74,7 +74,7 @@ onMounted(load);
       <!-- Service health overview -->
       <section class="card mb-6 p-4">
         <h2 class="mb-3 flex items-center gap-2 font-semibold">
-          <Activity class="h-5 w-5 text-brand-600" /> {{ t("admin.serviceHealth") }}
+          <Activity class="h-5 w-5 text-brand-600 dark:text-brand-300" /> {{ t("admin.serviceHealth") }}
           <span
             v-if="health"
             class="ms-auto rounded-full px-2 py-0.5 text-xs font-medium"
@@ -113,7 +113,7 @@ onMounted(load);
 
       <!-- Moderation queue (cases) -->
       <h2 class="mb-2 flex items-center gap-2 font-semibold">
-        <ShieldAlert class="h-5 w-5 text-brand-600" /> {{ t("admin.moderationQueue") }}
+        <ShieldAlert class="h-5 w-5 text-brand-600 dark:text-brand-300" /> {{ t("admin.moderationQueue") }}
       </h2>
       <ErrorState v-if="casesError" @retry="load" />
       <EmptyState v-else-if="cases.length === 0">{{ t("admin.queueEmpty") }}</EmptyState>
@@ -123,7 +123,7 @@ onMounted(load);
             <span class="block text-sm font-medium">
               {{ enumLabel("targets", c.target_type) }} · {{ t("admin.reportsCount", c.report_count) }} · {{ enumLabel("states", c.state) }}
             </span>
-            <span class="block truncate text-xs text-gray-500">{{ c.target_id }}</span>
+            <span class="block truncate text-xs text-gray-500 dark:text-gray-400">{{ c.target_id }}</span>
           </span>
           <button class="btn-ghost text-sm" :disabled="acting === c.id" @click="act(c.id, 'dismiss')">{{ t("admin.dismiss") }}</button>
           <button class="btn-primary text-sm" :disabled="acting === c.id" @click="act(c.id, 'remove')">{{ t("admin.remove") }}</button>

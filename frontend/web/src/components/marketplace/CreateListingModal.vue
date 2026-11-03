@@ -66,7 +66,7 @@ async function submit() {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
+  <div class="fixed inset-0 z-50 flex items-end justify-center bg-gray-950/60 backdrop-blur-sm p-0 sm:items-center sm:p-4">
     <div class="fixed inset-0" @click="emit('close')" />
     <div
       ref="dialog"
@@ -74,7 +74,7 @@ async function submit() {
       aria-modal="true"
       aria-labelledby="listing-dialog-title"
       tabindex="-1"
-      class="card relative z-10 max-h-[92vh] w-full overflow-y-auto rounded-b-none rounded-t-2xl p-4 sm:max-w-lg sm:rounded-2xl sm:p-5"
+      class="card relative z-10 animate-pop-in shadow-pop max-h-[92vh] w-full overflow-y-auto rounded-b-none rounded-t-2xl p-4 sm:max-w-lg sm:rounded-2xl sm:p-5"
     >
       <div class="mb-4 flex items-center justify-between">
         <h2 id="listing-dialog-title" class="text-lg font-bold">{{ t("market.createTitle") }}</h2>
@@ -117,14 +117,14 @@ async function submit() {
 
         <div>
           <label for="listing-location" class="mb-1 block text-sm font-medium">
-            {{ t("market.location") }} <span class="text-xs text-gray-400">({{ t("market.optional") }})</span>
+            {{ t("market.location") }} <span class="text-xs text-gray-500 dark:text-gray-400">({{ t("market.optional") }})</span>
           </label>
           <input id="listing-location" v-model="form.location" class="input" dir="auto" maxlength="160" />
         </div>
 
         <div>
           <label for="listing-description" class="mb-1 block text-sm font-medium">
-            {{ t("market.description") }} <span class="text-xs text-gray-400">({{ t("market.optional") }})</span>
+            {{ t("market.description") }} <span class="text-xs text-gray-500 dark:text-gray-400">({{ t("market.optional") }})</span>
           </label>
           <textarea id="listing-description" v-model="form.description" class="input min-h-24" dir="auto" rows="3" />
         </div>

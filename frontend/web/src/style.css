@@ -2,42 +2,206 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ==========================================================================
+   Tara design tokens
+   Brand: Tara Purple #6A00F4 · Neon Violet #A855F7 · Accent Pink #FF4ED8 ·
+          Deep Indigo #0B0B1F · Soft Lavender #E8E6FF
+   Dark is the primary experience; light mode shares the same identity.
+   Tailwind utilities (brand-*, accent-*, gray-*) are the main API; these
+   variables cover what utilities cannot (gradients, scrollbars, focus).
+   ========================================================================== */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
+  --tara-purple: #6a00f4;
+  --tara-violet: #a855f7;
+  --tara-pink: #ff4ed8;
+  --tara-indigo: #0b0b1f;
+  --tara-lavender: #e8e6ff;
+  --tara-gradient: linear-gradient(135deg, #6a00f4 0%, #a855f7 55%, #ff4ed8 100%);
+
+  --surface-canvas: #f1f0fb;
+  --surface-card: #ffffff;
+  --surface-raised: #f8f7ff;
+  --border-subtle: #e4e2f3;
+  --text-strong: #0b0b1f;
+  --text-muted: #6f6b95;
+  --focus-ring: rgba(106, 0, 244, 0.45);
+  --scrollbar: #cccae3;
+
+  --radius-sm: 0.625rem;
+  --radius-md: 0.875rem;
+  --radius-lg: 1.25rem;
+  --radius-xl: 1.75rem;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* Inter for Latin, Cairo for Arabic (loaded in index.html). */
+:root.dark {
+  color-scheme: dark;
+  --surface-canvas: #0b0b1f;
+  --surface-card: #15142f;
+  --surface-raised: #1c1a3d;
+  --border-subtle: #25234a;
+  --text-strong: #f8f7ff;
+  --text-muted: #9e9ac0;
+  --focus-ring: rgba(168, 85, 247, 0.6);
+  --scrollbar: #2f2c5a;
+}
+
+/* Manrope for Latin, Cairo for Arabic; each falls back to the other so mixed
+   text always renders in a brand face. */
 html {
-  font-family: "Inter", system-ui, sans-serif;
+  font-family: "Manrope", "Cairo", system-ui, sans-serif;
+  -webkit-tap-highlight-color: transparent;
 }
 html[dir="rtl"] {
-  font-family: "Cairo", "Tahoma", sans-serif;
+  font-family: "Cairo", "Manrope", Tahoma, sans-serif;
 }
 
-/* Soft light-gray canvas; white surfaces come from .card. */
 body {
   @apply bg-gray-100 text-gray-900 antialiased dark:bg-gray-950 dark:text-gray-100;
+  text-rendering: optimizeLegibility;
+}
+
+/* Native controls (checkboxes, radios, ranges, progress) in brand colour. */
+input[type="checkbox"],
+input[type="radio"],
+input[type="range"],
+progress {
+  accent-color: var(--tara-purple);
+}
+:root.dark input[type="checkbox"],
+:root.dark input[type="radio"],
+:root.dark input[type="range"] {
+  accent-color: var(--tara-violet);
+}
+input[type="checkbox"],
+input[type="radio"] {
+  width: 1.05rem;
+  height: 1.05rem;
+  cursor: pointer;
+}
+
+::selection {
+  background: rgba(168, 85, 247, 0.35);
+}
+
+/* Thin brand-tinted scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+
+/* One focus style everywhere, visible only for keyboard users. */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 @layer components {
-  /* White card, medium-large radius, subtle shadow, hairline border. */
+  /* ---- Surfaces ----------------------------------------------------------- */
   .card {
-    @apply rounded-2xl border border-gray-200/80 bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900;
+    @apply rounded-2xl border border-gray-200/80 bg-white shadow-card dark:border-gray-800/80 dark:bg-gray-900 dark:shadow-card-dark;
   }
+  .card-hover {
+    @apply transition duration-200 hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-pop dark:hover:border-brand-900;
+  }
+  /* A floating menu / popover. */
+  .popover {
+    @apply card animate-pop-in shadow-pop dark:shadow-card-dark;
+  }
+  .divider {
+    @apply border-gray-200 dark:border-gray-800;
+  }
+
+  /* ---- Buttons ------------------------------------------------------------ */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-brand-300 focus:ring-offset-1 focus:ring-offset-transparent disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex select-none items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 dark:focus-visible:ring-offset-gray-950;
   }
   .btn-primary {
-    @apply btn bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800;
+    @apply btn bg-brand-600 text-white shadow-sm shadow-brand-600/30 hover:bg-brand-700 hover:shadow-glow active:bg-brand-800;
+  }
+  /* Signature gradient: reserved for the one main action on a screen. */
+  .btn-gradient {
+    @apply btn bg-tara-gradient text-white shadow-glow hover:brightness-110;
   }
   .btn-ghost {
     @apply btn text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800;
   }
-  /* Soft-blue secondary button. */
   .btn-soft {
-    @apply btn bg-brand-50 text-brand-700 hover:bg-brand-100 dark:bg-brand-950/60 dark:text-brand-300 dark:hover:bg-brand-950;
+    @apply btn bg-brand-50 text-brand-700 hover:bg-brand-100 dark:bg-brand-950/70 dark:text-brand-300 dark:hover:bg-brand-900/60;
   }
+  .btn-outline {
+    @apply btn border border-gray-300 text-gray-800 hover:border-brand-400 hover:text-brand-700 dark:border-gray-700 dark:text-gray-100 dark:hover:border-brand-500 dark:hover:text-brand-300;
+  }
+  .btn-danger {
+    @apply btn bg-red-600 text-white hover:bg-red-700;
+  }
+  .icon-btn {
+    @apply inline-flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 transition duration-150 hover:bg-gray-200 hover:text-brand-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 active:scale-95 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 dark:hover:text-white;
+  }
+
+  /* ---- Form controls ------------------------------------------------------ */
   .input {
-    @apply w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900;
+    @apply w-full rounded-xl border border-gray-200 bg-gray-50 px-3.5 py-2.5 text-sm text-gray-900 outline-none transition duration-150 placeholder:text-gray-400 hover:border-gray-300 focus:border-brand-500 focus:bg-white focus:ring-4 focus:ring-brand-500/15 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-950/60 dark:text-gray-100 dark:placeholder:text-gray-500 dark:hover:border-gray-700 dark:focus:border-brand-400 dark:focus:bg-gray-950 dark:focus:ring-brand-400/20;
+  }
+  .label {
+    @apply mb-1.5 block text-sm font-semibold text-gray-700 dark:text-gray-200;
+  }
+
+  /* ---- Small pieces ------------------------------------------------------- */
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:border-brand-300 hover:text-brand-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200 dark:hover:border-brand-700 dark:hover:text-brand-300;
+  }
+  .chip-active {
+    @apply border-brand-600 bg-brand-600 text-white hover:text-white dark:border-brand-500 dark:bg-brand-600 dark:hover:text-white;
+  }
+  .badge {
+    @apply inline-flex min-w-5 items-center justify-center rounded-full bg-accent-500 px-1.5 text-[11px] font-bold leading-5 text-white;
+  }
+  .nav-item {
+    @apply flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-gray-600 transition duration-150 hover:bg-gray-200/60 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-800/70 dark:hover:text-white;
+  }
+  .nav-item-active {
+    @apply bg-brand-600 text-white shadow-glow hover:bg-brand-600 hover:text-white dark:hover:bg-brand-600;
+  }
+  .section-title {
+    @apply text-base font-bold tracking-tight text-gray-900 dark:text-white;
+  }
+  .text-gradient {
+    @apply bg-tara-gradient bg-clip-text text-transparent;
+  }
+  .skeleton {
+    @apply relative overflow-hidden rounded-lg bg-gray-200 dark:bg-gray-800;
+  }
+  .skeleton::after {
+    content: "";
+    @apply absolute inset-0 -translate-x-full animate-[shimmer_1.4s_infinite] bg-gradient-to-r from-transparent via-white/50 to-transparent dark:via-white/5;
+  }
+  [dir="rtl"] .skeleton::after {
+    @apply translate-x-full animate-[shimmer-rtl_1.4s_infinite];
+  }
+  /* Story-style ring around an avatar. */
+  .avatar-ring {
+    @apply rounded-full bg-tara-gradient p-[2px];
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+@keyframes shimmer-rtl {
+  100% {
+    transform: translateX(-100%);
   }
 }

@@ -55,7 +55,7 @@ const text = computed(() => {
   >
     <span class="relative mt-0.5 shrink-0">
       <UserAvatar v-if="notification.actor_id" :name="actorName" :media-id="directory.avatarOf(notification.actor_id)" :size="40" />
-      <span v-else class="flex h-10 w-10 items-center justify-center rounded-full bg-brand-100 text-brand-600 dark:bg-brand-900/50">
+      <span v-else class="flex h-10 w-10 items-center justify-center rounded-full bg-brand-100 text-brand-600 dark:bg-brand-900/50 dark:text-brand-300">
         <component :is="icon" class="h-5 w-5" />
       </span>
       <span
@@ -67,7 +67,7 @@ const text = computed(() => {
     </span>
     <span class="min-w-0 flex-1">
       <span class="block text-sm" dir="auto">{{ text }}</span>
-      <time class="text-xs text-gray-400">{{ relativeTime(notification.created_at) }}</time>
+      <time class="text-xs text-gray-500 dark:text-gray-400">{{ relativeTime(notification.created_at) }}</time>
     </span>
     <span v-if="!notification.read_at" class="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-brand-500" />
   </button>

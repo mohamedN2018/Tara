@@ -21,11 +21,11 @@ const author = computed(() => (props.post ? directory.label(props.post.author_id
 
 <template>
   <div class="mt-3 overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700" data-testid="shared-post">
-    <p v-if="!post" class="p-3 text-sm text-gray-500">{{ t("post.sharedUnavailable") }}</p>
+    <p v-if="!post" class="p-3 text-sm text-gray-500 dark:text-gray-400">{{ t("post.sharedUnavailable") }}</p>
     <template v-else>
       <img v-if="images.length" :src="images[0]" class="max-h-72 w-full object-cover" loading="lazy" :alt="t('post.imageAlt', { n: 1, name: author })" />
       <div class="p-3">
-        <RouterLink :to="`/posts/${post.id}`" class="flex items-center gap-2 text-xs text-gray-500 hover:underline">
+        <RouterLink :to="`/posts/${post.id}`" class="flex items-center gap-2 text-xs text-gray-500 hover:underline dark:text-gray-400">
           <UserAvatar :name="author" :media-id="directory.avatarOf(post.author_id)" :size="24" />
           <span class="font-semibold text-gray-700 dark:text-gray-200" dir="auto">{{ author }}</span>
           <span aria-hidden="true">·</span>

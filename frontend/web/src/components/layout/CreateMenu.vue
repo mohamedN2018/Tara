@@ -25,8 +25,8 @@ function newListing() {
 <template>
   <div class="relative">
     <button
-      class="rounded-full bg-gray-100 p-2 text-gray-700 transition hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
-      :class="open ? 'bg-brand-50 text-brand-600 dark:bg-brand-950/40' : ''"
+      class="icon-btn"
+      :class="open ? 'bg-brand-50 text-brand-600 dark:bg-brand-950/40 dark:text-brand-300' : ''"
       :aria-label="t('nav.create')"
       aria-haspopup="menu"
       :aria-expanded="open"
@@ -37,14 +37,14 @@ function newListing() {
 
     <template v-if="open">
       <div class="fixed inset-0 z-40" @click="open = false" />
-      <div class="card absolute end-0 z-50 mt-2 w-56 p-1.5" role="menu">
+      <div class="popover absolute end-0 z-50 mt-2 w-56 p-1.5" role="menu">
         <h3 class="px-2 pb-1 text-sm font-bold">{{ t("create.menu") }}</h3>
         <button
           class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-start text-sm transition hover:bg-gray-100 dark:hover:bg-gray-800"
           role="menuitem"
           @click="newPost"
         >
-          <span class="flex h-9 w-9 items-center justify-center rounded-full bg-brand-50 text-brand-600 dark:bg-brand-950/40">
+          <span class="flex h-9 w-9 items-center justify-center rounded-full bg-brand-50 text-brand-600 dark:bg-brand-950/40 dark:text-brand-300">
             <PenSquare class="h-4 w-4" />
           </span>
           {{ t("create.post") }}
@@ -54,7 +54,7 @@ function newListing() {
           role="menuitem"
           @click="newListing"
         >
-          <span class="flex h-9 w-9 items-center justify-center rounded-full bg-brand-50 text-brand-600 dark:bg-brand-950/40">
+          <span class="flex h-9 w-9 items-center justify-center rounded-full bg-brand-50 text-brand-600 dark:bg-brand-950/40 dark:text-brand-300">
             <Store class="h-4 w-4" />
           </span>
           {{ t("create.listing") }}

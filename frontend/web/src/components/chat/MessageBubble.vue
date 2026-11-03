@@ -61,7 +61,7 @@ function preview(m: Message): string {
     <template v-if="mine">
     <div class="relative flex items-center opacity-0 transition focus-within:opacity-100 group-hover:opacity-100" :class="{ 'opacity-100': pickerOpen }">
       <button
-        class="rounded-full p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+        class="rounded-full p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-400"
         :aria-label="t('messages.reply')"
         :title="t('messages.reply')"
         @click="$emit('reply', message)"
@@ -69,7 +69,7 @@ function preview(m: Message): string {
         <Reply class="h-4 w-4" />
       </button>
       <button
-        class="rounded-full p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+        class="rounded-full p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-400"
         :aria-label="t('messages.react')"
         :title="t('messages.react')"
         :aria-expanded="pickerOpen"
@@ -79,7 +79,7 @@ function preview(m: Message): string {
       </button>
       <button
         v-if="canPin"
-        class="rounded-full p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+        class="rounded-full p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-400"
         :aria-label="pinned ? t('messages.unpin') : t('messages.pin')"
         :title="pinned ? t('messages.unpin') : t('messages.pin')"
         @click="$emit('pin', message, !pinned)"
@@ -108,7 +108,7 @@ function preview(m: Message): string {
     </template>
 
     <div class="flex max-w-[75%] flex-col" :class="mine ? 'items-end' : 'items-start'">
-      <span v-if="showSender && !mine" class="mb-0.5 px-1 text-[11px] font-medium text-gray-500" dir="auto">{{ senderName }}</span>
+      <span v-if="showSender && !mine" class="mb-0.5 px-1 text-[11px] font-medium text-gray-500 dark:text-gray-400" dir="auto">{{ senderName }}</span>
     <div
       class="max-w-full overflow-hidden rounded-2xl text-sm"
       :class="
@@ -158,7 +158,7 @@ function preview(m: Message): string {
     <template v-if="!mine">
     <div class="relative flex items-center opacity-0 transition focus-within:opacity-100 group-hover:opacity-100" :class="{ 'opacity-100': pickerOpen }">
       <button
-        class="rounded-full p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+        class="rounded-full p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-400"
         :aria-label="t('messages.reply')"
         :title="t('messages.reply')"
         @click="$emit('reply', message)"
@@ -166,7 +166,7 @@ function preview(m: Message): string {
         <Reply class="h-4 w-4" />
       </button>
       <button
-        class="rounded-full p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+        class="rounded-full p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-400"
         :aria-label="t('messages.react')"
         :title="t('messages.react')"
         :aria-expanded="pickerOpen"
@@ -176,7 +176,7 @@ function preview(m: Message): string {
       </button>
       <button
         v-if="canPin"
-        class="rounded-full p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+        class="rounded-full p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-400"
         :aria-label="pinned ? t('messages.unpin') : t('messages.pin')"
         :title="pinned ? t('messages.unpin') : t('messages.pin')"
         @click="$emit('pin', message, !pinned)"

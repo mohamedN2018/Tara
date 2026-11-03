@@ -69,10 +69,13 @@ onBeforeUnmount(() => {
     <!-- counts row (hidden when everything is zero) -->
     <div
       v-if="reactionCount || commentCount || shareCount"
-      class="flex items-center justify-between px-1 py-1 text-xs text-gray-500"
+      class="flex items-center justify-between px-1 py-1 text-xs text-gray-500 dark:text-gray-400"
     >
-      <span v-if="reactionCount" class="inline-flex items-center gap-1">
-        <span class="text-sm leading-none" aria-hidden="true">{{ summaryEmoji }}</span>
+      <span v-if="reactionCount" class="inline-flex items-center gap-1.5">
+        <span
+          class="flex h-5 w-5 items-center justify-center rounded-full bg-brand-50 text-[11px] leading-none ring-2 ring-white dark:bg-brand-950 dark:ring-gray-900"
+          aria-hidden="true"
+        >{{ summaryEmoji }}</span>
         <span :aria-label="t('post.reactionsCount', reactionCount)">{{ reactionCount }}</span>
       </span>
       <span v-else aria-hidden="true" />
@@ -91,7 +94,7 @@ onBeforeUnmount(() => {
         </template>
         <div
           v-if="pickerOpen"
-          class="absolute bottom-full start-0 z-50 mb-2 flex items-center gap-1 rounded-full border border-gray-100 bg-white px-2 py-1.5 shadow-lg dark:border-gray-700 dark:bg-gray-800"
+          class="absolute bottom-full start-0 z-50 mb-2 flex animate-pop-in items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-2 shadow-pop dark:border-gray-700 dark:bg-gray-800"
           @mouseenter="cancelClose"
           @mouseleave="closeSoon"
         >

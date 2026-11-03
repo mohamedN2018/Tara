@@ -72,7 +72,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
+  <div class="fixed inset-0 z-50 flex items-end justify-center bg-gray-950/60 backdrop-blur-sm p-0 sm:items-center sm:p-4">
     <div class="fixed inset-0" @click="emit('close')" />
     <div
       ref="dialog"
@@ -80,7 +80,7 @@ onMounted(async () => {
       aria-modal="true"
       aria-labelledby="group-dialog-title"
       tabindex="-1"
-      class="card relative z-10 max-h-[92vh] w-full overflow-y-auto rounded-b-none rounded-t-2xl p-4 sm:max-w-md sm:rounded-2xl sm:p-5"
+      class="card relative z-10 animate-pop-in shadow-pop max-h-[92vh] w-full overflow-y-auto rounded-b-none rounded-t-2xl p-4 sm:max-w-md sm:rounded-2xl sm:p-5"
     >
       <div class="mb-4 flex items-center justify-between">
         <h2 id="group-dialog-title" class="text-lg font-bold">
@@ -99,7 +99,7 @@ onMounted(async () => {
 
         <fieldset>
           <legend class="mb-1 text-sm font-medium">{{ t("messages.chooseFriends") }}</legend>
-          <p v-if="loading" class="text-sm text-gray-400">{{ t("states.loading") }}</p>
+          <p v-if="loading" class="text-sm text-gray-500 dark:text-gray-400">{{ t("states.loading") }}</p>
           <EmptyState v-else-if="!candidates.length">{{ t("messages.noFriendsToAdd") }}</EmptyState>
           <ul v-else class="max-h-64 space-y-1 overflow-y-auto">
             <li v-for="id in candidates" :key="id">

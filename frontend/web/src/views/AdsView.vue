@@ -81,7 +81,7 @@ onMounted(load);
             <input id="campaign-currency" v-model="form.currency" class="input" dir="ltr" maxlength="3" required />
           </div>
         </div>
-        <p class="text-xs text-gray-500">{{ t("ads.noBilling") }}</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400">{{ t("ads.noBilling") }}</p>
         <p v-if="formError" class="text-sm text-red-500">{{ formError }}</p>
         <div class="flex justify-end gap-2">
           <button type="button" class="btn-ghost" @click="creating = false">{{ t("feed.cancel") }}</button>
@@ -95,10 +95,10 @@ onMounted(load);
       <ul v-else class="space-y-2">
         <li v-for="c in campaigns" :key="c.id">
           <RouterLink :to="{ name: 'ad-campaign', params: { id: c.id } }" class="card flex items-center gap-3 p-4 transition hover:shadow-sm">
-            <Megaphone class="h-5 w-5 shrink-0 text-brand-600" />
+            <Megaphone class="h-5 w-5 shrink-0 text-brand-600 dark:text-brand-300" />
             <span class="min-w-0 flex-1">
               <span class="block truncate font-medium" dir="auto">{{ c.name }}</span>
-              <span class="block text-xs text-gray-500" dir="ltr">{{ c.spent }} / {{ c.budget }} {{ c.currency }}</span>
+              <span class="block text-xs text-gray-500 dark:text-gray-400" dir="ltr">{{ c.spent }} / {{ c.budget }} {{ c.currency }}</span>
             </span>
             <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs dark:bg-gray-800">{{ t(`ads.status.${c.status}`) }}</span>
           </RouterLink>

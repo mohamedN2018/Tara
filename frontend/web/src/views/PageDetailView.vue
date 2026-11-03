@@ -128,24 +128,24 @@ watch(() => route.params.handle, (handle) => handle && load(), { immediate: true
   <AppShell>
     <div class="mx-auto w-full max-w-[720px] space-y-4">
       <LoadingSkeleton v-if="loading" :rows="3" />
-      <p v-else-if="notFound" class="card p-6 text-center text-sm text-gray-500">{{ t("pages.notFound") }}</p>
+      <p v-else-if="notFound" class="card p-6 text-center text-sm text-gray-500 dark:text-gray-400">{{ t("pages.notFound") }}</p>
       <ErrorState v-else-if="error || !page" @retry="load" />
       <template v-else>
         <section class="card p-5">
           <div class="flex items-start gap-3">
-            <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-950/50">
+            <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600 dark:bg-brand-950/50 dark:text-brand-300">
               <Flag class="h-7 w-7" />
             </span>
             <div class="min-w-0 flex-1">
               <h1 class="truncate text-xl font-bold" dir="auto" data-testid="page-name">{{ page.name }}</h1>
-              <p class="text-sm text-gray-500" dir="ltr">@{{ page.handle }}</p>
-              <p v-if="page.category" class="text-sm text-gray-500" dir="auto">{{ page.category }}</p>
+              <p class="text-sm text-gray-500 dark:text-gray-400" dir="ltr">@{{ page.handle }}</p>
+              <p v-if="page.category" class="text-sm text-gray-500 dark:text-gray-400" dir="auto">{{ page.category }}</p>
               <p v-if="page.status !== 'published'" class="mt-1 text-xs font-medium text-amber-600">{{ t(`pages.status.${page.status}`) }}</p>
             </div>
             <button v-if="canEdit && !editing" class="btn-ghost" @click="editing = true">{{ t("post.edit") }}</button>
           </div>
           <p v-if="page.description && !editing" class="mt-4 whitespace-pre-wrap break-words text-sm" dir="auto">{{ page.description }}</p>
-          <p v-if="page.location && !editing" class="mt-2 flex items-center gap-1 text-sm text-gray-500" dir="auto">
+          <p v-if="page.location && !editing" class="mt-2 flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400" dir="auto">
             <MapPin class="h-4 w-4" /> {{ page.location }}
           </p>
 
@@ -182,7 +182,7 @@ watch(() => route.params.handle, (handle) => handle && load(), { immediate: true
               >
                 <option v-for="r in PAGE_ROLES" :key="r" :value="r">{{ t(`pages.roles.${r}`) }}</option>
               </select>
-              <span v-else class="text-xs text-gray-500">{{ t(`pages.roles.${m.role}`) }}</span>
+              <span v-else class="text-xs text-gray-500 dark:text-gray-400">{{ t(`pages.roles.${m.role}`) }}</span>
               <button
                 v-if="m.role !== 'owner' && (canManage || m.account_id === auth.account?.id)"
                 class="rounded-full p-1 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40"

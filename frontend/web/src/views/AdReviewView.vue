@@ -53,12 +53,12 @@ onMounted(load);
       <EmptyState v-else-if="!items.length">{{ t("ads.reviewEmpty") }}</EmptyState>
       <ul v-else class="space-y-3">
         <li v-for="item in items" :key="item.id" class="card p-4" data-testid="review-item">
-          <p class="text-xs text-gray-500" dir="auto">{{ item.advertiser_name }} · {{ item.campaign_name }} · {{ t(`ads.placements.${item.placement}`) }}</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400" dir="auto">{{ item.advertiser_name }} · {{ item.campaign_name }} · {{ t(`ads.placements.${item.placement}`) }}</p>
           <h2 class="mt-1 font-semibold" dir="auto">{{ item.headline }}</h2>
           <p v-if="item.body" class="mt-1 whitespace-pre-wrap break-words text-sm" dir="auto">{{ item.body }}</p>
-          <p class="mt-1 text-xs text-gray-500" dir="auto">{{ item.cta }}</p>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400" dir="auto">{{ item.cta }}</p>
           <!-- Shown as text: a reviewer shouldn't have to open an unreviewed link. -->
-          <p v-if="item.link_url" class="mt-1 break-all text-xs text-gray-500" dir="ltr">{{ item.link_url }}</p>
+          <p v-if="item.link_url" class="mt-1 break-all text-xs text-gray-500 dark:text-gray-400" dir="ltr">{{ item.link_url }}</p>
           <div class="mt-3 flex justify-end gap-2">
             <button class="btn-ghost text-sm" :disabled="acting === item.id" @click="decide(item, 'rejected')">{{ t("ads.reject") }}</button>
             <button class="btn-primary text-sm" :disabled="acting === item.id" @click="decide(item, 'approved')">{{ t("ads.approve") }}</button>

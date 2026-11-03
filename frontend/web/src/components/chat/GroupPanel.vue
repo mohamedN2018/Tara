@@ -51,7 +51,7 @@ const setRole = (id: string, role: string) =>
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
+  <div class="fixed inset-0 z-50 flex items-end justify-center bg-gray-950/60 backdrop-blur-sm p-0 sm:items-center sm:p-4">
     <div class="fixed inset-0" @click="emit('close')" />
     <div
       ref="dialog"
@@ -59,7 +59,7 @@ const setRole = (id: string, role: string) =>
       aria-modal="true"
       aria-labelledby="group-panel-title"
       tabindex="-1"
-      class="card relative z-10 max-h-[92vh] w-full overflow-y-auto rounded-b-none rounded-t-2xl p-4 sm:max-w-md sm:rounded-2xl sm:p-5"
+      class="card relative z-10 animate-pop-in shadow-pop max-h-[92vh] w-full overflow-y-auto rounded-b-none rounded-t-2xl p-4 sm:max-w-md sm:rounded-2xl sm:p-5"
     >
       <div class="mb-4 flex items-center justify-between">
         <h2 id="group-panel-title" class="text-lg font-bold">{{ t("messages.groupInfo") }}</h2>

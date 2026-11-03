@@ -98,7 +98,7 @@ const show = (section: Tab) => tab.value === "all" || tab.value === section;
         v-for="tb in TABS"
         :key="tb"
         class="flex-1 whitespace-nowrap rounded-lg px-3 py-1.5 font-medium transition"
-        :class="tab === tb ? 'bg-white text-brand-600 shadow-sm dark:bg-gray-900' : 'text-gray-500'"
+        :class="tab === tb ? 'bg-white text-brand-600 shadow-sm dark:bg-gray-900 dark:text-brand-300' : 'text-gray-500 dark:text-gray-400'"
         @click="tab = tb"
       >
         {{ t(`search.${tb}`) }}
@@ -112,7 +112,7 @@ const show = (section: Tab) => tab.value === "all" || tab.value === section;
         <EmptyState v-if="isEmpty">{{ t("search.noResults", { q: query }) }}</EmptyState>
         <template v-else>
           <section v-if="show('people') && people.length" class="mb-6">
-            <h2 class="mb-2 text-sm font-semibold text-gray-500">{{ t("search.people") }}</h2>
+            <h2 class="mb-2 text-sm font-semibold text-gray-500 dark:text-gray-400">{{ t("search.people") }}</h2>
             <ul class="space-y-2">
               <li v-for="p in people" :key="p.id">
                 <RouterLink
@@ -122,7 +122,7 @@ const show = (section: Tab) => tab.value === "all" || tab.value === section;
                   <UserAvatar :name="directory.label(p.id)" :media-id="directory.avatarOf(p.id)" />
                   <span class="min-w-0">
                     <span class="block truncate text-sm font-medium" dir="auto">{{ directory.label(p.id) }}</span>
-                    <span v-if="p.snippet" class="block truncate text-xs text-gray-500" dir="auto">{{ p.snippet }}</span>
+                    <span v-if="p.snippet" class="block truncate text-xs text-gray-500 dark:text-gray-400" dir="auto">{{ p.snippet }}</span>
                   </span>
                 </RouterLink>
               </li>
@@ -130,14 +130,14 @@ const show = (section: Tab) => tab.value === "all" || tab.value === section;
           </section>
 
           <section v-if="show('listings') && listings.length" class="mb-6">
-            <h2 class="mb-2 text-sm font-semibold text-gray-500">{{ t("search.listings") }}</h2>
+            <h2 class="mb-2 text-sm font-semibold text-gray-500 dark:text-gray-400">{{ t("search.listings") }}</h2>
             <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
               <MarketplaceCard v-for="l in listings" :key="l.id" :listing="l" />
             </div>
           </section>
 
           <section v-if="show('posts') && posts.length">
-            <h2 class="mb-2 text-sm font-semibold text-gray-500">{{ t("search.posts") }}</h2>
+            <h2 class="mb-2 text-sm font-semibold text-gray-500 dark:text-gray-400">{{ t("search.posts") }}</h2>
             <div class="space-y-4">
               <PostCard v-for="post in posts" :key="post.id" :post="post" />
             </div>

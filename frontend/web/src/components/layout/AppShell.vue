@@ -30,13 +30,18 @@ onMounted(() => {
 
 <template>
   <div class="min-h-screen bg-gray-100 dark:bg-gray-950">
+    <!-- Soft brand glow behind the chrome (decorative, dark mode only). -->
+    <div
+      aria-hidden="true"
+      class="pointer-events-none fixed inset-x-0 top-0 -z-0 hidden h-80 bg-[radial-gradient(60%_100%_at_50%_0%,rgba(106,0,244,0.16),transparent_70%)] dark:block"
+    />
     <AppNavbar />
 
-    <!-- Mobile left-sidebar drawer -->
+    <!-- Mobile sidebar drawer -->
     <Transition name="fade">
       <div
         v-if="ui.sidebarOpen"
-        class="fixed inset-0 z-40 bg-black/40 lg:hidden"
+        class="fixed inset-0 z-40 bg-gray-950/50 backdrop-blur-sm lg:hidden"
         @click="ui.sidebarOpen = false"
       >
         <aside
@@ -45,7 +50,7 @@ onMounted(() => {
           aria-modal="true"
           :aria-label="t('nav.menu')"
           tabindex="-1"
-          class="h-full w-72 overflow-y-auto bg-gray-50 pt-16 shadow-xl dark:bg-gray-900"
+          class="drawer h-full w-[18rem] overflow-y-auto border-e border-gray-200 bg-gray-50 pt-16 shadow-pop dark:border-gray-800 dark:bg-gray-950"
           @click.stop
         >
           <LeftSidebar />
@@ -53,22 +58,21 @@ onMounted(() => {
       </div>
     </Transition>
 
-    <!-- Full-width: side rails are pinned to the screen edges (no centered container). -->
-    <div class="flex w-full gap-4 px-2 pt-16 sm:px-4 xl:px-6">
-      <!-- Left rail (desktop) — fixed on the side -->
-      <aside class="sticky top-16 hidden h-[calc(100vh-4rem)] w-64 shrink-0 overflow-y-auto lg:block xl:w-72">
+    <div class="relative mx-auto flex w-full max-w-[1600px] gap-5 px-2 pt-16 sm:px-4 xl:px-6">
+      <!-- Start rail (desktop) -->
+      <aside class="sticky top-16 hidden h-[calc(100vh-4rem)] w-60 shrink-0 overflow-y-auto pt-3 lg:block xl:w-64">
         <LeftSidebar />
       </aside>
 
       <!-- Center -->
-      <main class="min-w-0 flex-1 pb-24 pt-1 lg:pb-8">
+      <main class="min-w-0 flex-1 pb-28 pt-4 lg:pb-10">
         <slot />
       </main>
 
-      <!-- Right rail (wide desktop) — fixed on the side -->
+      <!-- End rail (wide desktop) -->
       <aside
         v-if="right"
-        class="sticky top-16 hidden h-[calc(100vh-4rem)] w-72 shrink-0 overflow-y-auto xl:block 2xl:w-80"
+        class="sticky top-16 hidden h-[calc(100vh-4rem)] w-80 shrink-0 overflow-y-auto pt-4 xl:block"
       >
         <slot name="right"><RightSidebar /></slot>
       </aside>
@@ -81,10 +85,22 @@ onMounted(() => {
 <style scoped>
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.15s ease;
+  transition: opacity 0.2s ease;
+}
+.fade-enter-active .drawer,
+.fade-leave-active .drawer {
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+.fade-enter-from .drawer,
+.fade-leave-to .drawer {
+  transform: translateX(100%);
+}
+.fade-enter-from .drawer:dir(ltr),
+.fade-leave-to .drawer:dir(ltr) {
+  transform: translateX(-100%);
 }
 </style>

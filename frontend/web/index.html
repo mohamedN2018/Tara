@@ -1,17 +1,22 @@
 <!doctype html>
-<html lang="ar" dir="rtl">
+<html lang="ar" dir="rtl" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tara</title>
-    <meta name="description" content="Tara — a modern social platform." />
-    <meta name="theme-color" content="#2563eb" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Tara — Connect. Share. Belong.</title>
+    <meta name="description" content="Tara — connect, share, and belong. A social network made for you." />
+    <meta name="theme-color" content="#0B0B1F" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#F1F0FB" media="(prefers-color-scheme: light)" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+    <link rel="icon" type="image/svg+xml" href="/icons/tara-mark.svg" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <!-- Applies the saved theme before first paint (external: the CSP forbids inline scripts). -->
+    <script src="/theme-init.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
     />
   </head>

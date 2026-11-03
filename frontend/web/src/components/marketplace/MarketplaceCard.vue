@@ -51,9 +51,9 @@ const inactive = computed(() => props.listing.status !== "active");
       </div>
 
       <div class="p-3">
-        <p class="font-bold text-brand-600">{{ price }}</p>
+        <p class="font-bold text-brand-600 dark:text-brand-300">{{ price }}</p>
         <h3 class="truncate text-sm font-medium" dir="auto">{{ listing.title }}</h3>
-        <p class="mt-1 flex items-center gap-1 text-xs text-gray-500">
+        <p class="mt-1 flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
           <MapPin class="h-3 w-3 shrink-0" />
           <span class="truncate" dir="auto">{{ listing.location || "—" }}</span>
         </p>
@@ -63,7 +63,7 @@ const inactive = computed(() => props.listing.status !== "active");
     <div class="flex items-center justify-between gap-2 px-3 pb-3">
       <RouterLink
         :to="{ name: 'profile-by-id', params: { id: listing.seller_id } }"
-        class="flex min-w-0 items-center gap-1.5 text-xs text-gray-500 hover:text-brand-600"
+        class="flex min-w-0 items-center gap-1.5 text-xs text-gray-500 hover:text-brand-600 dark:text-gray-400"
         :title="t('market.viewSeller')"
       >
         <UserAvatar :name="directory.label(listing.seller_id)" :media-id="directory.avatarOf(listing.seller_id)" :size="20" />
@@ -71,7 +71,7 @@ const inactive = computed(() => props.listing.status !== "active");
       </RouterLink>
       <span
         v-if="listing.save_count"
-        class="inline-flex shrink-0 items-center gap-1 text-xs text-gray-400"
+        class="inline-flex shrink-0 items-center gap-1 text-xs text-gray-500 dark:text-gray-400"
       >
         <Bookmark class="h-3 w-3" /> {{ listing.save_count }}
       </span>

@@ -52,7 +52,7 @@ onMounted(load);
 <template>
   <section class="mb-6">
     <h2 class="mb-2 flex items-center gap-2 font-semibold">
-      <Flag class="h-5 w-5 text-brand-600" /> {{ t("admin.featureFlags") }}
+      <Flag class="h-5 w-5 text-brand-600 dark:text-brand-300" /> {{ t("admin.featureFlags") }}
     </h2>
     <ErrorState v-if="error" @retry="load" />
     <template v-else>

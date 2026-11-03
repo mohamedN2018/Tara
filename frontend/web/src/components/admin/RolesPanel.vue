@@ -62,9 +62,9 @@ onMounted(load);
 <template>
   <section class="mb-6">
     <h2 class="mb-1 flex items-center gap-2 font-semibold">
-      <KeyRound class="h-5 w-5 text-brand-600" /> {{ t("admin.roles") }}
+      <KeyRound class="h-5 w-5 text-brand-600 dark:text-brand-300" /> {{ t("admin.roles") }}
     </h2>
-    <p class="mb-2 text-xs text-gray-500">{{ t("admin.rolesHint") }}</p>
+    <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">{{ t("admin.rolesHint") }}</p>
     <ErrorState v-if="error" @retry="load" />
     <template v-else>
       <ul class="space-y-2" data-testid="role-holders">
@@ -78,7 +78,7 @@ onMounted(load);
             {{ t(`admin.roleNames.${name}`) }}
             <button
               v-if="removable(holder, name)"
-              class="rounded-full text-gray-400 hover:text-red-500"
+              class="rounded-full text-gray-500 hover:text-red-500 dark:text-gray-400"
               :aria-label="t('admin.revokeRole', { role: t(`admin.roleNames.${name}`), email: holder.email })"
               @click="revoke(holder, name)"
             >

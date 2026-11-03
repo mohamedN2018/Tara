@@ -609,12 +609,12 @@ watch(activeId, (id, prev) => {
                   :title="activeConversation?.muted_until ? t('messages.unmute') : t('messages.mute')"
                   @click="activeConversation?.muted_until ? setMute(0) : (showMuteMenu = !showMuteMenu)"
                 >
-                  <BellOff v-if="activeConversation?.muted_until" class="h-5 w-5 text-brand-600" />
+                  <BellOff v-if="activeConversation?.muted_until" class="h-5 w-5 text-brand-600 dark:text-brand-300" />
                   <Bell v-else class="h-5 w-5" />
                 </button>
                 <template v-if="showMuteMenu">
                   <div class="fixed inset-0 z-40" @click="showMuteMenu = false" />
-                  <div class="card absolute end-0 z-50 mt-1 w-40 p-1" role="menu">
+                  <div class="popover absolute end-0 z-50 mt-1 w-40 p-1" role="menu">
                     <button
                       v-for="option in MUTE_OPTIONS"
                       :key="option.minutes"
@@ -656,10 +656,10 @@ watch(activeId, (id, prev) => {
             <LoadingSkeleton v-if="loadingMessages" :rows="3" />
             <ErrorState v-else-if="messagesError" @retry="loadMessages(activeId)" />
             <template v-else>
-              <p v-if="loadingOlder" class="py-1 text-center text-xs text-gray-400">{{ t("states.loading") }}</p>
+              <p v-if="loadingOlder" class="py-1 text-center text-xs text-gray-500 dark:text-gray-400">{{ t("states.loading") }}</p>
               <template v-for="row in rows" :key="row.id">
                 <div v-if="row.kind === 'divider'" class="my-3 text-center">
-                  <span class="rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] text-gray-500 dark:bg-gray-800">
+                  <span class="rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] text-gray-500 dark:bg-gray-800 dark:text-gray-400">
                     {{ row.label }}
                   </span>
                 </div>
@@ -681,7 +681,7 @@ watch(activeId, (id, prev) => {
                   />
                   <p
                     v-if="row.message.id === lastMineId && peerSeen"
-                    class="pe-1 pt-0.5 text-end text-[10px] text-gray-400"
+                    class="pe-1 pt-0.5 text-end text-[10px] text-gray-500 dark:text-gray-400"
                   >
                     ✓ {{ t("messages.seen") }}
                   </p>

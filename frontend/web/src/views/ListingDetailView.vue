@@ -157,10 +157,10 @@ onMounted(load);
           </div>
 
           <div class="p-4">
-            <p class="text-2xl font-bold text-brand-600">{{ price }}</p>
+            <p class="text-2xl font-bold text-brand-600 dark:text-brand-300">{{ price }}</p>
             <h1 class="mt-1 text-lg font-semibold" dir="auto">{{ listing.title }}</h1>
 
-            <div class="mt-2 flex flex-wrap items-center gap-2 text-sm text-gray-500">
+            <div class="mt-2 flex flex-wrap items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
               <span class="inline-flex items-center gap-1">
                 <MapPin class="h-4 w-4" /> <span dir="auto">{{ listing.location || "—" }}</span>
               </span>
@@ -170,8 +170,8 @@ onMounted(load);
               <span v-if="listing.category" class="rounded-full bg-gray-100 px-2 py-0.5 text-xs dark:bg-gray-800">
                 {{ listing.category.name }}
               </span>
-              <span class="text-xs text-gray-400">· {{ relativeTime(listing.created_at) }}</span>
-              <span v-if="listing.save_count" class="inline-flex items-center gap-1 text-xs text-gray-400">
+              <span class="text-xs text-gray-500 dark:text-gray-400">· {{ relativeTime(listing.created_at) }}</span>
+              <span v-if="listing.save_count" class="inline-flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
                 · <Bookmark class="h-3 w-3" /> {{ t("market.saves", listing.save_count) }}
               </span>
             </div>
@@ -185,15 +185,15 @@ onMounted(load);
             >
               <UserAvatar :name="directory.label(listing.seller_id)" :media-id="directory.avatarOf(listing.seller_id)" :size="40" />
               <div class="min-w-0">
-                <p class="text-xs text-gray-400">{{ t("market.listedBy") }}</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ t("market.listedBy") }}</p>
                 <p class="truncate text-sm font-semibold" dir="auto">{{ directory.label(listing.seller_id) }}</p>
               </div>
-              <span class="ms-auto text-xs font-medium text-brand-600">{{ t("market.viewSeller") }}</span>
+              <span class="ms-auto text-xs font-medium text-brand-600 dark:text-brand-300">{{ t("market.viewSeller") }}</span>
             </RouterLink>
 
             <!-- Actions -->
             <div v-if="isOwner" class="mt-5 space-y-2">
-              <p class="text-xs font-medium text-gray-400">{{ t("market.yourListing") }}</p>
+              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t("market.yourListing") }}</p>
               <div class="flex flex-wrap gap-2">
                 <button
                   v-if="listing.status === 'active'"
@@ -226,7 +226,7 @@ onMounted(load);
               <button class="btn-primary flex-1" :disabled="busy" @click="contact">
                 <MessageCircle class="h-4 w-4" /> {{ t("market.contactSeller") }}
               </button>
-              <button class="btn-ghost" :class="saved ? 'text-brand-600' : ''" @click="toggleSave">
+              <button class="btn-ghost" :class="saved ? 'text-brand-600 dark:text-brand-300' : ''" @click="toggleSave">
                 <Bookmark class="h-4 w-4" :fill="saved ? 'currentColor' : 'none'" />
                 {{ saved ? t("market.saved") : t("market.save") }}
               </button>
@@ -235,7 +235,7 @@ onMounted(load);
             <!-- Report -->
             <div v-if="!isOwner" class="mt-3">
               <button
-                class="inline-flex items-center gap-1 text-xs text-gray-400 hover:text-red-500"
+                class="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-red-500 dark:text-gray-400"
                 @click="showReport = !showReport"
               >
                 <Flag class="h-3 w-3" /> {{ t("market.report") }}

@@ -196,7 +196,7 @@ async function save() {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4">
+  <div class="fixed inset-0 z-50 flex items-end justify-center bg-gray-950/60 backdrop-blur-sm sm:items-center sm:p-4">
     <div class="fixed inset-0" @click="emit('close')" />
     <div
       ref="dialog"
@@ -204,7 +204,7 @@ async function save() {
       aria-modal="true"
       aria-labelledby="profile-dialog-title"
       tabindex="-1"
-      class="card relative z-10 max-h-[94vh] w-full overflow-y-auto rounded-b-none rounded-t-2xl p-0 sm:max-w-lg sm:rounded-2xl"
+      class="card relative z-10 animate-pop-in shadow-pop max-h-[94vh] w-full overflow-y-auto rounded-b-none rounded-t-2xl p-0 sm:max-w-lg sm:rounded-2xl"
     >
       <div class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-100 bg-white/95 px-4 py-3 backdrop-blur dark:border-gray-800 dark:bg-gray-900/95">
         <h2 id="profile-dialog-title" class="text-lg font-bold">{{ t("profile.editProfileTitle") }}</h2>
@@ -217,9 +217,9 @@ async function save() {
         <!-- Cover + avatar -->
         <div>
           <p class="mb-1 text-sm font-medium">{{ t("profile.coverPhoto") }}</p>
-          <div class="relative h-28 overflow-hidden rounded-xl bg-gradient-to-r from-brand-100 to-brand-50 dark:from-brand-900/40 dark:to-gray-800">
+          <div class="relative h-28 overflow-hidden rounded-xl bg-tara-gradient">
             <img v-if="coverUrl" :src="coverUrl" class="h-full w-full object-cover" :alt="t('profile.coverPhoto')" />
-            <label class="absolute end-2 top-2 flex cursor-pointer items-center gap-1 rounded-full bg-black/55 px-2.5 py-1 text-xs font-medium text-white focus-within:ring-2 focus-within:ring-brand-300">
+            <label class="absolute end-2 top-2 flex cursor-pointer items-center gap-1 rounded-full bg-black/55 px-2.5 py-1 text-xs font-medium text-white focus-within:ring-2 focus-within:ring-brand-400">
               <Camera class="h-3.5 w-3.5" /> {{ uploadingCover ? t("profile.uploading") : t("profile.change") }}
               <input type="file" accept="image/*" class="sr-only" :aria-label="t('profile.coverChange')" @change="pickCover" />
             </label>
@@ -229,13 +229,13 @@ async function save() {
               <span class="block rounded-full border-4 border-white dark:border-gray-900">
                 <UserAvatar :name="form.display_name || '?'" :media-id="avatarId" :size="72" :key="avatarUrl || ''" />
               </span>
-              <label class="absolute -end-1 -bottom-1 flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-brand-600 text-white shadow focus-within:ring-2 focus-within:ring-brand-300">
+              <label class="absolute -end-1 -bottom-1 flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-brand-600 text-white shadow focus-within:ring-2 focus-within:ring-brand-400">
                 <Camera class="h-3.5 w-3.5" />
                 <input type="file" accept="image/*" class="sr-only" :aria-label="t('profile.avatarChange')" @change="pickAvatar" />
               </label>
             </div>
           </div>
-          <p v-if="uploadingAvatar" class="mt-1 text-xs text-gray-400">{{ t("profile.uploading") }}</p>
+          <p v-if="uploadingAvatar" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t("profile.uploading") }}</p>
         </div>
 
         <!-- Core fields -->
@@ -273,7 +273,7 @@ async function save() {
         <!-- Field privacy -->
         <section v-if="fieldPrivacy" data-testid="field-privacy">
           <h3 class="mb-1 text-sm font-bold">{{ t("profile.fieldPrivacy") }}</h3>
-          <p class="mb-2 text-xs text-gray-500">{{ t("profile.fieldPrivacyHint") }}</p>
+          <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">{{ t("profile.fieldPrivacyHint") }}</p>
           <div class="space-y-1.5">
             <label v-for="item in fieldPrivacy" :key="item.field_key" class="flex items-center justify-between gap-3 text-sm">
               <span>{{ t(`profile.privacyFields.${item.field_key}`) }}</span>
@@ -293,8 +293,8 @@ async function save() {
           <h3 class="mb-2 text-sm font-bold">{{ t("profile.links") }}</h3>
           <ul class="mb-2 space-y-1">
             <li v-for="l in links" :key="l.id" class="flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-1.5 text-sm dark:bg-gray-800/60">
-              <span class="min-w-0 flex-1 truncate">{{ l.label }} · <span class="text-gray-400">{{ l.url }}</span></span>
-              <button class="text-gray-400 hover:text-red-500" :aria-label="t('profile.remove')" @click="dropLink(l.id)"><Trash2 class="h-4 w-4" /></button>
+              <span class="min-w-0 flex-1 truncate">{{ l.label }} · <span class="text-gray-500 dark:text-gray-400">{{ l.url }}</span></span>
+              <button class="text-gray-500 hover:text-red-500 dark:text-gray-400" :aria-label="t('profile.remove')" @click="dropLink(l.id)"><Trash2 class="h-4 w-4" /></button>
             </li>
           </ul>
           <div class="flex gap-2">
@@ -311,9 +311,9 @@ async function save() {
             <li v-for="w in work" :key="w.id" class="flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-1.5 text-sm dark:bg-gray-800/60">
               <span class="min-w-0 flex-1 truncate">
                 {{ w.title || "—" }}<span v-if="w.company"> · {{ w.company }}</span>
-                <span v-if="w.is_current" class="text-xs text-brand-600"> ({{ t("profile.present") }})</span>
+                <span v-if="w.is_current" class="text-xs text-brand-600 dark:text-brand-300"> ({{ t("profile.present") }})</span>
               </span>
-              <button class="text-gray-400 hover:text-red-500" :aria-label="t('profile.remove')" @click="dropWork(w.id)"><Trash2 class="h-4 w-4" /></button>
+              <button class="text-gray-500 hover:text-red-500 dark:text-gray-400" :aria-label="t('profile.remove')" @click="dropWork(w.id)"><Trash2 class="h-4 w-4" /></button>
             </li>
           </ul>
           <div class="space-y-2">
@@ -335,9 +335,9 @@ async function save() {
             <li v-for="e in education" :key="e.id" class="flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-1.5 text-sm dark:bg-gray-800/60">
               <span class="min-w-0 flex-1 truncate">
                 {{ e.school }}<span v-if="e.field"> · {{ e.field }}</span>
-                <span v-if="e.start_year || e.end_year" class="text-xs text-gray-400"> ({{ e.start_year || "?" }}–{{ e.end_year || t("profile.present") }})</span>
+                <span v-if="e.start_year || e.end_year" class="text-xs text-gray-500 dark:text-gray-400"> ({{ e.start_year || "?" }}–{{ e.end_year || t("profile.present") }})</span>
               </span>
-              <button class="text-gray-400 hover:text-red-500" :aria-label="t('profile.remove')" @click="dropEducation(e.id)"><Trash2 class="h-4 w-4" /></button>
+              <button class="text-gray-500 hover:text-red-500 dark:text-gray-400" :aria-label="t('profile.remove')" @click="dropEducation(e.id)"><Trash2 class="h-4 w-4" /></button>
             </li>
           </ul>
           <div class="space-y-2">

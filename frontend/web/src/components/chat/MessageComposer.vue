@@ -90,9 +90,9 @@ defineExpose({ restore });
       <CornerUpLeft class="h-4 w-4 shrink-0 text-brand-500" />
       <span class="min-w-0 flex-1">
         <span class="font-semibold">{{ t("messages.replyingTo", { name: replyingToName }) }}</span>
-        <span class="block truncate text-gray-500" dir="auto">{{ replyingTo.body || `📷 ${t("messages.photo")}` }}</span>
+        <span class="block truncate text-gray-500 dark:text-gray-400" dir="auto">{{ replyingTo.body || `📷 ${t("messages.photo")}` }}</span>
       </span>
-      <button class="rounded-full p-0.5 text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700" :aria-label="t('messages.cancelReply')" @click="emit('cancelReply')">
+      <button class="rounded-full p-0.5 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 dark:text-gray-400" :aria-label="t('messages.cancelReply')" @click="emit('cancelReply')">
         <X class="h-4 w-4" />
       </button>
     </div>
@@ -125,7 +125,7 @@ defineExpose({ restore });
 
     <form v-else class="flex items-center gap-2" @submit.prevent="submit">
       <label
-        class="shrink-0 cursor-pointer rounded-full p-2 text-gray-500 transition focus-within:ring-2 focus-within:ring-brand-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+        class="shrink-0 cursor-pointer rounded-full p-2 text-gray-500 transition focus-within:ring-2 focus-within:ring-brand-400 hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-400"
         :class="uploading ? 'opacity-50' : ''"
         :title="t('messages.attachImage')"
       >
@@ -143,7 +143,7 @@ defineExpose({ restore });
       <button
         v-if="voice.supported && !body.trim() && !mediaId"
         type="button"
-        class="shrink-0 rounded-full p-2 text-gray-500 transition hover:bg-gray-100 dark:hover:bg-gray-800"
+        class="shrink-0 rounded-full p-2 text-gray-500 transition hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-400"
         :aria-label="t('messages.recordVoice')"
         :title="t('messages.recordVoice')"
         :disabled="uploading"

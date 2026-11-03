@@ -1,5 +1,7 @@
 import {
+  Bell,
   Bookmark,
+  Flag,
   Home,
   type LucideIcon,
   MessageCircle,
@@ -14,15 +16,19 @@ export interface NavItem {
   route: string;
   labelKey: string;
   icon: LucideIcon;
+  /** Which live counter, if any, shows as a badge. */
+  badge?: "notifications";
 }
 
-/** Primary navigation, shared by the sidebar and mobile bar. */
+/** Primary navigation for the sidebar (and the mobile drawer). */
 export const navItems: NavItem[] = [
   { name: "home", route: "/home", labelKey: "nav.home", icon: Home },
   { name: "friends", route: "/friends", labelKey: "nav.friends", icon: Users },
   { name: "messages", route: "/messages", labelKey: "nav.messages", icon: MessageCircle },
+  { name: "notifications", route: "/notifications", labelKey: "nav.notifications", icon: Bell, badge: "notifications" },
+  { name: "search", route: "/search", labelKey: "nav.explore", icon: Search },
+  { name: "pages", route: "/pages", labelKey: "nav.pages", icon: Flag },
   { name: "marketplace", route: "/marketplace", labelKey: "nav.marketplace", icon: ShoppingBag },
   { name: "saved", route: "/saved", labelKey: "nav.saved", icon: Bookmark },
-  { name: "search", route: "/search", labelKey: "nav.search", icon: Search },
   { name: "settings", route: "/settings", labelKey: "nav.settings", icon: Settings },
 ];

@@ -103,7 +103,7 @@ onMounted(load);
           v-for="tb in (['browse', 'mine'] as Tab[])"
           :key="tb"
           class="flex-1 rounded-lg py-1.5 font-medium transition"
-          :class="tab === tb ? 'bg-white text-brand-600 shadow-sm dark:bg-gray-900' : 'text-gray-500'"
+          :class="tab === tb ? 'bg-white text-brand-600 shadow-sm dark:bg-gray-900 dark:text-brand-300' : 'text-gray-500 dark:text-gray-400'"
           @click="tab = tb"
         >
           {{ t(`pages.${tb}`) }}
@@ -121,11 +121,11 @@ onMounted(load);
         <li v-for="p in pages" :key="p.id">
           <RouterLink :to="{ name: 'page', params: { handle: p.handle } }" class="card block h-full p-4 transition hover:shadow-sm">
             <span class="flex items-center gap-2">
-              <Flag class="h-4 w-4 shrink-0 text-brand-600" />
+              <Flag class="h-4 w-4 shrink-0 text-brand-600 dark:text-brand-300" />
               <span class="truncate font-semibold" dir="auto">{{ p.name }}</span>
             </span>
-            <span class="mt-0.5 block text-xs text-gray-500" dir="ltr">@{{ p.handle }}</span>
-            <span v-if="p.category" class="mt-1 block text-xs text-gray-500" dir="auto">{{ p.category }}</span>
+            <span class="mt-0.5 block text-xs text-gray-500 dark:text-gray-400" dir="ltr">@{{ p.handle }}</span>
+            <span v-if="p.category" class="mt-1 block text-xs text-gray-500 dark:text-gray-400" dir="auto">{{ p.category }}</span>
             <span v-if="p.my_role" class="mt-1 inline-block rounded-full bg-brand-50 px-2 py-0.5 text-xs text-brand-700 dark:bg-brand-950 dark:text-brand-300">
               {{ t(`pages.roles.${p.my_role}`) }}
             </span>
@@ -137,7 +137,7 @@ onMounted(load);
       </button>
     </div>
 
-    <div v-if="showCreate" class="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
+    <div v-if="showCreate" class="fixed inset-0 z-50 flex items-end justify-center bg-gray-950/60 backdrop-blur-sm p-0 sm:items-center sm:p-4">
       <div class="fixed inset-0" @click="showCreate = false" />
       <div
         ref="dialog"
@@ -145,7 +145,7 @@ onMounted(load);
         aria-modal="true"
         aria-labelledby="page-dialog-title"
         tabindex="-1"
-        class="card relative z-10 max-h-[92vh] w-full overflow-y-auto rounded-b-none rounded-t-2xl p-4 sm:max-w-md sm:rounded-2xl sm:p-5"
+        class="card relative z-10 animate-pop-in shadow-pop max-h-[92vh] w-full overflow-y-auto rounded-b-none rounded-t-2xl p-4 sm:max-w-md sm:rounded-2xl sm:p-5"
       >
         <div class="mb-4 flex items-center justify-between">
           <h2 id="page-dialog-title" class="text-lg font-bold">{{ t("pages.create") }}</h2>

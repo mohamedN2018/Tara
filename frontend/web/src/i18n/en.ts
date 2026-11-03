@@ -1,6 +1,8 @@
 export default {
-  app: { name: "Tara" },
+  app: { name: "Tara", tagline: "Connect. Share. Belong.", promise: "More than a social network… a place to belong." },
   nav: {
+    explore: "Explore",
+    createPost: "Create post",
     ads: "Ads",
     pages: "Pages",
     home: "Home",
@@ -579,5 +581,22 @@ export default {
   landing: {
     tagline: "Connect, share, and discover with Tara.",
     getStarted: "Get started",
+    headline: "Your place among",
+    headlineAccent: "your people.",
+    lead: "Share your moments, chat with friends in real time, and find pages and communities like you — in a space that respects your privacy.",
+    haveAccount: "I have an account",
+    features: {
+      connectTitle: "Connect",
+      connectBody: "Friends, followers and requests in one place.",
+      shareTitle: "Share",
+      shareBody: "Posts, photos and polls for the audience you choose.",
+      belongTitle: "Belong",
+      belongBody: "Pages, group chats and a marketplace for your community.",
+      chatTitle: "Real-time chat",
+      chatBody: "Messages, reactions and voice notes as they happen.",
+      privacyTitle: "Privacy first",
+      privacyBody: "Decide who sees every field and every post.",
+    },
+    footer: "Made for everyone looking for a place to belong.",
   },
 };

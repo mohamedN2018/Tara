@@ -14,18 +14,18 @@ const tokens = computed(() => tokenize(props.body));
       :href="token.href"
       target="_blank"
       rel="noopener noreferrer nofollow ugc"
-      class="text-brand-600 hover:underline"
+      class="text-brand-600 hover:underline dark:text-brand-300"
       dir="ltr"
     >{{ token.text }}</a>
     <RouterLink
       v-else-if="token.kind === 'tag'"
       :to="{ name: 'search', query: { q: `#${token.tag}` } }"
-      class="font-medium text-brand-600 hover:underline"
+      class="font-medium text-brand-600 hover:underline dark:text-brand-300"
     >{{ token.text }}</RouterLink>
     <RouterLink
       v-else-if="token.kind === 'mention'"
       :to="{ name: 'profile', params: { handle: token.handle } }"
-      class="font-medium text-brand-600 hover:underline"
+      class="font-medium text-brand-600 hover:underline dark:text-brand-300"
       dir="ltr"
     >{{ token.text }}</RouterLink>
     <template v-else>{{ token.text }}</template>

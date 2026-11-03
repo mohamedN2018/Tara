@@ -14,15 +14,15 @@ const options: { value: Theme; icon: typeof Sun }[] = [
 </script>
 
 <template>
-  <div class="inline-flex rounded-lg border border-gray-200 p-0.5 dark:border-gray-700">
+  <div class="inline-flex rounded-full border border-gray-200 bg-white p-0.5 dark:border-gray-800 dark:bg-gray-900">
     <button
       v-for="opt in options"
       :key="opt.value"
-      class="rounded-md p-1.5 transition"
+      class="rounded-full p-1.5 transition"
       :class="
         ui.theme === opt.value
-          ? 'bg-brand-600 text-white'
-          : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
+          ? 'bg-brand-600 text-white shadow-sm shadow-brand-600/40'
+          : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-400'
       "
       :aria-pressed="ui.theme === opt.value"
       :aria-label="t(`settings.${opt.value}`)"

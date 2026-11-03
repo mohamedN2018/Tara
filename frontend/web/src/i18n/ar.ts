@@ -1,6 +1,8 @@
 export default {
-  app: { name: "Tara" },
+  app: { name: "Tara", tagline: "تواصل. شارك. انتمِ.", promise: "أكثر من شبكة اجتماعية… مكان تنتمي إليه." },
   nav: {
+    explore: "استكشف",
+    createPost: "إنشاء منشور",
     ads: "الإعلانات",
     pages: "الصفحات",
     home: "الرئيسية",
@@ -579,5 +581,22 @@ export default {
   landing: {
     tagline: "تواصل وشارك واكتشف مع Tara.",
     getStarted: "ابدأ الآن",
+    headline: "مكانك بين",
+    headlineAccent: "أصحابك.",
+    lead: "شارك لحظاتك، تحدّث مع أصدقائك فورًا، واكتشف صفحات ومجتمعات تشبهك — في مساحة تحترم خصوصيتك.",
+    haveAccount: "عندي حساب",
+    features: {
+      connectTitle: "تواصل",
+      connectBody: "أصدقاء ومتابَعون وطلبات صداقة في مكان واحد.",
+      shareTitle: "شارك",
+      shareBody: "منشورات وصور واستطلاعات بجمهور تختاره أنت.",
+      belongTitle: "انتمِ",
+      belongBody: "صفحات ومجموعات دردشة وسوق لمجتمعك.",
+      chatTitle: "دردشة فورية",
+      chatBody: "رسائل وتفاعلات ورسائل صوتية لحظة بلحظة.",
+      privacyTitle: "خصوصيتك أولًا",
+      privacyBody: "تحكّم في من يرى كل حقل وكل منشور.",
+    },
+    footer: "صُنع لكل من يبحث عن مكان ينتمي إليه.",
   },
 };

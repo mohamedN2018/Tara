@@ -55,7 +55,7 @@ async function vote(optionId: string) {
         {{ option.text }}
       </button>
     </template>
-    <p class="text-xs text-gray-500">
+    <p class="text-xs text-gray-500 dark:text-gray-400">
       {{ t("post.pollVotes", current.total_votes) }}
       <template v-if="current.closed"> · {{ t("post.pollClosed") }}</template>
     </p>

@@ -24,7 +24,7 @@ function onInput() {
 
 <template>
   <form class="relative" @submit.prevent="$emit('submit', value)">
-    <Search class="pointer-events-none absolute inset-y-0 start-3 my-auto h-4 w-4 text-gray-400" />
+    <Search class="pointer-events-none absolute inset-y-0 start-3 my-auto h-4 w-4 text-gray-500 dark:text-gray-400" />
     <input
       v-model="value"
       class="input ps-9"

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { BarChart3, ChevronDown, Globe, ImagePlus, Lock, Plus, UserCheck, Users, X } from "lucide-vue-next";
-import { computed, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
@@ -9,6 +9,7 @@ import { errorMessage } from "@/lib/errors";
 import { mediaService } from "@/services/media";
 import { postService } from "@/services/post";
 import { useAuthStore } from "@/stores/auth";
+import { useUiStore } from "@/stores/ui";
 import type { Post } from "@/types";
 
 const emit = defineEmits<{ created: [post: Post] }>();
@@ -47,6 +48,22 @@ const POLL_DURATIONS = [
 ];
 const filledOptions = computed(() => pollOptions.value.map((o) => o.trim()).filter(Boolean));
 const pollReady = computed(() => filledOptions.value.length >= 2 && !!body.value.trim());
+
+// "Create post" shortcuts (sidebar, mobile bar) open this composer.
+const ui = useUiStore();
+const root = ref<HTMLElement | null>(null);
+watch(
+  () => ui.composeRequested,
+  async (requested) => {
+    if (!requested) return;
+    ui.composeRequested = false;
+    expanded.value = true;
+    await nextTick();
+    root.value?.scrollIntoView({ behavior: "smooth", block: "center" });
+    root.value?.querySelector<HTMLElement>("textarea, input:not([type=file])")?.focus();
+  },
+  { immediate: true },
+);
 
 const authorName = () => auth.profile?.display_name || auth.account?.email?.split("@")[0] || "?";
 
@@ -113,13 +130,13 @@ async function submit() {
 </script>
 
 <template>
-  <div class="card p-3">
+  <div ref="root" class="card p-4">
     <div class="flex items-center gap-3">
       <UserAvatar :name="authorName()" :media-id="auth.profile?.avatar_media_id" :size="40" />
 
       <button
         v-if="!expanded"
-        class="flex-1 rounded-full bg-gray-100 px-4 py-2.5 text-start text-sm text-gray-500 transition hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700"
+        class="h-11 flex-1 rounded-full border border-transparent bg-gray-100 px-5 text-start text-sm text-gray-500 transition hover:border-brand-200 hover:bg-white dark:bg-gray-800/70 dark:text-gray-400 dark:hover:border-brand-900 dark:hover:bg-gray-800"
         @click="expanded = true"
       >
         {{ t("feed.composerPlaceholder") }}
@@ -138,13 +155,13 @@ async function submit() {
           </button>
           <template v-if="showAudience">
             <div class="fixed inset-0 z-40" @click="showAudience = false" />
-            <div class="card absolute start-0 z-50 mt-1 w-48 p-1" role="menu">
-              <p class="px-2 pb-1 pt-0.5 text-xs font-semibold text-gray-400">{{ t("feed.audience") }}</p>
+            <div class="popover absolute start-0 z-50 mt-1 w-48 p-1" role="menu">
+              <p class="px-2 pb-1 pt-0.5 text-xs font-semibold text-gray-500 dark:text-gray-400">{{ t("feed.audience") }}</p>
               <button
                 v-for="a in AUDIENCES"
                 :key="a.v"
                 class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-start text-sm transition hover:bg-gray-100 dark:hover:bg-gray-800"
-                :class="audience === a.v ? 'text-brand-600' : ''"
+                :class="audience === a.v ? 'text-brand-600 dark:text-brand-300' : ''"
                 @click="audience = a.v; showAudience = false"
               >
                 <component :is="a.icon" class="h-4 w-4" /> {{ t(a.label) }}
@@ -153,6 +170,19 @@ async function submit() {
           </template>
         </div>
       </div>
+    </div>
+
+    <!-- Quick actions (collapsed): each opens the composer in that mode. -->
+    <div v-if="!expanded" class="mt-3 grid grid-cols-2 gap-1 border-t border-gray-100 pt-2 dark:border-gray-800">
+      <label class="btn-ghost cursor-pointer focus-within:ring-2 focus-within:ring-brand-400" :class="uploading ? 'opacity-50' : ''">
+        <ImagePlus class="h-5 w-5 text-emerald-500" />
+        <span>{{ uploading ? t("states.loading") : t("feed.photo") }}</span>
+        <input type="file" accept="image/*" multiple class="sr-only" :aria-label="t('feed.addPhotos')" @change="onFiles($event); expanded = true" />
+      </label>
+      <button type="button" class="btn-ghost" @click="expanded = true; pollOpen = true">
+        <BarChart3 class="h-5 w-5 text-accent-500" />
+        <span>{{ t("feed.poll") }}</span>
+      </button>
     </div>
 
     <div v-if="expanded" class="mt-3">
@@ -205,12 +235,12 @@ async function submit() {
       <p v-if="error" class="mt-2 text-xs text-red-500">{{ error }}</p>
 
       <div class="mt-3 flex flex-wrap items-center gap-1 border-t border-gray-100 pt-3 dark:border-gray-800">
-        <label class="btn-ghost cursor-pointer focus-within:ring-2 focus-within:ring-brand-300" :class="uploading ? 'opacity-50' : ''" :title="t('feed.addPhotos')">
+        <label class="btn-ghost cursor-pointer focus-within:ring-2 focus-within:ring-brand-400" :class="uploading ? 'opacity-50' : ''" :title="t('feed.addPhotos')">
           <ImagePlus class="h-5 w-5 text-green-600" />
           <span class="text-sm">{{ uploading ? t("states.loading") : t("feed.photo") }}</span>
           <input type="file" accept="image/*" multiple class="sr-only" :aria-label="t('feed.addPhotos')" @change="onFiles" />
         </label>
-        <button type="button" class="btn-ghost" :aria-pressed="pollOpen" :class="pollOpen ? 'text-brand-600' : ''" @click="pollOpen = !pollOpen">
+        <button type="button" class="btn-ghost" :aria-pressed="pollOpen" :class="pollOpen ? 'text-brand-600 dark:text-brand-300' : ''" @click="pollOpen = !pollOpen">
           <BarChart3 class="h-5 w-5" />
           <span class="text-sm">{{ t("feed.poll") }}</span>
         </button>

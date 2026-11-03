@@ -10,8 +10,8 @@ export interface ReactionDef {
 }
 
 export const REACTIONS: ReactionDef[] = [
-  { key: "like", emoji: "👍", labelKey: "reactionTypes.like", color: "text-brand-600" },
-  { key: "love", emoji: "❤️", labelKey: "reactionTypes.love", color: "text-red-500" },
+  { key: "like", emoji: "👍", labelKey: "reactionTypes.like", color: "text-brand-600 dark:text-brand-300" },
+  { key: "love", emoji: "❤️", labelKey: "reactionTypes.love", color: "text-accent-500" },
   { key: "care", emoji: "🤗", labelKey: "reactionTypes.care", color: "text-amber-500" },
   { key: "haha", emoji: "😆", labelKey: "reactionTypes.haha", color: "text-amber-500" },
   { key: "wow", emoji: "😮", labelKey: "reactionTypes.wow", color: "text-amber-500" },

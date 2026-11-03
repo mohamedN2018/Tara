@@ -52,11 +52,11 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="space-y-5 p-3">
+  <div class="space-y-4 pb-6">
     <!-- Friend requests (top) -->
-    <section v-if="requests.length" aria-labelledby="rs-requests">
-      <h3 id="rs-requests" class="mb-2 px-1 text-sm font-bold text-gray-500">
-        {{ t("friends.requests") }} <span class="text-brand-600">({{ requests.length }})</span>
+    <section v-if="requests.length" class="card p-4" aria-labelledby="rs-requests">
+      <h3 id="rs-requests" class="section-title mb-3 flex items-center gap-2">
+        {{ t("friends.requests") }} <span class="badge">{{ requests.length }}</span>
       </h3>
       <ul class="space-y-1">
         <li
@@ -83,19 +83,19 @@ onMounted(load);
     </section>
 
     <!-- Friends (enlarged, primary content of the rail) -->
-    <section aria-labelledby="rs-friends">
-      <h3 id="rs-friends" class="mb-3 flex items-center justify-between px-1 text-base font-bold">
-        <span>{{ t("friends.title") }} <span class="text-gray-400">({{ friendIds.length }})</span></span>
-        <RouterLink v-if="friendIds.length" to="/friends" class="text-xs font-medium text-brand-600">
+    <section class="card p-4" aria-labelledby="rs-friends">
+      <h3 id="rs-friends" class="section-title mb-3 flex items-center justify-between">
+        <span>{{ t("friends.title") }} <span class="text-gray-500 dark:text-gray-400">({{ friendIds.length }})</span></span>
+        <RouterLink v-if="friendIds.length" to="/friends" class="text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300">
           {{ t("friends.all") }}
         </RouterLink>
       </h3>
-      <p v-if="!friendIds.length" class="px-1 text-sm text-gray-400">{{ t("friends.none") }}</p>
+      <p v-if="!friendIds.length" class="px-1 text-sm text-gray-500 dark:text-gray-400">{{ t("friends.none") }}</p>
       <ul v-else class="space-y-1">
         <li
           v-for="id in friendIds.slice(0, 15)"
           :key="id"
-          class="group flex items-center gap-3 rounded-2xl p-2 transition hover:bg-gray-100 hover:shadow-sm dark:hover:bg-gray-800/60"
+          class="group -mx-2 flex items-center gap-3 rounded-xl p-2 transition hover:bg-gray-100 dark:hover:bg-gray-800/60"
         >
           <!-- Avatar → profile -->
           <RouterLink
@@ -104,7 +104,7 @@ onMounted(load);
             :aria-label="t('nav.profile')"
             :title="t('nav.profile')"
           >
-            <UserAvatar :name="directory.label(id)" :media-id="directory.avatarOf(id)" :size="48" />
+            <UserAvatar :name="directory.label(id)" :media-id="directory.avatarOf(id)" :size="42" />
             <span
               v-if="presence.isOnline(id)"
               class="absolute -end-0.5 -bottom-0.5 h-3 w-3 rounded-full border-2 border-white bg-green-500 dark:border-gray-900"
@@ -114,7 +114,7 @@ onMounted(load);
           <!-- Anywhere else → open chat in-app -->
           <button
             type="button"
-            class="min-w-0 flex-1 truncate text-start text-[15px] font-medium disabled:opacity-60"
+            class="min-w-0 flex-1 truncate text-start text-sm font-semibold disabled:opacity-60"
             :disabled="opening === id"
             :title="t('profile.message')"
             @click="openChat(id)"
@@ -123,7 +123,7 @@ onMounted(load);
           </button>
           <button
             type="button"
-            class="rounded-full p-2 text-gray-400 opacity-0 transition hover:bg-brand-50 hover:text-brand-600 group-hover:opacity-100 disabled:opacity-50 dark:hover:bg-brand-950/40"
+            class="rounded-full p-2 text-gray-500 opacity-0 transition hover:bg-brand-50 hover:text-brand-600 group-hover:opacity-100 disabled:opacity-50 dark:hover:bg-brand-950/40 dark:text-gray-400"
             :disabled="opening === id"
             :aria-label="t('profile.message')"
             :title="t('profile.message')"

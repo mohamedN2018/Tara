@@ -82,7 +82,7 @@ onMounted(load);
     <div class="mb-4 flex gap-2 border-b border-gray-200 dark:border-gray-800">
       <button
         class="border-b-2 px-3 py-2 text-sm font-medium transition"
-        :class="tab === 'requests' ? 'border-brand-600 text-brand-600' : 'border-transparent text-gray-500'"
+        :class="tab === 'requests' ? 'border-brand-600 text-brand-600 dark:text-brand-300' : 'border-transparent text-gray-500 dark:text-gray-400'"
         @click="tab = 'requests'"
       >
         {{ t("friends.requests") }}
@@ -92,7 +92,7 @@ onMounted(load);
       </button>
       <button
         class="border-b-2 px-3 py-2 text-sm font-medium transition"
-        :class="tab === 'sent' ? 'border-brand-600 text-brand-600' : 'border-transparent text-gray-500'"
+        :class="tab === 'sent' ? 'border-brand-600 text-brand-600 dark:text-brand-300' : 'border-transparent text-gray-500 dark:text-gray-400'"
         @click="tab = 'sent'"
       >
         {{ t("friends.sent") }}
@@ -102,11 +102,11 @@ onMounted(load);
       </button>
       <button
         class="border-b-2 px-3 py-2 text-sm font-medium transition"
-        :class="tab === 'all' ? 'border-brand-600 text-brand-600' : 'border-transparent text-gray-500'"
+        :class="tab === 'all' ? 'border-brand-600 text-brand-600 dark:text-brand-300' : 'border-transparent text-gray-500 dark:text-gray-400'"
         @click="tab = 'all'"
       >
         {{ t("friends.all") }}
-        <span v-if="friendIds.length" class="ms-1 text-xs text-gray-400">{{ friendIds.length }}</span>
+        <span v-if="friendIds.length" class="ms-1 text-xs text-gray-500 dark:text-gray-400">{{ friendIds.length }}</span>
       </button>
     </div>
 
@@ -138,7 +138,7 @@ onMounted(load);
             <UserAvatar :name="directory.label(r.to_user_id)" :media-id="directory.avatarOf(r.to_user_id)" />
           </RouterLink>
           <span class="flex-1 truncate text-sm font-medium" dir="auto">{{ directory.label(r.to_user_id) }}</span>
-          <span class="text-xs text-gray-400">{{ t("profile.requestSent") }}</span>
+          <span class="text-xs text-gray-500 dark:text-gray-400">{{ t("profile.requestSent") }}</span>
           <button
             class="btn-ghost text-sm"
             :disabled="cancelling === r.id"

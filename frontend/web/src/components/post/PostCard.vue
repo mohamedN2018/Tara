@@ -288,16 +288,16 @@ async function toggleSave() {
 </script>
 
 <template>
-  <article class="card p-4">
+  <article class="card p-4 sm:p-5">
     <header class="flex items-center gap-3">
       <RouterLink :to="authorTo" :aria-label="authorDisplay">
-        <UserAvatar :name="authorDisplay" :media-id="avatarId" :size="40" />
+        <UserAvatar :name="authorDisplay" :media-id="avatarId" :size="44" />
       </RouterLink>
       <div class="min-w-0">
-        <RouterLink :to="authorTo" class="block truncate text-sm font-semibold hover:underline" dir="auto">
+        <RouterLink :to="authorTo" class="block truncate text-[15px] font-bold text-gray-900 hover:text-brand-600 dark:text-white dark:hover:text-brand-300" dir="auto">
           {{ authorDisplay }}
         </RouterLink>
-        <div class="flex items-center gap-1 text-xs text-gray-500">
+        <div class="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
           <RouterLink :to="`/posts/${post.id}`" class="hover:underline" :title="fullTime">
             {{ relativeTime(post.created_at) }}
           </RouterLink>
@@ -308,8 +308,8 @@ async function toggleSave() {
 
       <div class="ms-auto flex items-center gap-1">
         <button
-          class="rounded-full p-2 text-gray-400 transition hover:bg-gray-100 hover:text-brand-600 dark:hover:bg-gray-800"
-          :class="isSaved ? 'text-brand-600' : ''"
+          class="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-brand-600 dark:hover:bg-gray-800 dark:text-gray-400"
+          :class="isSaved ? 'text-brand-600 dark:text-brand-300' : ''"
           :aria-pressed="isSaved"
           :aria-label="t('post.save')"
           :title="t('post.save')"
@@ -320,7 +320,7 @@ async function toggleSave() {
 
         <div class="relative">
           <button
-            class="rounded-full p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800"
+            class="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:text-gray-400"
             :aria-label="t('profile.more')"
             @click="menuOpen = !menuOpen"
           >
@@ -328,7 +328,7 @@ async function toggleSave() {
           </button>
           <template v-if="menuOpen">
             <div class="fixed inset-0 z-40" @click="menuOpen = false" />
-            <div class="card absolute end-0 z-50 mt-1 w-44 p-1.5" role="menu">
+            <div class="popover absolute end-0 z-50 mt-1 w-44 p-1.5" role="menu">
               <button
                 v-if="canEdit"
                 class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-start text-sm transition hover:bg-gray-100 dark:hover:bg-gray-800"
@@ -367,7 +367,7 @@ async function toggleSave() {
     </div>
     <p v-else-if="localBody" class="mt-3 whitespace-pre-wrap break-words text-[15px] leading-relaxed" dir="auto">
       <RichText :body="localBody" />
-      <span v-if="edited" class="text-xs text-gray-400">· {{ t("messages.edited") }}</span>
+      <span v-if="edited" class="text-xs text-gray-500 dark:text-gray-400">· {{ t("messages.edited") }}</span>
     </p>
 
     <LinkPreviewCard v-if="linkPreview && !editing" :preview="linkPreview" />
@@ -387,14 +387,15 @@ async function toggleSave() {
 
     <div
       v-if="images.length"
-      class="mt-3 grid gap-1.5 overflow-hidden rounded-xl"
+      class="mt-3 grid gap-1 overflow-hidden rounded-2xl bg-gray-100 dark:bg-gray-950"
       :class="images.length === 1 ? 'grid-cols-1' : 'grid-cols-2'"
     >
       <img
         v-for="(src, i) in images"
         :key="i"
         :src="src"
-        class="max-h-96 w-full object-cover"
+        class="w-full object-cover"
+        :class="images.length === 1 ? 'max-h-[32rem]' : 'aspect-square'"
         loading="lazy"
         decoding="async"
         :alt="t('post.imageAlt', { n: i + 1, name: authorDisplay })"
@@ -426,7 +427,7 @@ async function toggleSave() {
       />
       <button
         v-if="commentsCursor"
-        class="text-xs font-semibold text-brand-600 hover:underline"
+        class="text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300"
         :disabled="loadingMoreComments"
         @click="loadMoreComments"
       >

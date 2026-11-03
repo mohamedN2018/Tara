@@ -28,7 +28,7 @@ function activate(t: Toast) {
       <div
         v-for="t in toasts.items"
         :key="t.id"
-        class="pointer-events-auto flex w-full max-w-sm items-center gap-3 rounded-xl bg-gray-900/95 px-4 py-3 text-sm text-white shadow-lg backdrop-blur"
+        class="pointer-events-auto flex w-full max-w-sm items-center gap-3 rounded-2xl border border-white/10 bg-ink/95 px-4 py-3 text-sm font-medium text-white shadow-pop ring-1 ring-brand-500/20 backdrop-blur-xl"
       >
         <button class="flex min-w-0 flex-1 items-center gap-3 text-start" @click="activate(t)">
           <component

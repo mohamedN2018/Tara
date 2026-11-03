@@ -63,8 +63,8 @@ const links = computed<AppLink[]>(() => {
 <template>
   <div class="relative">
     <button
-      class="rounded-full bg-gray-100 p-2 text-gray-700 transition hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
-      :class="open ? 'bg-brand-50 text-brand-600 dark:bg-brand-950/40' : ''"
+      class="icon-btn"
+      :class="open ? 'bg-brand-50 text-brand-600 dark:bg-brand-950/40 dark:text-brand-300' : ''"
       :aria-label="t('nav.menu')"
       aria-haspopup="menu"
       :aria-expanded="open"
@@ -75,7 +75,7 @@ const links = computed<AppLink[]>(() => {
 
     <template v-if="open">
       <div class="fixed inset-0 z-40" @click="open = false" />
-      <div class="card absolute end-0 z-50 mt-2 w-80 max-w-[92vw] p-2" role="menu">
+      <div class="popover absolute end-0 z-50 mt-2 w-80 max-w-[92vw] p-2" role="menu">
         <h3 class="px-2 pb-2 text-sm font-bold">{{ t("nav.menu") }}</h3>
         <div class="grid grid-cols-3 gap-1">
           <RouterLink
@@ -88,7 +88,7 @@ const links = computed<AppLink[]>(() => {
             @click="open = false"
           >
             <span
-              class="flex h-11 w-11 items-center justify-center rounded-full bg-brand-50 text-brand-600 dark:bg-brand-950/40"
+              class="flex h-11 w-11 items-center justify-center rounded-full bg-brand-50 text-brand-600 dark:bg-brand-950/40 dark:text-brand-300"
             >
               <component :is="link.icon" class="h-5 w-5" />
             </span>

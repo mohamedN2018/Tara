@@ -155,7 +155,7 @@ onUnmounted(() => {
         </template>
 
         <div v-if="hasMore" ref="sentinel" class="py-4 text-center">
-          <span v-if="loadingMore" class="text-sm text-gray-500">{{ t("states.loading") }}</span>
+          <span v-if="loadingMore" class="text-sm text-gray-500 dark:text-gray-400">{{ t("states.loading") }}</span>
           <button v-else class="btn-ghost mx-auto block" @click="load(false)">
             {{ t("feed.loadMore") }}
           </button>

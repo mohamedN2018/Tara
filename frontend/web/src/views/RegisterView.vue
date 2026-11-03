@@ -2,8 +2,7 @@
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 
-import LocaleToggle from "@/components/common/LocaleToggle.vue";
-import ThemeToggle from "@/components/common/ThemeToggle.vue";
+import AuthLayout from "@/components/brand/AuthLayout.vue";
 import { apiError } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
 import { useAuthStore } from "@/stores/auth";
@@ -56,28 +55,18 @@ async function submit() {
 </script>
 
 <template>
-  <div class="flex min-h-screen items-center justify-center px-4 py-8">
-    <div class="absolute end-4 top-4 flex gap-2">
-      <LocaleToggle />
-      <ThemeToggle />
-    </div>
-
-    <div class="card w-full max-w-sm p-6">
-      <RouterLink to="/" class="mb-1 block text-center text-2xl font-extrabold text-brand-600">
-        {{ t("app.name") }}
-      </RouterLink>
-      <h1 class="mb-6 text-center text-sm text-gray-500">{{ t("auth.joinTara") }}</h1>
+  <AuthLayout :title="t('auth.joinTara')">
 
       <div v-if="done" class="space-y-4 text-center">
         <p class="rounded-lg bg-green-50 px-3 py-3 text-sm text-green-700 dark:bg-green-950 dark:text-green-300">
           {{ t("auth.verifyEmail") }}
         </p>
-        <RouterLink to="/login" class="btn-primary w-full">{{ t("auth.loginCta") }}</RouterLink>
+        <RouterLink to="/login" class="btn-gradient w-full py-3 text-base">{{ t("auth.loginCta") }}</RouterLink>
       </div>
 
       <form v-else class="space-y-4" @submit.prevent="submit">
         <div>
-          <label for="reg-display-name" class="mb-1 block text-sm font-medium">{{ t("auth.displayName") }}</label>
+          <label for="reg-display-name" class="label">{{ t("auth.displayName") }}</label>
           <input
             id="reg-display-name"
             v-model="form.display_name"
@@ -94,7 +83,7 @@ async function submit() {
           </p>
         </div>
         <div>
-          <label for="reg-handle" class="mb-1 block text-sm font-medium">{{ t("auth.handle") }}</label>
+          <label for="reg-handle" class="label">{{ t("auth.handle") }}</label>
           <input
             id="reg-handle"
             v-model="form.handle"
@@ -109,12 +98,12 @@ async function submit() {
             :aria-invalid="!!fieldErrors.handle"
             aria-describedby="reg-handle-hint"
           />
-          <p id="reg-handle-hint" class="mt-1 text-xs" :class="fieldErrors.handle ? 'text-red-500' : 'text-gray-400'">
+          <p id="reg-handle-hint" class="mt-1 text-xs" :class="fieldErrors.handle ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'">
             {{ fieldErrors.handle || t("auth.handleHint") }}
           </p>
         </div>
         <div>
-          <label for="reg-email" class="mb-1 block text-sm font-medium">{{ t("auth.email") }}</label>
+          <label for="reg-email" class="label">{{ t("auth.email") }}</label>
           <input
             id="reg-email"
             v-model="form.email"
@@ -129,7 +118,7 @@ async function submit() {
           <p v-if="fieldErrors.email" id="reg-email-error" class="mt-1 text-xs text-red-500">{{ fieldErrors.email }}</p>
         </div>
         <div>
-          <label for="reg-password" class="mb-1 block text-sm font-medium">{{ t("auth.password") }}</label>
+          <label for="reg-password" class="label">{{ t("auth.password") }}</label>
           <input
             id="reg-password"
             v-model="form.password"
@@ -143,22 +132,21 @@ async function submit() {
             :aria-invalid="!!fieldErrors.password"
             aria-describedby="reg-password-hint"
           />
-          <p id="reg-password-hint" class="mt-1 text-xs" :class="fieldErrors.password ? 'text-red-500' : 'text-gray-400'">
+          <p id="reg-password-hint" class="mt-1 text-xs" :class="fieldErrors.password ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'">
             {{ fieldErrors.password || t("auth.passwordHint") }}
           </p>
         </div>
 
         <p v-if="error" class="text-sm text-red-500" role="alert">{{ error }}</p>
 
-        <button type="submit" class="btn-primary w-full" :disabled="loading">
+        <button type="submit" class="btn-gradient w-full py-3 text-base" :disabled="loading">
           {{ t("auth.registerCta") }}
         </button>
       </form>
 
-      <p class="mt-4 text-center text-sm text-gray-500">
+      <p class="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">
         {{ t("auth.haveAccount") }}
-        <RouterLink to="/login" class="font-medium text-brand-600">{{ t("auth.loginCta") }}</RouterLink>
+        <RouterLink to="/login" class="font-medium text-brand-600 dark:text-brand-300">{{ t("auth.loginCta") }}</RouterLink>
       </p>
-    </div>
-  </div>
+  </AuthLayout>
 </template>

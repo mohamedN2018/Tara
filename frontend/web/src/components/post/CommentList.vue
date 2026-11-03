@@ -112,8 +112,8 @@ function toggle(rootId: string) {
 
 <template>
   <div class="space-y-3">
-    <p v-if="loading" class="px-1 text-xs text-gray-500">{{ t("states.loading") }}</p>
-    <p v-else-if="!threads.length" class="px-1 text-xs text-gray-400">{{ t("post.noComments") }}</p>
+    <p v-if="loading" class="px-1 text-xs text-gray-500 dark:text-gray-400">{{ t("states.loading") }}</p>
+    <p v-else-if="!threads.length" class="px-1 text-xs text-gray-500 dark:text-gray-400">{{ t("post.noComments") }}</p>
 
     <div v-for="th in threads" :key="th.root.id" class="space-y-2">
       <!-- Root comment -->
@@ -124,9 +124,9 @@ function toggle(rootId: string) {
             <span class="block text-xs font-semibold" dir="auto">{{ nameFor(th.root.author_id) }}</span>
             <span class="whitespace-pre-wrap break-words text-sm" dir="auto"><RichText :body="th.root.body" /></span>
           </div>
-          <div class="mt-0.5 flex items-center gap-3 ps-2 text-[11px] text-gray-400">
+          <div class="mt-0.5 flex items-center gap-3 ps-2 text-[11px] text-gray-500 dark:text-gray-400">
             <time>{{ relativeTime(th.root.created_at) }}</time>
-            <button class="font-semibold text-gray-500 hover:underline" @click="openReply(th.root)">
+            <button class="font-semibold text-gray-500 hover:underline dark:text-gray-400" @click="openReply(th.root)">
               {{ t("post.reply") }}
             </button>
           </div>
@@ -134,7 +134,7 @@ function toggle(rootId: string) {
           <!-- Replies toggle -->
           <button
             v-if="th.replies.length && !expanded.has(th.root.id)"
-            class="mt-1 ps-2 text-xs font-semibold text-brand-600 hover:underline"
+            class="mt-1 ps-2 text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300"
             @click="toggle(th.root.id)"
           >
             {{ t("post.viewReplies", th.replies.length) }}
@@ -148,12 +148,12 @@ function toggle(rootId: string) {
                 <div class="inline-block rounded-2xl bg-gray-100 px-3 py-1.5 dark:bg-gray-800">
                   <span class="block text-xs font-semibold" dir="auto">{{ nameFor(r.author_id) }}</span>
                   <span class="whitespace-pre-wrap break-words text-sm" dir="auto">
-                    <span v-if="r.toName" class="font-medium text-brand-600">@{{ r.toName }} </span><RichText :body="r.body" />
+                    <span v-if="r.toName" class="font-medium text-brand-600 dark:text-brand-300">@{{ r.toName }} </span><RichText :body="r.body" />
                   </span>
                 </div>
-                <div class="mt-0.5 flex items-center gap-3 ps-2 text-[11px] text-gray-400">
+                <div class="mt-0.5 flex items-center gap-3 ps-2 text-[11px] text-gray-500 dark:text-gray-400">
                   <time>{{ relativeTime(r.created_at) }}</time>
-                  <button class="font-semibold text-gray-500 hover:underline" @click="openReply(r)">
+                  <button class="font-semibold text-gray-500 hover:underline dark:text-gray-400" @click="openReply(r)">
                     {{ t("post.reply") }}
                   </button>
                 </div>
@@ -161,7 +161,7 @@ function toggle(rootId: string) {
             </div>
 
             <button
-              class="text-xs font-semibold text-gray-400 hover:underline"
+              class="text-xs font-semibold text-gray-500 hover:underline dark:text-gray-400"
               @click="toggle(th.root.id)"
             >
               {{ t("post.hideReplies") }}
@@ -170,7 +170,7 @@ function toggle(rootId: string) {
 
           <!-- Reply composer for this thread -->
           <div v-if="replyRootId === th.root.id" class="mt-2">
-            <div class="mb-1 flex items-center gap-2 ps-2 text-[11px] text-gray-500">
+            <div class="mb-1 flex items-center gap-2 ps-2 text-[11px] text-gray-500 dark:text-gray-400">
               <span>{{ t("post.replyingTo", { name: replyTargetName }) }}</span>
               <button class="font-semibold text-red-500 hover:underline" :aria-label="t('post.cancelReply')" @click="cancelReply">×</button>
             </div>

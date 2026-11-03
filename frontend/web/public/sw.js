@@ -1,12 +1,19 @@
 // Tara service worker: offline shell and Web Push. Plain JS: it is served as is.
 // API calls, sockets and signed media URLs always go to the network.
 
-const VERSION = "v1";
+const VERSION = "v2";
 const SHELL_CACHE = `tara-shell-${VERSION}`;
 const ASSET_CACHE = `tara-assets-${VERSION}`;
 const PREFS_CACHE = "tara-prefs"; // written by the app: src/i18n/index.ts
 const MAX_ASSETS = 300;
-const SHELL_FILES = ["/index.html", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
+const SHELL_FILES = [
+  "/index.html",
+  "/manifest.webmanifest",
+  "/theme-init.js",
+  "/icons/tara-mark.svg",
+  "/icons/icon-192.png",
+  "/icons/icon-512.png",
+];
 const NEVER_CACHED = ["/api/", "/ws/", "/tara-media/", "/__s3/", "/sw.js"];
 
 // Every hashed bundle of this build (written by vite.config.ts), so the first
@@ -137,7 +144,7 @@ self.addEventListener("push", (event) => {
       await self.registration.showNotification(text.title, {
         body,
         icon: "/icons/icon-192.png",
-        badge: "/icons/icon-192.png",
+        badge: "/icons/badge-96.png",
         tag: data.tag,
         data: { url: data.url ?? "/notifications" },
       });

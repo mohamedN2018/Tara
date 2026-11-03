@@ -20,7 +20,7 @@ const presence = usePresenceStore();
   <div class="card p-4">
     <h2 class="mb-3 flex items-center justify-between text-base font-bold">
       <span>{{ t("profile.friends") }}</span>
-      <span v-if="friendsCount !== null" class="text-sm font-normal text-gray-400">{{ friendsCount }}</span>
+      <span v-if="friendsCount !== null" class="text-sm font-normal text-gray-500 dark:text-gray-400">{{ friendsCount }}</span>
     </h2>
     <EmptyState v-if="relFriendIds.length === 0">{{ t("friends.none") }}</EmptyState>
     <div v-else class="grid grid-cols-2 gap-3 sm:grid-cols-3">

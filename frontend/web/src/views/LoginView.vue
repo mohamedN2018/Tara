@@ -3,8 +3,7 @@ import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 
-import LocaleToggle from "@/components/common/LocaleToggle.vue";
-import ThemeToggle from "@/components/common/ThemeToggle.vue";
+import AuthLayout from "@/components/brand/AuthLayout.vue";
 import { errorMessage } from "@/lib/errors";
 import { safeRedirect } from "@/lib/redirect";
 import { useAuthStore } from "@/stores/auth";
@@ -44,17 +43,7 @@ async function retrySession() {
 </script>
 
 <template>
-  <div class="flex min-h-screen items-center justify-center px-4">
-    <div class="absolute end-4 top-4 flex gap-2">
-      <LocaleToggle />
-      <ThemeToggle />
-    </div>
-
-    <div class="card w-full max-w-sm p-6">
-      <RouterLink to="/" class="mb-1 block text-center text-2xl font-extrabold text-brand-600">
-        {{ t("app.name") }}
-      </RouterLink>
-      <h1 class="mb-6 text-center text-sm text-gray-500">{{ t("auth.welcome") }}</h1>
+  <AuthLayout :title="t('auth.welcome')">
 
       <div
         v-if="auth.sessionUnavailable"
@@ -67,11 +56,11 @@ async function retrySession() {
 
       <form class="space-y-4" @submit.prevent="submit">
         <div>
-          <label for="login-email" class="mb-1 block text-sm font-medium">{{ t("auth.email") }}</label>
+          <label for="login-email" class="label">{{ t("auth.email") }}</label>
           <input id="login-email" v-model="email" dir="ltr" type="email" class="input" required autocomplete="email" />
         </div>
         <div>
-          <label for="login-password" class="mb-1 block text-sm font-medium">{{ t("auth.password") }}</label>
+          <label for="login-password" class="label">{{ t("auth.password") }}</label>
           <input
             id="login-password"
             v-model="password"
@@ -85,23 +74,22 @@ async function retrySession() {
 
         <p v-if="error" class="text-sm text-red-500" role="alert">{{ error }}</p>
 
-        <button type="submit" class="btn-primary w-full" :disabled="loading">
+        <button type="submit" class="btn-gradient w-full py-3 text-base" :disabled="loading">
           {{ loading ? t("auth.loggingIn") : t("auth.loginCta") }}
         </button>
       </form>
 
       <p class="mt-3 text-center text-sm">
-        <RouterLink to="/forgot-password" class="font-medium text-brand-600">
+        <RouterLink to="/forgot-password" class="font-medium text-brand-600 dark:text-brand-300">
           {{ t("auth.forgotPassword") }}
         </RouterLink>
       </p>
 
-      <p class="mt-4 text-center text-sm text-gray-500">
+      <p class="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">
         {{ t("auth.noAccount") }}
-        <RouterLink to="/register" class="font-medium text-brand-600">
+        <RouterLink to="/register" class="font-medium text-brand-600 dark:text-brand-300">
           {{ t("auth.registerCta") }}
         </RouterLink>
       </p>
-    </div>
-  </div>
+  </AuthLayout>
 </template>

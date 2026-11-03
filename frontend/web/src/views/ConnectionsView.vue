@@ -81,7 +81,7 @@ onMounted(() => load(tab.value));
           v-for="tb in TABS"
           :key="tb"
           class="flex-1 rounded-lg py-1.5 font-medium transition"
-          :class="tab === tb ? 'bg-white text-brand-600 shadow-sm dark:bg-gray-900' : 'text-gray-500'"
+          :class="tab === tb ? 'bg-white text-brand-600 shadow-sm dark:bg-gray-900 dark:text-brand-300' : 'text-gray-500 dark:text-gray-400'"
           @click="switchTab(tb)"
         >
           {{ t(`connections.${tb}`) }}
