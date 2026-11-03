@@ -64,9 +64,12 @@ def api_client():
 
 
 @pytest.fixture
-def auth_client(api_client):
+def auth_client():
+    from rest_framework.test import APIClient
+
     def _make(account_id: str):
-        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {make_access_token(account_id)}")
-        return api_client
+        client = APIClient()
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {make_access_token(account_id)}")
+        return client
 
     return _make

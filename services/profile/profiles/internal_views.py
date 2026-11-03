@@ -7,6 +7,7 @@ token (HS256), NOT a user token.
 
 from __future__ import annotations
 
+from django.db.models.functions import Lower
 from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -30,6 +31,23 @@ def _require_internal(request: Request) -> None:
         raise TaraAPIError(
             "Invalid internal token.", code="unauthenticated", http_status_code=401
         ) from exc
+
+
+class ProfilesByHandleView(APIView):
+    """Resolve @handles to accounts. Unknown handles are simply left out."""
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+
+    def post(self, request: Request) -> Response:
+        _require_internal(request)
+        handles = [str(h).lower() for h in request.data.get("handles", [])][:50]
+        rows = (
+            UserProfile.objects.annotate(lower_handle=Lower("handle"))
+            .filter(lower_handle__in=handles, deleted_at__isnull=True)
+            .values_list("lower_handle", "account_id")
+        )
+        return data_response({handle: str(account) for handle, account in rows})
 
 
 class ProfileSnapshotView(APIView):

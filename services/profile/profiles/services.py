@@ -6,6 +6,7 @@ import re
 import secrets
 
 from django.db import transaction
+from django.db.models import Prefetch, Q
 
 from tara_common.exceptions import Conflict, TaraAPIError
 
@@ -52,10 +53,29 @@ def ensure_profile(
         return existing
     # A taken requested handle falls back to a numbered variant of it.
     handle = generate_handle(requested_handle or email or f"user{secrets.randbelow(99999)}")
-    return UserProfile.objects.create(
-        account_id=account_id,
-        handle=handle,
-        display_name=display_name or handle,
+    with transaction.atomic():
+        profile = UserProfile.objects.create(
+            account_id=account_id,
+            handle=handle,
+            display_name=display_name or handle,
+        )
+        emit_profile_updated(profile, changed=["handle", "display_name"])
+    return profile
+
+
+def emit_profile_updated(profile: UserProfile, changed: list[str]) -> None:
+    """Search indexes people from this event, so a new account needs one too."""
+    events.emit(
+        "profile.updated",
+        subject_id=str(profile.account_id),
+        payload={
+            "handle": profile.handle,
+            "display_name": profile.display_name,
+            "visibility": profile.visibility,
+            "avatar_media_id": str(profile.avatar_media_id) if profile.avatar_media_id else None,
+            "changed": changed,
+        },
+        actor_id=str(profile.account_id),
     )
 
 
@@ -98,20 +118,7 @@ def update_profile(profile: UserProfile, data: dict) -> UserProfile:
     with transaction.atomic():
         profile.completion_pct = _completion(profile)
         profile.save()
-        events.emit(
-            "profile.updated",
-            subject_id=str(profile.account_id),
-            payload={
-                "handle": profile.handle,
-                "display_name": profile.display_name,
-                "visibility": profile.visibility,
-                "avatar_media_id": str(profile.avatar_media_id)
-                if profile.avatar_media_id
-                else None,
-                "changed": sorted(set(data) & allowed),
-            },
-            actor_id=str(profile.account_id),
-        )
+        emit_profile_updated(profile, changed=sorted(set(data) & allowed))
     return profile
 
 
@@ -124,6 +131,61 @@ def set_field_privacy(profile: UserProfile, field_key: str, visibility: str) -> 
 
 
 # ---- pages ------------------------------------------------------------------
+
+
+def _is_blocked(a: str, b: str) -> bool:
+    return BlockedPair.objects.filter(
+        Q(blocker_id=a, blocked_id=b) | Q(blocker_id=b, blocked_id=a)
+    ).exists()
+
+
+def _with_viewer_role(queryset, viewer_id: str):
+    return queryset.prefetch_related(
+        Prefetch(
+            "members",
+            queryset=PageMember.objects.filter(account_id=viewer_id),
+            to_attr="viewer_memberships",
+        )
+    )
+
+
+def _visible_pages(viewer_id: str):
+    """Published pages, plus any page the viewer belongs to; never a blocked owner's."""
+    blocked = BlockedPair.objects.filter(blocked_id=viewer_id).values("blocker_id")
+    blocking = BlockedPair.objects.filter(blocker_id=viewer_id).values("blocked_id")
+    mine = PageMember.objects.filter(account_id=viewer_id).values("page_id")
+    return (
+        Page.objects.filter(deleted_at__isnull=True)
+        .filter(Q(status=Page.Status.PUBLISHED) | Q(id__in=mine))
+        .exclude(owner_account_id__in=blocked)
+        .exclude(owner_account_id__in=blocking)
+    )
+
+
+def list_pages(viewer_id: str, *, q: str = "", mine: bool = False):
+    pages = _visible_pages(viewer_id)
+    if mine:
+        pages = pages.filter(members__account_id=viewer_id)
+    if q:
+        pages = pages.filter(
+            Q(name__icontains=q) | Q(handle__icontains=q) | Q(category__icontains=q)
+        )
+    return _with_viewer_role(pages, viewer_id).order_by("-created_at")
+
+
+def get_visible_page(viewer_id: str, **lookup) -> Page:
+    page = _with_viewer_role(_visible_pages(viewer_id).filter(**lookup), viewer_id).first()
+    if page is None:
+        raise TaraAPIError("Page not found.", code="not_found", http_status_code=404)
+    return page
+
+
+def list_page_members(page: Page, actor_id: str):
+    if member_role(page, actor_id) is None:
+        raise TaraAPIError(
+            "Only page members can see this.", code="permission_denied", http_status_code=403
+        )
+    return page.members.order_by("created_at")
 
 
 def member_role(page: Page, account_id: str) -> str | None:
@@ -164,11 +226,45 @@ def update_page(page: Page, actor_id: str, data: dict) -> Page:
         raise TaraAPIError(
             "Not permitted to edit this page.", code="permission_denied", http_status_code=403
         )
+    if page.status == Page.Status.SUSPENDED and "status" in data:
+        raise TaraAPIError(
+            "This page is suspended.", code="permission_denied", http_status_code=403
+        )
+    if "status" in data and role == PageRole.EDITOR:
+        raise TaraAPIError(
+            "Only owners/admins can change the status.",
+            code="permission_denied",
+            http_status_code=403,
+        )
     for key in ("name", "category", "description", "contact", "location", "status"):
         if key in data:
             setattr(page, key, data[key])
     page.save()
     return page
+
+
+def remove_member(page: Page, actor_id: str, member: PageMember) -> None:
+    """Owners and admins remove others; anyone but the owner can leave."""
+    if member.role == PageRole.OWNER:
+        raise TaraAPIError(
+            "The owner cannot be removed.", code="validation_error", http_status_code=400
+        )
+    leaving = str(member.account_id) == str(actor_id)
+    if not leaving and member_role(page, actor_id) not in (PageRole.OWNER, PageRole.ADMIN):
+        raise TaraAPIError(
+            "Only owners/admins can remove members.",
+            code="permission_denied",
+            http_status_code=403,
+        )
+    with transaction.atomic():
+        account_id = member.account_id
+        member.delete()
+        events.emit(
+            "page.member.changed",
+            subject_id=str(page.id),
+            payload={"member": str(account_id), "role": None, "action": "removed"},
+            actor_id=str(actor_id),
+        )
 
 
 def add_member(page: Page, actor_id: str, account_id: str, role: str) -> PageMember:
@@ -183,6 +279,8 @@ def add_member(page: Page, actor_id: str, account_id: str, role: str) -> PageMem
         )
     if role not in PageRole.values:
         raise TaraAPIError("Invalid role.", code="validation_error", http_status_code=400)
+    if _is_blocked(actor_id, account_id):
+        raise TaraAPIError("Action not allowed.", code="permission_denied", http_status_code=403)
     if page.members.filter(account_id=account_id).exists():
         raise Conflict("Account is already a member.", code="conflict")
     with transaction.atomic():

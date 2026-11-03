@@ -11,7 +11,7 @@ from django.urls import reverse
 from profiles import services
 from profiles.clients import Relationship
 from profiles.handlers import on_account_registered
-from profiles.models import BlockedPair, OutboxEvent, UserProfile
+from profiles.models import BlockedPair, OutboxEvent, Page, PageMember, UserProfile
 from tara_events.envelope import EventEnvelope
 
 pytestmark = pytest.mark.django_db
@@ -222,3 +222,165 @@ def test_registration_keeps_the_chosen_name_and_handle():
 
     profile = UserProfile.objects.get(account_id=account_id)
     assert (profile.display_name, profile.handle) == ("نور", "noor_1")
+
+
+def _page(client, handle="tara_page", **extra):
+    resp = client.post(
+        reverse("profiles:page-create"), {"handle": handle, "name": handle, **extra}, format="json"
+    )
+    assert resp.status_code == 201
+    return resp.json()["data"]
+
+
+def test_field_privacy_get_lists_every_field_and_rejects_unknown_ones(auth_client):
+    account = _acct()
+    UserProfile.objects.create(account_id=account, handle="priv_user", display_name="P")
+    client = auth_client(account)
+    url = reverse("profiles:field-privacy")
+    assert (
+        client.put(
+            url, {"items": [{"field_key": "bio", "visibility": "private"}]}, format="json"
+        ).status_code
+        == 200
+    )
+    items = {i["field_key"]: i["visibility"] for i in client.get(url).json()["data"]["items"]}
+    assert items["bio"] == "private"
+    assert items["city"] == "public"
+
+    bad = client.put(
+        url, {"items": [{"field_key": "password", "visibility": "public"}]}, format="json"
+    )
+    assert bad.status_code == 400
+    bad = client.put(url, {"items": [{"field_key": "bio", "visibility": "custom"}]}, format="json")
+    assert bad.status_code == 400
+
+
+def test_page_list_search_and_mine(auth_client):
+    owner, other = _acct(), _acct()
+    _page(auth_client(owner), "alpha_cafe", category="food")
+    _page(auth_client(other), "beta_shop")
+    client = auth_client(owner)
+    url = reverse("profiles:page-create")
+    handles = {p["handle"] for p in client.get(url).json()["data"]}
+    assert {"alpha_cafe", "beta_shop"} <= handles
+    assert [p["handle"] for p in client.get(url, {"q": "cafe"}).json()["data"]] == ["alpha_cafe"]
+    mine = client.get(url, {"mine": "1"}).json()["data"]
+    assert [(p["handle"], p["my_role"]) for p in mine] == [("alpha_cafe", "owner")]
+
+
+def test_draft_page_is_hidden_from_outsiders(auth_client):
+    owner = _acct()
+    client = auth_client(owner)
+    page = _page(client, "draft_page")
+    detail = reverse("profiles:page-detail", args=[page["id"]])
+    assert client.patch(detail, {"status": "draft"}, format="json").status_code == 200
+
+    outsider = auth_client(_acct())
+    assert outsider.get(detail).status_code == 404
+    assert outsider.get(reverse("profiles:page-by-handle", args=["draft_page"])).status_code == 404
+    assert "draft_page" not in str(outsider.get(reverse("profiles:page-create")).json())
+    assert client.get(detail).status_code == 200
+
+
+def test_blocked_owner_page_is_hidden(auth_client):
+    owner, viewer = _acct(), _acct()
+    page = _page(auth_client(owner), "blocked_page")
+    BlockedPair.objects.create(blocker_id=owner, blocked_id=viewer)
+    client = auth_client(viewer)
+    assert client.get(reverse("profiles:page-detail", args=[page["id"]])).status_code == 404
+    assert "blocked_page" not in str(client.get(reverse("profiles:page-create")).json())
+
+
+def test_only_members_see_the_member_list(auth_client):
+    owner = auth_client(_acct())
+    page = _page(owner, "team_page")
+    url = reverse("profiles:page-members", args=[page["id"]])
+    assert len(owner.get(url).json()["data"]) == 1
+    assert auth_client(_acct()).get(url).status_code == 403
+
+
+def test_page_status_rules(auth_client):
+    owner_id, editor_id = _acct(), _acct()
+    owner = auth_client(owner_id)
+    page = _page(owner, "status_page")
+    owner.post(
+        reverse("profiles:page-members", args=[page["id"]]),
+        {"account_id": editor_id, "role": "editor"},
+        format="json",
+    )
+    detail = reverse("profiles:page-detail", args=[page["id"]])
+    editor = auth_client(editor_id)
+    assert editor.patch(detail, {"description": "x"}, format="json").status_code == 200
+    assert editor.patch(detail, {"status": "draft"}, format="json").status_code == 403
+    assert owner.patch(detail, {"status": "suspended"}, format="json").status_code == 400
+
+    Page.objects.filter(id=page["id"]).update(status="suspended")
+    assert owner.patch(detail, {"status": "published"}, format="json").status_code == 403
+
+
+def test_page_patch_ignores_fields_outside_the_allowlist(auth_client):
+    owner_id = _acct()
+    owner = auth_client(owner_id)
+    page = _page(owner, "safe_page")
+    resp = owner.patch(
+        reverse("profiles:page-detail", args=[page["id"]]),
+        {"name": "New", "owner_account_id": _acct(), "handle": "stolen"},
+        format="json",
+    )
+    assert resp.status_code == 200
+    stored = Page.objects.get(id=page["id"])
+    assert (stored.name, stored.handle, str(stored.owner_account_id)) == (
+        "New",
+        "safe_page",
+        owner_id,
+    )
+
+
+def test_member_roles_removal_and_leaving(auth_client):
+    owner_id, a_id, b_id = _acct(), _acct(), _acct()
+    owner = auth_client(owner_id)
+    page = _page(owner, "roles_page")
+    members = reverse("profiles:page-members", args=[page["id"]])
+    a = owner.post(members, {"account_id": a_id, "role": "editor"}, format="json").json()["data"]
+    b = owner.post(members, {"account_id": b_id, "role": "analyst"}, format="json").json()["data"]
+
+    url_a = reverse("profiles:page-member-detail", args=[page["id"], a["id"]])
+    url_b = reverse("profiles:page-member-detail", args=[page["id"], b["id"]])
+    assert owner.patch(url_a, {"role": "admin"}, format="json").status_code == 200
+    assert auth_client(b_id).delete(url_a).status_code == 403
+    assert auth_client(b_id).delete(url_b).status_code == 204  # leaving is allowed
+    assert owner.delete(url_a).status_code == 204
+
+    owner_row = PageMember.objects.get(page_id=page["id"], account_id=owner_id)
+    url_owner = reverse("profiles:page-member-detail", args=[page["id"], owner_row.id])
+    assert owner.delete(url_owner).status_code == 400
+
+
+def test_cannot_add_a_blocked_account_to_a_page(auth_client):
+    owner_id, blocked = _acct(), _acct()
+    owner = auth_client(owner_id)
+    page = _page(owner, "noblock_page")
+    BlockedPair.objects.create(blocker_id=blocked, blocked_id=owner_id)
+    resp = owner.post(
+        reverse("profiles:page-members", args=[page["id"]]),
+        {"account_id": blocked, "role": "editor"},
+        format="json",
+    )
+    assert resp.status_code == 403
+
+
+def test_internal_handle_lookup_needs_a_service_token(client):
+    resp = client.post(
+        "/internal/v1/profiles/by-handle/",
+        {"handles": ["x"]},
+        content_type="application/json",
+    )
+    assert resp.status_code == 401
+
+
+def test_a_new_profile_is_announced_so_search_can_index_it():
+    account = _acct()
+    services.ensure_profile(account, display_name="New Person", requested_handle="new_person")
+    event = OutboxEvent.objects.get(event_type="profile.updated")
+    assert event.payload["payload"]["handle"] == "new_person"
+    assert event.payload["subject_id"] == account

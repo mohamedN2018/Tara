@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from tara_common.exceptions import TaraAPIError
+from tara_common.pagination import CursorPagination
 from tara_common.responses import data_response
 
 from . import services
@@ -21,7 +22,7 @@ from .models import (
     UserProfile,
     UserWorkExperience,
 )
-from .privacy import resolve_context, visible_fields
+from .privacy import field_visibility_map, resolve_context, visible_fields
 from .serializers import (
     EducationSerializer,
     FieldPrivacyBulkSerializer,
@@ -32,6 +33,7 @@ from .serializers import (
     PageCreateSerializer,
     PageMemberSerializer,
     PageSerializer,
+    PageUpdateSerializer,
     ProfileLookupSerializer,
     ProfileUpdateSerializer,
     WorkSerializer,
@@ -105,6 +107,13 @@ class MyProfileView(APIView):
 
 class FieldPrivacyView(APIView):
     permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: None}, tags=["profile"])
+    def get(self, request: Request) -> Response:
+        levels = field_visibility_map(_require_profile(request))
+        return data_response(
+            {"items": [{"field_key": k, "visibility": v} for k, v in levels.items()]}
+        )
 
     @extend_schema(request=FieldPrivacyBulkSerializer, responses={200: None}, tags=["profile"])
     def put(self, request: Request) -> Response:
@@ -218,15 +227,33 @@ class ProfileLookupView(APIView):
 # ---- pages ------------------------------------------------------------------
 
 
+def _page_data(page: Page, request: Request) -> dict:
+    return PageSerializer(page, context={"viewer_id": request.user.account_id}).data
+
+
 class PageCreateView(APIView):
     permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: PageSerializer(many=True)}, tags=["pages"])
+    def get(self, request: Request) -> Response:
+        """Browse pages (``?q=`` searches), or the caller's own with ``?mine=1``."""
+        pages = services.list_pages(
+            request.user.account_id,
+            q=request.query_params.get("q", "").strip(),
+            mine=request.query_params.get("mine") in ("1", "true"),
+        )
+        paginator = CursorPagination()
+        page = paginator.paginate_queryset(pages, request)
+        return paginator.get_paginated_response(
+            PageSerializer(page, many=True, context={"viewer_id": request.user.account_id}).data
+        )
 
     @extend_schema(request=PageCreateSerializer, responses={201: PageSerializer}, tags=["pages"])
     def post(self, request: Request) -> Response:
         serializer = PageCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         page = services.create_page(request.user.account_id, serializer.validated_data)
-        return data_response(PageSerializer(page).data, status=status.HTTP_201_CREATED)
+        return data_response(_page_data(page, request), status=status.HTTP_201_CREATED)
 
 
 class PageByHandleView(APIView):
@@ -234,38 +261,41 @@ class PageByHandleView(APIView):
 
     @extend_schema(responses={200: PageSerializer}, tags=["pages"])
     def get(self, request: Request, handle: str) -> Response:
-        page = Page.objects.filter(handle=handle.lower(), deleted_at__isnull=True).first()
-        if page is None:
-            raise TaraAPIError("Page not found.", code="not_found", http_status_code=404)
-        return data_response(PageSerializer(page).data)
+        page = services.get_visible_page(request.user.account_id, handle=handle.lower())
+        return data_response(_page_data(page, request))
 
 
 class PageDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def _get(self, page_id: str) -> Page:
-        page = Page.objects.filter(id=page_id, deleted_at__isnull=True).first()
-        if page is None:
-            raise TaraAPIError("Page not found.", code="not_found", http_status_code=404)
-        return page
+    @extend_schema(responses={200: PageSerializer}, tags=["pages"])
+    def get(self, request: Request, page_id: str) -> Response:
+        page = services.get_visible_page(request.user.account_id, id=page_id)
+        return data_response(_page_data(page, request))
 
-    @extend_schema(request=PageSerializer, responses={200: PageSerializer}, tags=["pages"])
+    @extend_schema(request=PageUpdateSerializer, responses={200: PageSerializer}, tags=["pages"])
     def patch(self, request: Request, page_id: str) -> Response:
-        page = self._get(page_id)
-        page = services.update_page(page, request.user.account_id, request.data)
-        return data_response(PageSerializer(page).data)
+        serializer = PageUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        page = services.get_visible_page(request.user.account_id, id=page_id)
+        page = services.update_page(page, request.user.account_id, serializer.validated_data)
+        return data_response(_page_data(page, request))
 
 
 class PageMembersView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={200: PageMemberSerializer(many=True)}, tags=["pages"])
+    def get(self, request: Request, page_id: str) -> Response:
+        page = services.get_visible_page(request.user.account_id, id=page_id)
+        members = services.list_page_members(page, request.user.account_id)
+        return data_response(PageMemberSerializer(members, many=True).data)
+
     @extend_schema(
         request=MemberAddSerializer, responses={201: PageMemberSerializer}, tags=["pages"]
     )
     def post(self, request: Request, page_id: str) -> Response:
-        page = Page.objects.filter(id=page_id, deleted_at__isnull=True).first()
-        if page is None:
-            raise TaraAPIError("Page not found.", code="not_found", http_status_code=404)
+        page = services.get_visible_page(request.user.account_id, id=page_id)
         serializer = MemberAddSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         member = services.add_member(
@@ -280,15 +310,26 @@ class PageMembersView(APIView):
 class PageMemberDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(
-        request=MemberRoleSerializer, responses={200: PageMemberSerializer}, tags=["pages"]
-    )
-    def patch(self, request: Request, page_id: str, member_id: str) -> Response:
+    def _member(self, request: Request, page_id: str, member_id: str) -> PageMember:
+        services.get_visible_page(request.user.account_id, id=page_id)
         member = (
             PageMember.objects.filter(id=member_id, page_id=page_id).select_related("page").first()
         )
         if member is None:
             raise TaraAPIError("Member not found.", code="not_found", http_status_code=404)
+        return member
+
+    @extend_schema(responses={204: None}, tags=["pages"])
+    def delete(self, request: Request, page_id: str, member_id: str) -> Response:
+        member = self._member(request, page_id, member_id)
+        services.remove_member(member.page, request.user.account_id, member)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @extend_schema(
+        request=MemberRoleSerializer, responses={200: PageMemberSerializer}, tags=["pages"]
+    )
+    def patch(self, request: Request, page_id: str, member_id: str) -> Response:
+        member = self._member(request, page_id, member_id)
         serializer = MemberRoleSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         member = services.update_member_role(
