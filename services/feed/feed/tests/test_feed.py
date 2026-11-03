@@ -40,7 +40,8 @@ def test_public_fanout_reaches_followers_friends_and_author(monkeypatch):
     assert created == 3  # follower, friend, author
     assert FeedItem.objects.filter(recipient_id=follower, post_id=payload["post_id"]).exists()
     assert FeedItem.objects.filter(recipient_id=author, reason="self").exists()
-    assert OutboxEvent.objects.filter(event_type="feed.item.added").count() == 3
+    summary = OutboxEvent.objects.get(event_type="feed.item.added")  # one row, not one per reader
+    assert sorted(summary.payload["payload"]["recipients"]) == sorted([author, follower, friend])
 
     # Idempotent re-delivery -> no new items.
     assert services.fan_out_post(payload) == 0

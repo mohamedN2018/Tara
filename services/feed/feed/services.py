@@ -94,13 +94,18 @@ def fan_out_post(payload: dict) -> int:
             ],
             ignore_conflicts=True,
         )
-        for r in new_recipients:
-            events.emit(
-                "feed.item.added",
-                subject_id=str(post_id),
-                payload={"recipient": str(r), "post_id": str(post_id), "author_id": str(author_id)},
-                partition_key=f"recipient:{r}",
-            )
+        # One summary event: only the realtime bridge consumes it, and it pushes
+        # to each recipient's socket itself.
+        events.emit(
+            "feed.item.added",
+            subject_id=str(post_id),
+            payload={
+                "recipients": [str(r) for r in new_recipients],
+                "post_id": str(post_id),
+                "author_id": str(author_id),
+            },
+            partition_key=f"post:{post_id}",
+        )
     return len(new_recipients)
 
 
@@ -113,9 +118,10 @@ def remove_post(post_id: str) -> None:
 
 
 def update_post_excerpt(post_id: str, excerpt: str) -> None:
-    for item in FeedItem.objects.filter(post_id=post_id):
+    items = list(FeedItem.objects.filter(post_id=post_id))
+    for item in items:
         item.snapshot["excerpt"] = excerpt
-        item.save(update_fields=["snapshot"])
+    FeedItem.objects.bulk_update(items, ["snapshot"], batch_size=500)
 
 
 def remove_friends_only_posts(a: str, b: str) -> None:

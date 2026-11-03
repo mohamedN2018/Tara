@@ -126,7 +126,7 @@ Events are **never** published directly inside the business transaction. Instead
 ### Feed
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
-| `feed.item.added` | feed_item | recipient, post_id | Realtime (new-post indicator) |
+| `feed.item.added` | post | recipients[], post_id, author_id (one summary event per fan-out) | Realtime (new-post indicator) |
 
 ### Media
 | Event | Subject | Key payload | Consumers |

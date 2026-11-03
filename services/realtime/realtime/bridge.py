@@ -86,13 +86,12 @@ def on_notification_created(event: EventEnvelope) -> None:
 @on_event("feed.item.added")
 def on_feed_item_added(event: EventEnvelope) -> None:
     p = event.payload
-    recipient = p.get("recipient")
-    if recipient:
-        _push_to_user(
-            recipient,
-            {
-                "event": "feed.item.added",
-                "post_id": p.get("post_id"),
-                "author_id": p.get("author_id"),
-            },
-        )
+    data = {
+        "event": "feed.item.added",
+        "post_id": p.get("post_id"),
+        "author_id": p.get("author_id"),
+    }
+    # Rows queued before the summary event carry a single `recipient`.
+    recipients = p.get("recipients") or ([p["recipient"]] if p.get("recipient") else [])
+    for recipient in recipients:
+        _push_to_user(recipient, data)

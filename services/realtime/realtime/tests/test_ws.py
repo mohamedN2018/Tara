@@ -80,3 +80,21 @@ async def test_ping_pong(token_for):
     pong = await comm.receive_json_from()
     assert pong["event"] == "pong"
     await comm.disconnect()
+
+
+def test_feed_summary_event_pushes_to_every_recipient(monkeypatch):
+    from realtime import bridge
+    from tara_events.envelope import EventEnvelope
+
+    pushed = []
+    monkeypatch.setattr(bridge, "_push_to_user", lambda who, data: pushed.append((who, data)))
+    bridge.on_feed_item_added(
+        EventEnvelope(
+            event_type="feed.item.added",
+            subject_id="p1",
+            producer="feed-service",
+            payload={"recipients": ["a", "b"], "post_id": "p1", "author_id": "z"},
+        )
+    )
+    assert [who for who, _ in pushed] == ["a", "b"]
+    assert pushed[0][1] == {"event": "feed.item.added", "post_id": "p1", "author_id": "z"}
