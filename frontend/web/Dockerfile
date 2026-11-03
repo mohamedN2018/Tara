@@ -1,7 +1,7 @@
 # Tara web client — build the Vue app, serve it with nginx, and reverse-proxy
 # the API + WebSocket so the whole platform is one origin (one domain on Dokploy).
 #   build context = frontend/web
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
@@ -13,9 +13,9 @@ ENV VITE_API_BASE=$VITE_API_BASE \
     VITE_WS_URL=$VITE_WS_URL
 RUN npm run build
 
-FROM nginx:1.27-alpine
+FROM nginx:1.29-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
 HEALTHCHECK --interval=15s --timeout=3s --retries=10 \
-  CMD wget -qO- http://localhost/healthz.txt >/dev/null 2>&1 || exit 1
+  CMD wget -qO- http://127.0.0.1/healthz.txt >/dev/null 2>&1 || exit 1

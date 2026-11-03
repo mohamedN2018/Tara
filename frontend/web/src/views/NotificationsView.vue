@@ -10,10 +10,12 @@ import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
 import { notificationService } from "@/services/notification";
 import { useNotificationStore } from "@/stores/notifications";
+import { useToastStore } from "@/stores/toasts";
 import type { Notification } from "@/types";
 
 const { t } = useI18n();
 const store = useNotificationStore();
+const toasts = useToastStore();
 
 const items = ref<Notification[]>([]);
 const loading = ref(true);
@@ -45,8 +47,8 @@ async function loadMore() {
     items.value.push(...page.data);
     cursor.value = page.page.next_cursor;
     hasMore.value = page.page.has_more;
-  } catch {
-    /* keep what we have */
+  } catch (e) {
+    toasts.error(e);
   } finally {
     loadingMore.value = false;
   }
@@ -59,15 +61,21 @@ async function markRead(id: string) {
   store.unread = Math.max(0, store.unread - 1);
   try {
     await notificationService.markRead(id);
-  } catch {
+  } catch (e) {
     item.read_at = null;
+    store.unread += 1;
+    toasts.error(e);
   }
 }
 
 async function markAll() {
   items.value.forEach((n) => (n.read_at = n.read_at ?? new Date().toISOString()));
   store.clear();
-  await notificationService.markAllRead().catch(() => {});
+  await notificationService.markAllRead().catch((e) => {
+    toasts.error(e);
+    void load();
+    void store.refresh();
+  });
 }
 
 onMounted(load);

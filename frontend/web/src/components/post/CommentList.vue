@@ -22,7 +22,7 @@ const { t } = useI18n();
 const directory = useDirectoryStore();
 
 function nameFor(id: string): string {
-  return props.knownNames[id] || directory.nameOf(id) || id.slice(0, 8);
+  return props.knownNames[id] || directory.label(id);
 }
 
 interface ReplyView extends Comment {
@@ -117,11 +117,11 @@ function toggle(rootId: string) {
     <div v-for="th in threads" :key="th.root.id" class="space-y-2">
       <!-- Root comment -->
       <div class="flex items-start gap-2">
-        <UserAvatar :name="nameFor(th.root.author_id)" :size="32" />
+        <UserAvatar :name="nameFor(th.root.author_id)" :media-id="directory.avatarOf(th.root.author_id)" :size="32" />
         <div class="min-w-0 flex-1">
           <div class="inline-block rounded-2xl bg-gray-100 px-3 py-1.5 dark:bg-gray-800">
-            <span class="block text-xs font-semibold">{{ nameFor(th.root.author_id) }}</span>
-            <span class="whitespace-pre-wrap break-words text-sm">{{ th.root.body }}</span>
+            <span class="block text-xs font-semibold" dir="auto">{{ nameFor(th.root.author_id) }}</span>
+            <span class="whitespace-pre-wrap break-words text-sm" dir="auto">{{ th.root.body }}</span>
           </div>
           <div class="mt-0.5 flex items-center gap-3 ps-2 text-[11px] text-gray-400">
             <time>{{ relativeTime(th.root.created_at) }}</time>
@@ -136,17 +136,17 @@ function toggle(rootId: string) {
             class="mt-1 ps-2 text-xs font-semibold text-brand-600 hover:underline"
             @click="toggle(th.root.id)"
           >
-            {{ th.replies.length === 1 ? t("post.viewReply") : t("post.viewReplies", { count: th.replies.length }) }}
+            {{ t("post.viewReplies", th.replies.length) }}
           </button>
 
           <!-- Replies -->
           <div v-if="expanded.has(th.root.id)" class="mt-2 space-y-2 border-s border-gray-200 ps-3 dark:border-gray-700">
             <div v-for="r in th.replies" :key="r.id" class="flex items-start gap-2">
-              <UserAvatar :name="nameFor(r.author_id)" :size="26" />
+              <UserAvatar :name="nameFor(r.author_id)" :media-id="directory.avatarOf(r.author_id)" :size="26" />
               <div class="min-w-0">
                 <div class="inline-block rounded-2xl bg-gray-100 px-3 py-1.5 dark:bg-gray-800">
-                  <span class="block text-xs font-semibold">{{ nameFor(r.author_id) }}</span>
-                  <span class="whitespace-pre-wrap break-words text-sm">
+                  <span class="block text-xs font-semibold" dir="auto">{{ nameFor(r.author_id) }}</span>
+                  <span class="whitespace-pre-wrap break-words text-sm" dir="auto">
                     <span v-if="r.toName" class="font-medium text-brand-600">@{{ r.toName }} </span>{{ r.body }}
                   </span>
                 </div>
@@ -171,7 +171,7 @@ function toggle(rootId: string) {
           <div v-if="replyRootId === th.root.id" class="mt-2">
             <div class="mb-1 flex items-center gap-2 ps-2 text-[11px] text-gray-500">
               <span>{{ t("post.replyingTo", { name: replyTargetName }) }}</span>
-              <button class="font-semibold text-red-500 hover:underline" @click="cancelReply">×</button>
+              <button class="font-semibold text-red-500 hover:underline" :aria-label="t('post.cancelReply')" @click="cancelReply">×</button>
             </div>
             <CommentInput
               :submitting="submitting"

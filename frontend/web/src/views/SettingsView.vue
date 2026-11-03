@@ -6,15 +6,17 @@ import { useI18n } from "vue-i18n";
 import LocaleToggle from "@/components/common/LocaleToggle.vue";
 import ThemeToggle from "@/components/common/ThemeToggle.vue";
 import AppShell from "@/components/layout/AppShell.vue";
-import { apiError } from "@/lib/api";
+import { errorMessage } from "@/lib/errors";
 import { relativeTime } from "@/lib/format";
 import { identityService, type UserSession } from "@/services/identity";
-import { notificationService } from "@/services/notification";
+import { notificationService, type NotificationPrefs } from "@/services/notification";
 import { profileService } from "@/services/profile";
 import { useAuthStore } from "@/stores/auth";
+import { useToastStore } from "@/stores/toasts";
 
 const { t } = useI18n();
 const auth = useAuthStore();
+const toasts = useToastStore();
 
 // --- Profile quick-edit ---
 const form = ref({
@@ -37,48 +39,80 @@ async function save() {
     auth.profile = updated;
     message.value = t("settings.saved");
   } catch (e) {
-    error.value = apiError(e).message;
+    error.value = errorMessage(e);
   } finally {
     saving.value = false;
   }
 }
 
 // --- Notification preferences ---
-const NOTIF_CATS = ["reaction", "comment", "friend_request", "follow", "message", "marketplace"];
-const prefs = ref<Record<string, boolean>>({});
+const NOTIF_KINDS = [
+  "post.reaction",
+  "post.comment",
+  "comment.reply",
+  "friend.request",
+  "friend.accepted",
+  "follow",
+  "message",
+  "listing.status",
+];
+const CHANNEL = "in_app";
+const prefs = ref<NotificationPrefs>({});
 const quiet = ref<{ start?: string; end?: string }>({});
 const prefsLoading = ref(true);
+const prefsError = ref(false);
+
+const isEnabled = (kind: string) => prefs.value[kind]?.[CHANNEL] !== false; // default on
 
 async function loadPrefs() {
+  prefsLoading.value = true;
+  prefsError.value = false;
   try {
     const p = await notificationService.getPreferences();
-    const merged: Record<string, boolean> = {};
-    for (const c of NOTIF_CATS) merged[c] = p.prefs[c] !== false; // default on
-    prefs.value = merged;
+    // PATCH replaces `prefs` whole, so other channels must be kept and sent back.
+    prefs.value = Object.fromEntries(
+      Object.entries(p.prefs).filter(([, channels]) => channels && typeof channels === "object"),
+    );
     quiet.value = p.quiet_hours ?? {};
   } catch {
-    for (const c of NOTIF_CATS) prefs.value[c] = true;
+    // Never show (or save) guessed defaults over the user's real choices.
+    prefsError.value = true;
   } finally {
     prefsLoading.value = false;
   }
 }
-async function savePrefs() {
+
+async function togglePref(kind: string, enabled: boolean) {
+  const previous = prefs.value;
+  prefs.value = { ...previous, [kind]: { ...previous[kind], [CHANNEL]: enabled } };
   try {
-    await notificationService.updatePreferences({ prefs: prefs.value, quiet_hours: quiet.value });
-  } catch {
-    /* best-effort */
+    await notificationService.updatePreferences({ prefs: prefs.value });
+  } catch (e) {
+    prefs.value = previous;
+    toasts.error(e);
+  }
+}
+
+async function saveQuietHours() {
+  try {
+    await notificationService.updatePreferences({ quiet_hours: quiet.value });
+  } catch (e) {
+    toasts.error(e);
   }
 }
 
 // --- Active sessions ---
 const sessions = ref<UserSession[]>([]);
 const sessionsLoading = ref(true);
+const sessionsError = ref(false);
 
 async function loadSessions() {
+  sessionsLoading.value = true;
+  sessionsError.value = false;
   try {
     sessions.value = await identityService.sessions();
   } catch {
-    sessions.value = [];
+    sessionsError.value = true;
   } finally {
     sessionsLoading.value = false;
   }
@@ -87,8 +121,8 @@ async function revoke(id: string) {
   try {
     await identityService.revokeSession(id);
     sessions.value = sessions.value.filter((s) => s.id !== id);
-  } catch {
-    /* ignore */
+  } catch (e) {
+    toasts.error(e);
   }
 }
 
@@ -139,14 +173,18 @@ onMounted(() => {
       <section class="card mb-4 p-4">
         <h2 class="mb-3 font-semibold">{{ t("settings.notifications") }}</h2>
         <p v-if="prefsLoading" class="text-sm text-gray-400">{{ t("states.loading") }}</p>
+        <p v-else-if="prefsError" class="flex items-center justify-between gap-2 text-sm text-gray-500">
+          {{ t("settings.prefsUnavailable") }}
+          <button class="btn-ghost text-sm" @click="loadPrefs">{{ t("states.retry") }}</button>
+        </p>
         <div v-else class="divide-y divide-gray-100 dark:divide-gray-800">
-          <label v-for="c in NOTIF_CATS" :key="c" class="flex cursor-pointer items-center justify-between py-2.5">
-            <span class="text-sm">{{ t(`settings.notif.${c}`) }}</span>
+          <label v-for="k in NOTIF_KINDS" :key="k" class="flex cursor-pointer items-center justify-between py-2.5">
+            <span class="text-sm">{{ t(`settings.notif.${k.replace(".", "_")}`) }}</span>
             <input
-              v-model="prefs[c]"
               type="checkbox"
               class="h-5 w-5 rounded accent-brand-600"
-              @change="savePrefs"
+              :checked="isEnabled(k)"
+              @change="togglePref(k, ($event.target as HTMLInputElement).checked)"
             />
           </label>
           <div class="pt-3">
@@ -154,11 +192,11 @@ onMounted(() => {
             <div class="flex items-center gap-3 text-sm">
               <label class="flex items-center gap-1.5">
                 <span class="text-gray-500">{{ t("settings.quietFrom") }}</span>
-                <input v-model="quiet.start" type="time" class="input w-auto" @change="savePrefs" />
+                <input v-model="quiet.start" type="time" class="input w-auto" @change="saveQuietHours" />
               </label>
               <label class="flex items-center gap-1.5">
                 <span class="text-gray-500">{{ t("settings.quietTo") }}</span>
-                <input v-model="quiet.end" type="time" class="input w-auto" @change="savePrefs" />
+                <input v-model="quiet.end" type="time" class="input w-auto" @change="saveQuietHours" />
               </label>
             </div>
           </div>
@@ -169,6 +207,10 @@ onMounted(() => {
       <section class="card mb-4 p-4">
         <h2 class="mb-3 font-semibold">{{ t("settings.sessions") }}</h2>
         <p v-if="sessionsLoading" class="text-sm text-gray-400">{{ t("states.loading") }}</p>
+        <p v-else-if="sessionsError" class="flex items-center justify-between gap-2 text-sm text-gray-500">
+          {{ t("settings.sessionsUnavailable") }}
+          <button class="btn-ghost text-sm" @click="loadSessions">{{ t("states.retry") }}</button>
+        </p>
         <ul v-else class="space-y-2">
           <li
             v-for="s in sessions"
@@ -196,20 +238,20 @@ onMounted(() => {
         <h2 class="mb-3 font-semibold">{{ t("profile.editProfile") }}</h2>
         <form class="space-y-3" @submit.prevent="save">
           <div>
-            <label class="mb-1 block text-sm font-medium">{{ t("auth.displayName") }}</label>
-            <input v-model="form.display_name" class="input" />
+            <label for="settings-name" class="mb-1 block text-sm font-medium">{{ t("auth.displayName") }}</label>
+            <input id="settings-name" v-model="form.display_name" class="input" dir="auto" />
           </div>
           <div>
-            <label class="mb-1 block text-sm font-medium">{{ t("settings.intro") }}</label>
-            <input v-model="form.intro" class="input" maxlength="160" />
+            <label for="settings-intro" class="mb-1 block text-sm font-medium">{{ t("settings.intro") }}</label>
+            <input id="settings-intro" v-model="form.intro" class="input" dir="auto" maxlength="160" />
           </div>
           <div>
-            <label class="mb-1 block text-sm font-medium">{{ t("profile.bioLabel") }}</label>
-            <textarea v-model="form.bio" class="input min-h-[80px] resize-none" />
+            <label for="settings-bio" class="mb-1 block text-sm font-medium">{{ t("profile.bioLabel") }}</label>
+            <textarea id="settings-bio" v-model="form.bio" class="input min-h-[80px] resize-none" dir="auto" />
           </div>
           <div class="grid grid-cols-2 gap-3">
-            <input v-model="form.city" class="input" :placeholder="t('profile.location')" />
-            <input v-model="form.country" class="input" :placeholder="t('profile.location')" />
+            <input v-model="form.city" class="input" dir="auto" :aria-label="t('profile.city')" :placeholder="t('profile.city')" />
+            <input v-model="form.country" class="input" dir="auto" :aria-label="t('profile.country')" :placeholder="t('profile.country')" />
           </div>
 
           <p class="text-xs text-gray-400">{{ t("settings.fullProfileHint") }}</p>

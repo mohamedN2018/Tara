@@ -26,12 +26,12 @@ function setOnline() {
 
 // Keep the directory seeded with the current user (so "You" resolves anywhere).
 function seedSelf() {
-  if (auth.account?.id) {
+  if (auth.account?.id && auth.profile) {
     directory.remember(
       auth.account.id,
-      auth.profile?.display_name || auth.account.email?.split("@")[0],
-      auth.profile?.avatar_media_id,
-      auth.profile?.handle,
+      auth.profile.display_name,
+      auth.profile.avatar_media_id,
+      auth.profile.handle,
     );
   }
 }
@@ -58,6 +58,8 @@ onMounted(() => {
   );
   unsubs.push(
     realtime.on("chat.message.created", (f) => {
+      // The gateway also echoes our own messages (one per recipient, sender included).
+      if (f.sender === auth.account?.id) return;
       const convoId = f.conversation_id as string | undefined;
       // Don't toast for the conversation the user is already reading.
       if (convoId && route.path === `/messages/${convoId}`) return;

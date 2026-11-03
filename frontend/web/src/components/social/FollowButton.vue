@@ -4,10 +4,12 @@ import { ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { graphService } from "@/services/graph";
+import { useToastStore } from "@/stores/toasts";
 
 const props = defineProps<{ userId: string; following: boolean }>();
 
 const { t } = useI18n();
+const toasts = useToastStore();
 const isFollowing = ref(props.following);
 // Follow state may resolve asynchronously on the profile; keep in sync.
 watch(
@@ -24,8 +26,9 @@ async function toggle() {
   try {
     if (next) await graphService.follow(props.userId);
     else await graphService.unfollow(props.userId);
-  } catch {
+  } catch (e) {
     isFollowing.value = !next;
+    toasts.error(e);
   } finally {
     busy.value = false;
   }

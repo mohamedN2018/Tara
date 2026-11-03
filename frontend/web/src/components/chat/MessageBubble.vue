@@ -12,6 +12,7 @@ const props = defineProps<{
   mine: boolean;
   replyTo?: Message | null;
   replyToName?: string;
+  senderName?: string;
 }>();
 defineEmits<{ reply: [message: Message] }>();
 const { t } = useI18n();
@@ -59,11 +60,11 @@ function preview(m: Message): string {
         :class="mine ? 'border-white/60 bg-white/15' : 'border-brand-500 bg-black/5 dark:bg-white/10'"
       >
         <span class="block font-semibold">{{ replyToName }}</span>
-        <span class="block truncate opacity-80">{{ preview(replyTo) }}</span>
+        <span class="block truncate opacity-80" dir="auto">{{ preview(replyTo) }}</span>
       </div>
 
       <div v-if="images.length" class="grid gap-0.5" :class="images.length > 1 ? 'grid-cols-2' : 'grid-cols-1'">
-        <img v-for="(src, i) in images" :key="i" :src="src" class="max-h-64 w-full object-cover" loading="lazy" decoding="async" alt="" />
+        <img v-for="(src, i) in images" :key="i" :src="src" class="max-h-64 w-full object-cover" loading="lazy" decoding="async" :alt="t('messages.photoFrom', { name: senderName ?? '' })" />
       </div>
 
       <div class="px-3 py-2">
@@ -71,7 +72,7 @@ function preview(m: Message): string {
           <Mic class="h-4 w-4" />
           <span>{{ t("messages.voiceNote") }}</span>
         </div>
-        <p v-else-if="message.body" class="whitespace-pre-wrap break-words">{{ message.body }}</p>
+        <p v-else-if="message.body" class="whitespace-pre-wrap break-words" dir="auto">{{ message.body }}</p>
         <time class="mt-0.5 block text-[10px] opacity-70">
           {{ relativeTime(message.created_at) }}
           <span v-if="message.edited_at"> · {{ t("messages.edited") }}</span>

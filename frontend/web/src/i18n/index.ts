@@ -7,11 +7,25 @@ export type Locale = "en" | "ar";
 
 const stored = (localStorage.getItem("tara.locale") as Locale | null) ?? "ar";
 
+/**
+ * Arabic has six plural forms, written in this order in ar.ts:
+ * zero | one | two | few (3-10) | many (11-99) | other (100+, 101, 102…).
+ */
+export function arabicPlural(count: number): number {
+  const n = Math.abs(count);
+  if (n <= 2) return n;
+  const lastTwo = n % 100;
+  if (lastTwo >= 3 && lastTwo <= 10) return 3;
+  if (lastTwo >= 11) return 4;
+  return 5;
+}
+
 export const i18n = createI18n({
   legacy: false,
   locale: stored,
   fallbackLocale: "en",
   messages: { en, ar },
+  pluralRules: { ar: arabicPlural },
 });
 
 /** Apply locale + document direction together; persists the choice. */

@@ -28,6 +28,8 @@ function onInput() {
     <input
       v-model="value"
       class="input ps-9"
+      dir="auto"
+      :aria-label="t('nav.search')"
       :placeholder="t('search.placeholder')"
       :autofocus="autofocus"
       @input="onInput"

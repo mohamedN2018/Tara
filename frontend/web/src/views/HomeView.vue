@@ -16,10 +16,12 @@ import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
 import { realtime } from "@/lib/ws";
 import { feedService } from "@/services/feed";
+import { useToastStore } from "@/stores/toasts";
 import { postService } from "@/services/post";
 import type { Post, SponsoredSlot } from "@/types";
 
 const { t } = useI18n();
+const toasts = useToastStore();
 
 const posts = ref<Post[]>([]);
 const sponsored = ref<SponsoredSlot[]>([]);
@@ -28,24 +30,6 @@ const hasMore = ref(true);
 const loading = ref(true);
 const loadingMore = ref(false);
 const error = ref(false);
-
-/** The feed delivers a snapshot of each post; render it directly. */
-function snapshotToPost(snapshot: Record<string, unknown>, fallbackId: string): Post {
-  return {
-    id: (snapshot.id as string) ?? fallbackId,
-    author_id: (snapshot.author_id as string) ?? "",
-    author_type: (snapshot.author_type as string) ?? "user",
-    type: (snapshot.type as string) ?? "text",
-    // The feed snapshot exposes `excerpt` (truncated body); fall back gracefully.
-    body: (snapshot.body as string) ?? (snapshot.excerpt as string) ?? "",
-    audience: (snapshot.audience as string) ?? "public",
-    media_ids: (snapshot.media_ids as string[]) ?? [],
-    reaction_count: (snapshot.reaction_count as number) ?? 0,
-    comment_count: (snapshot.comment_count as number) ?? 0,
-    share_count: (snapshot.share_count as number) ?? 0,
-    created_at: (snapshot.created_at as string) ?? new Date().toISOString(),
-  };
-}
 
 async function load(initial = false) {
   if (initial) {
@@ -56,14 +40,16 @@ async function load(initial = false) {
     loadingMore.value = true;
   }
   try {
-    const resp = await feedService.home(initial ? undefined : (cursor.value ?? undefined));
-    const mapped = resp.data.map((item) => snapshotToPost(item.snapshot, item.post_id));
-    posts.value = initial ? mapped : [...posts.value, ...mapped];
-    if (initial) sponsored.value = resp.sponsored ?? [];
-    cursor.value = resp.page.next_cursor;
-    hasMore.value = resp.page.has_more;
-  } catch {
+    const page = await feedService.page(initial ? undefined : (cursor.value ?? undefined));
+    const known = new Set(initial ? [] : posts.value.map((p) => p.id));
+    const fresh = page.posts.filter((p) => !known.has(p.id));
+    posts.value = initial ? fresh : [...posts.value, ...fresh];
+    if (initial) sponsored.value = page.sponsored;
+    cursor.value = page.nextCursor;
+    hasMore.value = page.hasMore;
+  } catch (e) {
     if (initial) error.value = true;
+    else toasts.error(e);
   } finally {
     loading.value = false;
     loadingMore.value = false;
@@ -82,7 +68,7 @@ function onRemoved(id: string) {
 // Real-time: new feed items arrive as `feed.item.added`; stash them and reveal
 // via a pill (keeps scroll position instead of jumping).
 const pending = ref<Post[]>([]);
-let unsubFeed: (() => void) | null = null;
+let unsubs: Array<() => void> = [];
 
 async function onFeedItem(postId: unknown) {
   const id = typeof postId === "string" ? postId : null;
@@ -92,6 +78,16 @@ async function onFeedItem(postId: unknown) {
     pending.value.unshift(await postService.get(id));
   } catch {
     // Post may be unavailable; ignore.
+  }
+}
+
+// Feed pushes sent while the socket was down are gone: compare with the top of the feed.
+async function catchUp() {
+  try {
+    const { data } = await feedService.home();
+    await Promise.all(data.map((item) => onFeedItem(item.post_id)));
+  } catch {
+    // Still reachable through a page reload.
   }
 }
 
@@ -114,7 +110,10 @@ onMounted(() => {
     { rootMargin: "600px" },
   );
   load(true);
-  unsubFeed = realtime.on("feed.item.added", (frame) => onFeedItem(frame.post_id));
+  unsubs = [
+    realtime.on("feed.item.added", (frame) => onFeedItem(frame.post_id)),
+    realtime.on("_reconnected", catchUp),
+  ];
 });
 
 watch(sentinel, (el) => {
@@ -124,7 +123,7 @@ watch(sentinel, (el) => {
 
 onUnmounted(() => {
   observer?.disconnect();
-  unsubFeed?.();
+  unsubs.forEach((u) => u());
 });
 </script>
 
@@ -138,7 +137,7 @@ onUnmounted(() => {
           class="rounded-full bg-brand-600 px-4 py-1.5 text-sm font-medium text-white shadow-lg transition hover:bg-brand-700"
           @click="revealPending"
         >
-          ↑ {{ pending.length === 1 ? t("toasts.newPost") : t("toasts.newPosts", { count: pending.length }) }}
+          ↑ {{ t("toasts.newPosts", pending.length) }}
         </button>
       </div>
 

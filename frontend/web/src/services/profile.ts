@@ -1,10 +1,28 @@
 import { api } from "@/lib/api";
 import type { Profile, ProfileEducation, ProfileLink, ProfileWork } from "@/types";
 
+export interface UserCard {
+  account_id: string;
+  handle: string;
+  display_name: string;
+  avatar_media_id: string | null;
+}
+
 export const profileService = {
   // Public profile by handle is served at /users/<handle>/ (not /profiles/).
   async get(handle: string): Promise<Profile> {
     const { data } = await api.get<{ data: Profile }>(`/users/${handle}/`);
+    return data.data;
+  },
+
+  async getById(accountId: string): Promise<Profile> {
+    const { data } = await api.get<{ data: Profile }>(`/users/id/${accountId}/`);
+    return data.data;
+  },
+
+  /** Cards for up to 100 account ids; blocked users are simply left out. */
+  async lookup(ids: string[]): Promise<UserCard[]> {
+    const { data } = await api.post<{ data: UserCard[] }>("/users/lookup/", { ids });
     return data.data;
   },
 

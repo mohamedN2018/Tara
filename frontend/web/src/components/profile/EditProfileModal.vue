@@ -4,8 +4,9 @@ import { reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
-import { apiError } from "@/lib/api";
+import { errorMessage } from "@/lib/errors";
 import { useEscapeKey } from "@/lib/useEscapeKey";
+import { useFocusTrap } from "@/lib/useFocusTrap";
 import { useMediaUrl } from "@/lib/useMediaUrl";
 import { mediaService } from "@/services/media";
 import { profileService } from "@/services/profile";
@@ -19,6 +20,8 @@ const { t } = useI18n();
 const auth = useAuthStore();
 const open = ref(true);
 useEscapeKey(open, () => emit("close"));
+const dialog = ref<HTMLElement | null>(null);
+useFocusTrap(dialog);
 
 const VISIBILITY = [
   { v: "public", label: "profile.visibilityPublic" },
@@ -62,7 +65,7 @@ async function pickAvatar(e: Event) {
   try {
     avatarId.value = (await mediaService.upload(file, "image")).id;
   } catch (err) {
-    error.value = apiError(err).message;
+    error.value = errorMessage(err);
   } finally {
     uploadingAvatar.value = false;
   }
@@ -74,7 +77,7 @@ async function pickCover(e: Event) {
   try {
     coverId.value = (await mediaService.upload(file, "image")).id;
   } catch (err) {
-    error.value = apiError(err).message;
+    error.value = errorMessage(err);
   } finally {
     uploadingCover.value = false;
   }
@@ -88,15 +91,15 @@ async function addLink() {
     newLink.label = "";
     newLink.url = "";
   } catch (err) {
-    error.value = apiError(err).message;
+    error.value = errorMessage(err);
   }
 }
 async function dropLink(id: number) {
   try {
     await profileService.removeLink(id);
     links.value = links.value.filter((l) => l.id !== id);
-  } catch {
-    /* ignore */
+  } catch (err) {
+    error.value = errorMessage(err);
   }
 }
 
@@ -113,15 +116,15 @@ async function addWork() {
     newWork.title = "";
     newWork.is_current = false;
   } catch (err) {
-    error.value = apiError(err).message;
+    error.value = errorMessage(err);
   }
 }
 async function dropWork(id: number) {
   try {
     await profileService.removeWork(id);
     work.value = work.value.filter((w) => w.id !== id);
-  } catch {
-    /* ignore */
+  } catch (err) {
+    error.value = errorMessage(err);
   }
 }
 
@@ -140,15 +143,15 @@ async function addEducation() {
     newEdu.start_year = "";
     newEdu.end_year = "";
   } catch (err) {
-    error.value = apiError(err).message;
+    error.value = errorMessage(err);
   }
 }
 async function dropEducation(id: number) {
   try {
     await profileService.removeEducation(id);
     education.value = education.value.filter((e) => e.id !== id);
-  } catch {
-    /* ignore */
+  } catch (err) {
+    error.value = errorMessage(err);
   }
 }
 
@@ -172,7 +175,7 @@ async function save() {
     await auth.loadProfile();
     emit("saved", fresh);
   } catch (err) {
-    error.value = apiError(err).message;
+    error.value = errorMessage(err);
   } finally {
     saving.value = false;
   }
@@ -183,11 +186,16 @@ async function save() {
   <div class="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4">
     <div class="fixed inset-0" @click="emit('close')" />
     <div
+      ref="dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="profile-dialog-title"
+      tabindex="-1"
       class="card relative z-10 max-h-[94vh] w-full overflow-y-auto rounded-b-none rounded-t-2xl p-0 sm:max-w-lg sm:rounded-2xl"
     >
       <div class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-100 bg-white/95 px-4 py-3 backdrop-blur dark:border-gray-800 dark:bg-gray-900/95">
-        <h2 class="text-lg font-bold">{{ t("profile.editProfileTitle") }}</h2>
-        <button class="rounded-full p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800" @click="emit('close')">
+        <h2 id="profile-dialog-title" class="text-lg font-bold">{{ t("profile.editProfileTitle") }}</h2>
+        <button class="rounded-full p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800" :aria-label="t('market.close')" @click="emit('close')">
           <X class="h-5 w-5" />
         </button>
       </div>
@@ -197,10 +205,10 @@ async function save() {
         <div>
           <p class="mb-1 text-sm font-medium">{{ t("profile.coverPhoto") }}</p>
           <div class="relative h-28 overflow-hidden rounded-xl bg-gradient-to-r from-brand-100 to-brand-50 dark:from-brand-900/40 dark:to-gray-800">
-            <img v-if="coverUrl" :src="coverUrl" class="h-full w-full object-cover" alt="" />
-            <label class="absolute end-2 top-2 flex cursor-pointer items-center gap-1 rounded-full bg-black/55 px-2.5 py-1 text-xs font-medium text-white">
+            <img v-if="coverUrl" :src="coverUrl" class="h-full w-full object-cover" :alt="t('profile.coverPhoto')" />
+            <label class="absolute end-2 top-2 flex cursor-pointer items-center gap-1 rounded-full bg-black/55 px-2.5 py-1 text-xs font-medium text-white focus-within:ring-2 focus-within:ring-brand-300">
               <Camera class="h-3.5 w-3.5" /> {{ uploadingCover ? t("profile.uploading") : t("profile.change") }}
-              <input type="file" accept="image/*" class="hidden" @change="pickCover" />
+              <input type="file" accept="image/*" class="sr-only" :aria-label="t('profile.coverChange')" @change="pickCover" />
             </label>
           </div>
           <div class="-mt-8 ms-4 inline-block">
@@ -208,9 +216,9 @@ async function save() {
               <span class="block rounded-full border-4 border-white dark:border-gray-900">
                 <UserAvatar :name="form.display_name || '?'" :media-id="avatarId" :size="72" :key="avatarUrl || ''" />
               </span>
-              <label class="absolute -end-1 -bottom-1 flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-brand-600 text-white shadow">
+              <label class="absolute -end-1 -bottom-1 flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-brand-600 text-white shadow focus-within:ring-2 focus-within:ring-brand-300">
                 <Camera class="h-3.5 w-3.5" />
-                <input type="file" accept="image/*" class="hidden" @change="pickAvatar" />
+                <input type="file" accept="image/*" class="sr-only" :aria-label="t('profile.avatarChange')" @change="pickAvatar" />
               </label>
             </div>
           </div>
@@ -220,30 +228,30 @@ async function save() {
         <!-- Core fields -->
         <div class="space-y-3">
           <div>
-            <label class="mb-1 block text-sm font-medium">{{ t("auth.displayName") }}</label>
-            <input v-model="form.display_name" class="input" maxlength="120" />
+            <label for="edit-display-name" class="mb-1 block text-sm font-medium">{{ t("auth.displayName") }}</label>
+            <input id="edit-display-name" v-model="form.display_name" class="input" dir="auto" maxlength="120" />
           </div>
           <div>
-            <label class="mb-1 block text-sm font-medium">{{ t("profile.intro") }}</label>
-            <input v-model="form.intro" class="input" :placeholder="t('profile.intro')" maxlength="160" />
+            <label for="edit-intro" class="mb-1 block text-sm font-medium">{{ t("profile.intro") }}</label>
+            <input id="edit-intro" v-model="form.intro" class="input" dir="auto" :placeholder="t('profile.intro')" maxlength="160" />
           </div>
           <div>
-            <label class="mb-1 block text-sm font-medium">{{ t("profile.bioLabel") }}</label>
-            <textarea v-model="form.bio" class="input min-h-20" rows="3" />
+            <label for="edit-bio" class="mb-1 block text-sm font-medium">{{ t("profile.bioLabel") }}</label>
+            <textarea id="edit-bio" v-model="form.bio" class="input min-h-20" dir="auto" rows="3" />
           </div>
           <div class="grid grid-cols-2 gap-3">
             <div>
-              <label class="mb-1 block text-sm font-medium">{{ t("profile.location") }}</label>
-              <input v-model="form.city" class="input" :placeholder="t('profile.location')" />
+              <label for="edit-city" class="mb-1 block text-sm font-medium">{{ t("profile.city") }}</label>
+              <input id="edit-city" v-model="form.city" class="input" dir="auto" :placeholder="t('profile.location')" />
             </div>
             <div>
-              <label class="mb-1 block text-sm font-medium">&nbsp;</label>
-              <input v-model="form.country" class="input" placeholder="—" />
+              <label for="edit-country" class="mb-1 block text-sm font-medium">{{ t("profile.country") }}</label>
+              <input id="edit-country" v-model="form.country" class="input" dir="auto" placeholder="—" />
             </div>
           </div>
           <div>
-            <label class="mb-1 block text-sm font-medium">{{ t("profile.visibility") }}</label>
-            <select v-model="form.visibility" class="input">
+            <label for="edit-visibility" class="mb-1 block text-sm font-medium">{{ t("profile.visibility") }}</label>
+            <select id="edit-visibility" v-model="form.visibility" class="input">
               <option v-for="v in VISIBILITY" :key="v.v" :value="v.v">{{ t(v.label) }}</option>
             </select>
           </div>
@@ -255,12 +263,12 @@ async function save() {
           <ul class="mb-2 space-y-1">
             <li v-for="l in links" :key="l.id" class="flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-1.5 text-sm dark:bg-gray-800/60">
               <span class="min-w-0 flex-1 truncate">{{ l.label }} · <span class="text-gray-400">{{ l.url }}</span></span>
-              <button class="text-gray-400 hover:text-red-500" @click="dropLink(l.id)"><Trash2 class="h-4 w-4" /></button>
+              <button class="text-gray-400 hover:text-red-500" :aria-label="t('profile.remove')" @click="dropLink(l.id)"><Trash2 class="h-4 w-4" /></button>
             </li>
           </ul>
           <div class="flex gap-2">
-            <input v-model="newLink.label" class="input" :placeholder="t('profile.label')" />
-            <input v-model="newLink.url" class="input" :placeholder="t('profile.url')" />
+            <input v-model="newLink.label" class="input" :placeholder="t('profile.label')" :aria-label="t('profile.label')" />
+            <input v-model="newLink.url" class="input" :placeholder="t('profile.url')" :aria-label="t('profile.url')" />
             <button class="btn-ghost shrink-0 px-2" :aria-label="t('profile.addLink')" @click="addLink"><Plus class="h-4 w-4" /></button>
           </div>
         </section>
@@ -274,13 +282,13 @@ async function save() {
                 {{ w.title || "—" }}<span v-if="w.company"> · {{ w.company }}</span>
                 <span v-if="w.is_current" class="text-xs text-brand-600"> ({{ t("profile.present") }})</span>
               </span>
-              <button class="text-gray-400 hover:text-red-500" @click="dropWork(w.id)"><Trash2 class="h-4 w-4" /></button>
+              <button class="text-gray-400 hover:text-red-500" :aria-label="t('profile.remove')" @click="dropWork(w.id)"><Trash2 class="h-4 w-4" /></button>
             </li>
           </ul>
           <div class="space-y-2">
             <div class="flex gap-2">
-              <input v-model="newWork.title" class="input" :placeholder="t('profile.jobTitle')" />
-              <input v-model="newWork.company" class="input" :placeholder="t('profile.company')" />
+              <input v-model="newWork.title" class="input" :placeholder="t('profile.jobTitle')" :aria-label="t('profile.jobTitle')" />
+              <input v-model="newWork.company" class="input" :placeholder="t('profile.company')" :aria-label="t('profile.company')" />
               <button class="btn-ghost shrink-0 px-2" :aria-label="t('profile.addWork')" @click="addWork"><Plus class="h-4 w-4" /></button>
             </div>
             <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
@@ -298,17 +306,17 @@ async function save() {
                 {{ e.school }}<span v-if="e.field"> · {{ e.field }}</span>
                 <span v-if="e.start_year || e.end_year" class="text-xs text-gray-400"> ({{ e.start_year || "?" }}–{{ e.end_year || t("profile.present") }})</span>
               </span>
-              <button class="text-gray-400 hover:text-red-500" @click="dropEducation(e.id)"><Trash2 class="h-4 w-4" /></button>
+              <button class="text-gray-400 hover:text-red-500" :aria-label="t('profile.remove')" @click="dropEducation(e.id)"><Trash2 class="h-4 w-4" /></button>
             </li>
           </ul>
           <div class="space-y-2">
             <div class="flex gap-2">
-              <input v-model="newEdu.school" class="input" :placeholder="t('profile.school')" />
-              <input v-model="newEdu.field" class="input" :placeholder="t('profile.fieldOfStudy')" />
+              <input v-model="newEdu.school" class="input" :placeholder="t('profile.school')" :aria-label="t('profile.school')" />
+              <input v-model="newEdu.field" class="input" :placeholder="t('profile.fieldOfStudy')" :aria-label="t('profile.fieldOfStudy')" />
             </div>
             <div class="flex gap-2">
-              <input v-model="newEdu.start_year" type="number" class="input" :placeholder="t('profile.startYear')" />
-              <input v-model="newEdu.end_year" type="number" class="input" :placeholder="t('profile.endYear')" />
+              <input v-model="newEdu.start_year" type="number" class="input" :placeholder="t('profile.startYear')" :aria-label="t('profile.startYear')" />
+              <input v-model="newEdu.end_year" type="number" class="input" :placeholder="t('profile.endYear')" :aria-label="t('profile.endYear')" />
               <button class="btn-ghost shrink-0 px-2" :aria-label="t('profile.addEducation')" @click="addEducation"><Plus class="h-4 w-4" /></button>
             </div>
           </div>

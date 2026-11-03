@@ -4,6 +4,7 @@ import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { mediaService } from "@/services/media";
+import { useToastStore } from "@/stores/toasts";
 import type { Message } from "@/types";
 
 defineProps<{ replyingTo?: Message | null; replyingToName?: string }>();
@@ -14,10 +15,12 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const toasts = useToastStore();
 const body = ref("");
 const mediaId = ref<string | null>(null);
 const preview = ref<string | null>(null);
 const uploading = ref(false);
+let sent: { mediaId: string | null; preview: string | null } | null = null;
 
 async function onFile(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0];
@@ -28,7 +31,8 @@ async function onFile(e: Event) {
     mediaId.value = asset.id;
     preview.value = URL.createObjectURL(file);
   } catch {
-    // upload may fail; keep composer usable for text
+    // Keep the composer usable for text.
+    toasts.push({ text: t("errors.uploadFailed"), icon: "error" });
   } finally {
     uploading.value = false;
   }
@@ -42,10 +46,21 @@ function clearAttachment() {
 function submit() {
   const text = body.value.trim();
   if ((!text && !mediaId.value) || uploading.value) return;
+  sent = { mediaId: mediaId.value, preview: preview.value };
   emit("send", { body: text, mediaId: mediaId.value });
   body.value = "";
   clearAttachment();
 }
+
+/** Put a message back after a failed send so nothing typed is lost. */
+function restore(text: string, attachment: string | null) {
+  if (!body.value) body.value = text;
+  if (attachment && attachment === sent?.mediaId) {
+    mediaId.value = sent.mediaId;
+    preview.value = sent.preview;
+  }
+}
+defineExpose({ restore });
 </script>
 
 <template>
@@ -57,19 +72,19 @@ function submit() {
       <CornerUpLeft class="h-4 w-4 shrink-0 text-brand-500" />
       <span class="min-w-0 flex-1">
         <span class="font-semibold">{{ t("messages.replyingTo", { name: replyingToName }) }}</span>
-        <span class="block truncate text-gray-500">{{ replyingTo.body || `📷 ${t("messages.photo")}` }}</span>
+        <span class="block truncate text-gray-500" dir="auto">{{ replyingTo.body || `📷 ${t("messages.photo")}` }}</span>
       </span>
-      <button class="rounded-full p-0.5 text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700" :aria-label="t('feed.cancel')" @click="emit('cancelReply')">
+      <button class="rounded-full p-0.5 text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700" :aria-label="t('messages.cancelReply')" @click="emit('cancelReply')">
         <X class="h-4 w-4" />
       </button>
     </div>
 
     <div v-if="preview" class="mb-2">
       <div class="relative inline-block">
-        <img :src="preview" class="h-20 w-20 rounded-lg object-cover" alt="" />
+        <img :src="preview" class="h-20 w-20 rounded-lg object-cover" :alt="t('messages.photo')" />
         <button
           class="absolute -end-1.5 -top-1.5 rounded-full bg-black/60 p-0.5 text-white"
-          :aria-label="t('friends.delete')"
+          :aria-label="t('messages.removeAttachment')"
           @click="clearAttachment"
         >
           <X class="h-3.5 w-3.5" />
@@ -79,22 +94,23 @@ function submit() {
 
     <form class="flex items-center gap-2" @submit.prevent="submit">
       <label
-        class="shrink-0 cursor-pointer rounded-full p-2 text-gray-500 transition hover:bg-gray-100 dark:hover:bg-gray-800"
+        class="shrink-0 cursor-pointer rounded-full p-2 text-gray-500 transition focus-within:ring-2 focus-within:ring-brand-300 hover:bg-gray-100 dark:hover:bg-gray-800"
         :class="uploading ? 'opacity-50' : ''"
-        :title="t('feed.photo')"
-        :aria-label="t('feed.photo')"
+        :title="t('messages.attachImage')"
       >
         <ImagePlus class="h-5 w-5" />
-        <input type="file" accept="image/*" class="hidden" @change="onFile" />
+        <input type="file" accept="image/*" class="sr-only" :aria-label="t('messages.attachImage')" @change="onFile" />
       </label>
       <input
         v-model="body"
         class="input"
+        dir="auto"
+        :aria-label="t('messages.placeholder')"
         :placeholder="uploading ? t('profile.uploading') : t('messages.placeholder')"
         @input="$emit('typing')"
       />
-      <button type="submit" class="btn-primary px-3" :disabled="uploading || (!body.trim() && !mediaId)">
-        <Send class="h-4 w-4" />
+      <button type="submit" class="btn-primary px-3" :aria-label="t('messages.send')" :disabled="uploading || (!body.trim() && !mediaId)">
+        <Send class="h-4 w-4 rtl:-scale-x-100" />
       </button>
     </form>
   </div>

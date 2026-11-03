@@ -4,10 +4,12 @@ import { ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { type FriendState, graphService } from "@/services/graph";
+import { useToastStore } from "@/stores/toasts";
 
 const props = defineProps<{ userId: string; state: FriendState; requestId?: string }>();
 
 const { t } = useI18n();
+const toasts = useToastStore();
 const current = ref<FriendState>(props.state);
 // Friend state may resolve asynchronously on the profile; keep in sync.
 watch(
@@ -23,8 +25,9 @@ async function run(fn: () => Promise<void>, next: FriendState) {
   current.value = next;
   try {
     await fn();
-  } catch {
+  } catch (e) {
     current.value = prev;
+    toasts.error(e);
   } finally {
     busy.value = false;
   }

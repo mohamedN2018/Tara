@@ -75,7 +75,12 @@ export interface Post {
   reaction_count: number;
   comment_count: number;
   share_count: number;
+  my_reaction?: string | null;
+  is_saved?: boolean;
   created_at: string;
+  // Client-side: built from a feed snapshot, so `body` may be a truncated
+  // excerpt and it must not be edited.
+  partial?: boolean;
 }
 
 export interface FeedItem {

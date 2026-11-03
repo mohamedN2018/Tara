@@ -47,3 +47,17 @@ router.beforeEach(async (to) => {
   }
   return true;
 });
+
+// After a deploy, an open tab may ask for chunks that no longer exist. Reload to
+// pick up the new build, at most once, so a real outage can't cause a reload loop.
+const CHUNK_RELOAD_KEY = "tara.chunkReloadAt";
+const CHUNK_ERROR =
+  /dynamically imported module|Importing a module script failed|error loading dynamically imported|Loading (CSS )?chunk/i;
+
+router.onError((error: unknown, to) => {
+  if (!CHUNK_ERROR.test(error instanceof Error ? error.message : String(error))) return;
+  const last = Number(sessionStorage.getItem(CHUNK_RELOAD_KEY) ?? 0);
+  if (Date.now() - last < 10_000) return;
+  sessionStorage.setItem(CHUNK_RELOAD_KEY, String(Date.now()));
+  window.location.assign(to.fullPath);
+});

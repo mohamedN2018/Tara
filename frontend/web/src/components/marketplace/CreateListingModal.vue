@@ -3,8 +3,9 @@ import { X } from "lucide-vue-next";
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 
-import { apiError } from "@/lib/api";
+import { errorMessage } from "@/lib/errors";
 import { useEscapeKey } from "@/lib/useEscapeKey";
+import { useFocusTrap } from "@/lib/useFocusTrap";
 import { type CreateListingPayload, marketplaceService } from "@/services/marketplace";
 import type { Listing, ListingCategory } from "@/types";
 
@@ -14,6 +15,8 @@ const emit = defineEmits<{ close: []; created: [listing: Listing] }>();
 const { t } = useI18n();
 const open = ref(true);
 useEscapeKey(open, () => emit("close"));
+const dialog = ref<HTMLElement | null>(null);
+useFocusTrap(dialog);
 
 const CONDITIONS = ["new", "like_new", "good", "fair"];
 
@@ -55,7 +58,7 @@ async function submit() {
     const live = await marketplaceService.publish(created.id);
     emit("created", live);
   } catch (e) {
-    errorMsg.value = apiError(e).message;
+    errorMsg.value = errorMessage(e);
   } finally {
     submitting.value = false;
   }
@@ -66,31 +69,36 @@ async function submit() {
   <div class="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
     <div class="fixed inset-0" @click="emit('close')" />
     <div
+      ref="dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="listing-dialog-title"
+      tabindex="-1"
       class="card relative z-10 max-h-[92vh] w-full overflow-y-auto rounded-b-none rounded-t-2xl p-4 sm:max-w-lg sm:rounded-2xl sm:p-5"
     >
       <div class="mb-4 flex items-center justify-between">
-        <h2 class="text-lg font-bold">{{ t("market.createTitle") }}</h2>
-        <button class="rounded-full p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800" @click="emit('close')">
+        <h2 id="listing-dialog-title" class="text-lg font-bold">{{ t("market.createTitle") }}</h2>
+        <button class="rounded-full p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800" :aria-label="t('market.close')" @click="emit('close')">
           <X class="h-5 w-5" />
         </button>
       </div>
 
       <form class="space-y-3" @submit.prevent="submit">
         <div>
-          <label class="mb-1 block text-sm font-medium">{{ t("market.titleField") }}</label>
-          <input v-model="form.title" class="input" required maxlength="160" />
+          <label for="listing-title" class="mb-1 block text-sm font-medium">{{ t("market.titleField") }}</label>
+          <input id="listing-title" v-model="form.title" class="input" dir="auto" required maxlength="160" />
         </div>
 
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="mb-1 block text-sm font-medium">{{ t("nav.marketplace") }}</label>
-            <select v-model="form.category_id" class="input">
+            <label for="listing-category" class="mb-1 block text-sm font-medium">{{ t("nav.marketplace") }}</label>
+            <select id="listing-category" v-model="form.category_id" class="input">
               <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
             </select>
           </div>
           <div>
-            <label class="mb-1 block text-sm font-medium">{{ t("market.condition") }}</label>
-            <select v-model="form.condition" class="input">
+            <label for="listing-condition" class="mb-1 block text-sm font-medium">{{ t("market.condition") }}</label>
+            <select id="listing-condition" v-model="form.condition" class="input">
               <option v-for="c in CONDITIONS" :key="c" :value="c">{{ t(`market.conditions.${c}`) }}</option>
             </select>
           </div>
@@ -98,27 +106,27 @@ async function submit() {
 
         <div class="grid grid-cols-3 gap-3">
           <div class="col-span-2">
-            <label class="mb-1 block text-sm font-medium">{{ t("market.price") }}</label>
-            <input v-model="form.price" type="number" min="0" step="any" class="input" required />
+            <label for="listing-price" class="mb-1 block text-sm font-medium">{{ t("market.price") }}</label>
+            <input id="listing-price" v-model="form.price" type="number" min="0" step="any" class="input" required />
           </div>
           <div>
-            <label class="mb-1 block text-sm font-medium">{{ t("market.currency") }}</label>
-            <input v-model="form.currency" maxlength="3" class="input uppercase" />
+            <label for="listing-currency" class="mb-1 block text-sm font-medium">{{ t("market.currency") }}</label>
+            <input id="listing-currency" v-model="form.currency" maxlength="3" class="input uppercase" />
           </div>
         </div>
 
         <div>
-          <label class="mb-1 block text-sm font-medium">
+          <label for="listing-location" class="mb-1 block text-sm font-medium">
             {{ t("market.location") }} <span class="text-xs text-gray-400">({{ t("market.optional") }})</span>
           </label>
-          <input v-model="form.location" class="input" maxlength="160" />
+          <input id="listing-location" v-model="form.location" class="input" dir="auto" maxlength="160" />
         </div>
 
         <div>
-          <label class="mb-1 block text-sm font-medium">
+          <label for="listing-description" class="mb-1 block text-sm font-medium">
             {{ t("market.description") }} <span class="text-xs text-gray-400">({{ t("market.optional") }})</span>
           </label>
-          <textarea v-model="form.description" class="input min-h-24" rows="3" />
+          <textarea id="listing-description" v-model="form.description" class="input min-h-24" dir="auto" rows="3" />
         </div>
 
         <p v-if="errorMsg" class="text-sm text-red-600">{{ errorMsg }}</p>

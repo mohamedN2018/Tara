@@ -43,11 +43,11 @@ onMounted(load);
   <AppShell :right="false">
     <div class="mx-auto w-full max-w-[600px] space-y-4">
       <button class="btn-ghost" @click="router.back()">
-        <ArrowLeft class="h-4 w-4" /> {{ t("states.back") }}
+        <ArrowLeft class="h-4 w-4 rtl:rotate-180" /> {{ t("states.back") }}
       </button>
       <LoadingSkeleton v-if="loading" :rows="3" />
       <ErrorState v-else-if="error || !post" @retry="load" />
-      <PostCard v-else :post="post" :start-comments-open="true" @removed="onRemoved" />
+      <PostCard v-else :key="post.id" :post="post" :start-comments-open="true" @removed="onRemoved" />
     </div>
   </AppShell>
 </template>

@@ -1,15 +1,17 @@
 import { api } from "@/lib/api";
+import { oldestFirst } from "@/lib/chat";
 import type { Conversation, CursorPage, Message } from "@/types";
 
 export const chatService = {
   async conversations(): Promise<Conversation[]> {
-    const { data } = await api.get<{ data: Conversation[] }>("/conversations/");
-    return data.data;
+    return (await this.conversationsPage()).data;
   },
 
-  async getConversation(id: string): Promise<Conversation> {
-    const { data } = await api.get<{ data: Conversation }>(`/conversations/${id}/`);
-    return data.data;
+  async conversationsPage(cursor?: string): Promise<CursorPage<Conversation>> {
+    const { data } = await api.get<CursorPage<Conversation>>("/conversations/", {
+      params: { cursor },
+    });
+    return data;
   },
 
   async openDm(userId: string): Promise<Conversation> {
@@ -21,12 +23,16 @@ export const chatService = {
     return data.data;
   },
 
+  /**
+   * One page of history, returned oldest first. The API pages newest first, so
+   * `page.next_cursor` leads to OLDER messages.
+   */
   async messages(conversationId: string, cursor?: string): Promise<CursorPage<Message>> {
     const { data } = await api.get<CursorPage<Message>>(
       `/conversations/${conversationId}/messages/`,
       { params: { cursor } },
     );
-    return data;
+    return { ...data, data: oldestFirst(data.data) };
   },
 
   async send(

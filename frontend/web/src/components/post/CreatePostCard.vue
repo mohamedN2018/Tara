@@ -4,7 +4,7 @@ import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
-import { apiError } from "@/lib/api";
+import { errorMessage } from "@/lib/errors";
 import { mediaService } from "@/services/media";
 import { postService } from "@/services/post";
 import { useAuthStore } from "@/stores/auth";
@@ -47,7 +47,7 @@ async function onFiles(e: Event) {
       previews.value.push(URL.createObjectURL(file));
     }
   } catch (err) {
-    error.value = apiError(err).message;
+    error.value = errorMessage(err);
   } finally {
     uploading.value = false;
   }
@@ -80,7 +80,7 @@ async function submit() {
     emit("created", post);
     reset();
   } catch (err) {
-    error.value = apiError(err).message;
+    error.value = errorMessage(err);
   } finally {
     submitting.value = false;
   }
@@ -136,12 +136,13 @@ async function submit() {
         class="input min-h-[88px] resize-none border-0 bg-gray-50 text-base focus:ring-0 dark:bg-gray-800/60"
         :placeholder="t('feed.composerPlaceholder')"
         :aria-label="t('feed.composerPlaceholder')"
+        dir="auto"
         autofocus
       />
 
       <div v-if="previews.length" class="mt-2 grid grid-cols-4 gap-2">
         <div v-for="(src, i) in previews" :key="i" class="relative">
-          <img :src="src" class="h-20 w-full rounded-lg object-cover" alt="" />
+          <img :src="src" class="h-20 w-full rounded-lg object-cover" :alt="t('post.imageAlt', { n: i + 1, name: authorName() })" />
           <button
             class="absolute end-1 top-1 rounded-full bg-black/60 p-0.5 text-white"
             :aria-label="t('friends.delete')"
@@ -155,10 +156,10 @@ async function submit() {
       <p v-if="error" class="mt-2 text-xs text-red-500">{{ error }}</p>
 
       <div class="mt-3 flex items-center justify-between border-t border-gray-100 pt-3 dark:border-gray-800">
-        <label class="btn-ghost cursor-pointer" :class="uploading ? 'opacity-50' : ''" :title="t('feed.photo')">
+        <label class="btn-ghost cursor-pointer focus-within:ring-2 focus-within:ring-brand-300" :class="uploading ? 'opacity-50' : ''" :title="t('feed.addPhotos')">
           <ImagePlus class="h-5 w-5 text-green-600" />
           <span class="text-sm">{{ uploading ? t("states.loading") : t("feed.photo") }}</span>
-          <input type="file" accept="image/*" multiple class="hidden" @change="onFiles" />
+          <input type="file" accept="image/*" multiple class="sr-only" :aria-label="t('feed.addPhotos')" @change="onFiles" />
         </label>
         <div class="flex gap-2">
           <button class="btn-ghost" @click="reset">{{ t("feed.cancel") }}</button>

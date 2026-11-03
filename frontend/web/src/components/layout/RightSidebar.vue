@@ -10,11 +10,13 @@ import { chatService } from "@/services/chat";
 import { type FriendRequest, graphService } from "@/services/graph";
 import { useDirectoryStore } from "@/stores/directory";
 import { usePresenceStore } from "@/stores/presence";
+import { useToastStore } from "@/stores/toasts";
 
 const { t } = useI18n();
 const router = useRouter();
 const presence = usePresenceStore();
 const directory = useDirectoryStore();
+const toasts = useToastStore();
 const requests = ref<FriendRequest[]>([]);
 const friendIds = ref<string[]>([]);
 const opening = ref("");
@@ -39,8 +41,8 @@ async function openChat(friendId: string) {
   try {
     const convo = await chatService.openDm(friendId);
     router.push(`/messages/${convo.id}`);
-  } catch {
-    // Conversation service may be unavailable.
+  } catch (e) {
+    toasts.error(e);
   } finally {
     opening.value = "";
   }
@@ -63,9 +65,9 @@ onMounted(load);
           class="rounded-xl p-2 transition hover:bg-gray-100 dark:hover:bg-gray-800/60"
         >
           <div class="flex items-center gap-2">
-            <UserAvatar :name="directory.nameOf(r.from_user_id) || r.from_user_id" :size="40" />
-            <span class="min-w-0 flex-1 truncate text-sm font-medium">
-              {{ directory.label(r.from_user_id, 10) }}
+            <UserAvatar :name="directory.label(r.from_user_id)" :media-id="directory.avatarOf(r.from_user_id)" :size="40" />
+            <span class="min-w-0 flex-1 truncate text-sm font-medium" dir="auto">
+              {{ directory.label(r.from_user_id) }}
             </span>
           </div>
           <div class="mt-2">
@@ -97,12 +99,12 @@ onMounted(load);
         >
           <!-- Avatar → profile -->
           <RouterLink
-            :to="{ name: 'profile-by-id', params: { id }, query: { rel: 'friends' } }"
+            :to="{ name: 'profile-by-id', params: { id } }"
             class="relative shrink-0 rounded-full ring-brand-300 transition hover:ring-2"
             :aria-label="t('nav.profile')"
             :title="t('nav.profile')"
           >
-            <UserAvatar :name="directory.nameOf(id) || id" :size="48" />
+            <UserAvatar :name="directory.label(id)" :media-id="directory.avatarOf(id)" :size="48" />
             <span
               v-if="presence.isOnline(id)"
               class="absolute -end-0.5 -bottom-0.5 h-3 w-3 rounded-full border-2 border-white bg-green-500 dark:border-gray-900"
@@ -117,7 +119,7 @@ onMounted(load);
             :title="t('profile.message')"
             @click="openChat(id)"
           >
-            {{ directory.label(id, 14) }}
+            {{ directory.label(id) }}
           </button>
           <button
             type="button"

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { Monitor, Moon, Sun } from "lucide-vue-next";
+import { useI18n } from "vue-i18n";
 
 import { type Theme, useUiStore } from "@/stores/ui";
 
+const { t } = useI18n();
 const ui = useUiStore();
 const options: { value: Theme; icon: typeof Sun }[] = [
   { value: "light", icon: Sun },
@@ -23,6 +25,8 @@ const options: { value: Theme; icon: typeof Sun }[] = [
           : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
       "
       :aria-pressed="ui.theme === opt.value"
+      :aria-label="t(`settings.${opt.value}`)"
+      :title="t(`settings.${opt.value}`)"
       @click="ui.setTheme(opt.value)"
     >
       <component :is="opt.icon" class="h-4 w-4" />

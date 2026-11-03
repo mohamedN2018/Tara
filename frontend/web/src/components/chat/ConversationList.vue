@@ -22,8 +22,9 @@ function peerId(c: Conversation): string {
 }
 function title(c: Conversation): string {
   if (c.title) return c.title;
-  if (isDm(c)) return directory.nameOf(peerId(c)) || peerId(c).slice(0, 8);
-  return c.id.slice(0, 8);
+  if (isDm(c)) return directory.label(peerId(c));
+  const others = c.members.filter((m) => m !== props.selfId);
+  return others.map((m) => directory.label(m)).join("، ") || t("messages.groupFallback");
 }
 </script>
 
@@ -36,7 +37,7 @@ function title(c: Conversation): string {
         @click="$emit('select', c.id)"
       >
         <span class="relative shrink-0">
-          <UserAvatar :name="isDm(c) ? (directory.nameOf(peerId(c)) || peerId(c)) : c.title || c.id" />
+          <UserAvatar :name="title(c)" :media-id="isDm(c) ? directory.avatarOf(peerId(c)) : null" />
           <span
             v-if="isDm(c) && presence.isOnline(peerId(c))"
             class="absolute -end-0.5 -bottom-0.5 h-3 w-3 rounded-full border-2 border-white bg-green-500 dark:border-gray-900"
@@ -44,9 +45,9 @@ function title(c: Conversation): string {
           />
         </span>
         <span class="min-w-0 flex-1">
-          <span class="block truncate text-sm font-medium">{{ title(c) }}</span>
+          <span class="block truncate text-sm font-medium" dir="auto">{{ title(c) }}</span>
           <span class="block truncate text-xs text-gray-500">
-            {{ isDm(c) ? (presence.isOnline(peerId(c)) ? t("presence.online") : t("messages.title")) : `${c.members.length} members` }}
+            {{ isDm(c) ? (presence.isOnline(peerId(c)) ? t("presence.online") : t("messages.title")) : t("messages.membersCount", c.members.length) }}
           </span>
         </span>
         <time v-if="c.last_message_at" class="shrink-0 text-[10px] text-gray-400">

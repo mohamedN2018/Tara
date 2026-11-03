@@ -11,11 +11,13 @@ import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
 import { marketplaceService } from "@/services/marketplace";
+import { useToastStore } from "@/stores/toasts";
 import type { Listing, ListingCategory } from "@/types";
 
 const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
+const toasts = useToastStore();
 
 const CreateListingModal = defineAsyncComponent(
   () => import("@/components/marketplace/CreateListingModal.vue"),
@@ -34,7 +36,6 @@ const loading = ref(true);
 const loadingMore = ref(false);
 const error = ref(false);
 const showCreate = ref(false);
-const toast = ref("");
 
 async function fetchPage(more = false) {
   const cur = more ? (cursor.value ?? undefined) : undefined;
@@ -70,8 +71,8 @@ async function loadMore() {
     listings.value.push(...page.data);
     cursor.value = page.page.next_cursor;
     hasMore.value = page.page.has_more;
-  } catch {
-    // keep what we have
+  } catch (e) {
+    toasts.error(e);
   } finally {
     loadingMore.value = false;
   }
@@ -90,8 +91,7 @@ function selectCat(slug: string) {
 
 function onCreated(listing: Listing) {
   showCreate.value = false;
-  toast.value = t("market.posted");
-  window.setTimeout(() => (toast.value = ""), 2500);
+  toasts.success(t("market.posted"));
   // Surface it immediately under "My listings".
   tab.value = "mine";
   listings.value = [listing, ...listings.value.filter((l) => l.id !== listing.id)];
@@ -101,8 +101,9 @@ function onCreated(listing: Listing) {
 onMounted(async () => {
   try {
     categories.value = await marketplaceService.categories();
-  } catch {
+  } catch (e) {
     categories.value = [];
+    toasts.error(e);
   }
   // Opened via the navbar "Create → Listing" shortcut.
   if (route.query.create === "1") {
@@ -189,25 +190,5 @@ onMounted(async () => {
       @close="showCreate = false"
       @created="onCreated"
     />
-
-    <Transition name="fade">
-      <div
-        v-if="toast"
-        class="fixed bottom-20 start-1/2 z-50 -translate-x-1/2 rounded-full bg-gray-900 px-4 py-2 text-sm text-white shadow-lg lg:bottom-6"
-      >
-        {{ toast }}
-      </div>
-    </Transition>
   </AppShell>
 </template>
-
-<style scoped>
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.2s ease;
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-</style>

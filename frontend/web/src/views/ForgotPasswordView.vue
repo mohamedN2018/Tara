@@ -4,7 +4,7 @@ import { useI18n } from "vue-i18n";
 
 import LocaleToggle from "@/components/common/LocaleToggle.vue";
 import ThemeToggle from "@/components/common/ThemeToggle.vue";
-import { apiError } from "@/lib/api";
+import { errorMessage } from "@/lib/errors";
 import { identityService } from "@/services/identity";
 
 const { t } = useI18n();
@@ -21,7 +21,7 @@ async function submit() {
     await identityService.forgotPassword(email.value);
     sent.value = true;
   } catch (e) {
-    error.value = apiError(e).message;
+    error.value = errorMessage(e);
   } finally {
     loading.value = false;
   }
@@ -42,8 +42,8 @@ async function submit() {
       </p>
       <form v-else class="space-y-4" @submit.prevent="submit">
         <div>
-          <label class="mb-1 block text-sm font-medium">{{ t("auth.email") }}</label>
-          <input v-model="email" type="email" class="input" required autocomplete="email" />
+          <label for="forgot-email" class="mb-1 block text-sm font-medium">{{ t("auth.email") }}</label>
+          <input id="forgot-email" v-model="email" type="email" class="input" required autocomplete="email" />
         </div>
         <p v-if="error" class="text-sm text-red-500">{{ error }}</p>
         <button type="submit" class="btn-primary w-full" :disabled="loading">{{ t("auth.forgotCta") }}</button>

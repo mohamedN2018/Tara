@@ -71,7 +71,7 @@ onMounted(() => load("posts"));
       <ErrorState v-else-if="error" @retry="load(tab)" />
       <template v-else-if="tab === 'posts'">
         <EmptyState v-if="posts.length === 0">{{ t("saved.empty") }}</EmptyState>
-        <PostCard v-for="p in posts" v-else :key="p.id" :post="p" :saved="true" />
+        <PostCard v-for="p in posts" v-else :key="p.id" :post="p" />
       </template>
       <template v-else>
         <EmptyState v-if="listings.length === 0">{{ t("market.noSaved") }}</EmptyState>

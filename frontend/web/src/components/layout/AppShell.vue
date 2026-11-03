@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { onMounted, ref } from "vue";
+import { useI18n } from "vue-i18n";
 
 import AppNavbar from "@/components/layout/AppNavbar.vue";
 import LeftSidebar from "@/components/layout/LeftSidebar.vue";
 import MobileBottomNavigation from "@/components/layout/MobileBottomNavigation.vue";
 import RightSidebar from "@/components/layout/RightSidebar.vue";
+import { useFocusTrap } from "@/lib/useFocusTrap";
 import { useNotificationStore } from "@/stores/notifications";
 import { usePresenceStore } from "@/stores/presence";
 import { useUiStore } from "@/stores/ui";
@@ -12,7 +14,10 @@ import { useUiStore } from "@/stores/ui";
 // `right=false` lets a view drop the right rail (e.g. full-width pages like chat).
 withDefaults(defineProps<{ right?: boolean }>(), { right: true });
 
+const { t } = useI18n();
 const ui = useUiStore();
+const drawer = ref<HTMLElement | null>(null);
+useFocusTrap(drawer);
 const notifications = useNotificationStore();
 const presence = usePresenceStore();
 
@@ -35,6 +40,11 @@ onMounted(() => {
         @click="ui.sidebarOpen = false"
       >
         <aside
+          ref="drawer"
+          role="dialog"
+          aria-modal="true"
+          :aria-label="t('nav.menu')"
+          tabindex="-1"
           class="h-full w-72 overflow-y-auto bg-gray-50 pt-16 shadow-xl dark:bg-gray-900"
           @click.stop
         >

@@ -8,12 +8,16 @@ import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
 import { relativeTime } from "@/lib/format";
 import { chatService } from "@/services/chat";
+import { useAuthStore } from "@/stores/auth";
+import { useDirectoryStore } from "@/stores/directory";
 import type { Conversation } from "@/types";
 
 const props = withDefaults(defineProps<{ limit?: number }>(), { limit: 8 });
 const emit = defineEmits<{ navigate: [] }>();
 
 const { t } = useI18n();
+const auth = useAuthStore();
+const directory = useDirectoryStore();
 const items = ref<Conversation[]>([]);
 const loading = ref(true);
 const error = ref(false);
@@ -31,6 +35,15 @@ async function load() {
   }
 }
 
+function peerId(c: Conversation): string | undefined {
+  return c.members.find((m) => m !== auth.account?.id);
+}
+function title(c: Conversation): string {
+  if (c.title) return c.title;
+  const others = c.members.filter((m) => m !== auth.account?.id);
+  return others.map((m) => directory.label(m)).join("، ") || t("messages.groupFallback");
+}
+
 onMounted(load);
 </script>
 
@@ -46,11 +59,11 @@ onMounted(load);
           class="flex items-center gap-3 px-2 py-2 transition hover:bg-gray-100 dark:hover:bg-gray-800"
           @click="emit('navigate')"
         >
-          <UserAvatar :name="c.title || c.id" :size="40" />
+          <UserAvatar :name="title(c)" :media-id="c.members.length === 2 ? directory.avatarOf(peerId(c)) : null" :size="40" />
           <span class="min-w-0 flex-1">
-            <span class="block truncate text-sm font-medium">{{ c.title || c.id.slice(0, 8) }}</span>
+            <span class="block truncate text-sm font-medium" dir="auto">{{ title(c) }}</span>
             <span class="block truncate text-xs text-gray-500">
-              {{ c.members.length }} {{ t("messages.title") }}
+              {{ t("messages.membersCount", c.members.length) }}
             </span>
           </span>
           <time v-if="c.last_message_at" class="shrink-0 text-[10px] text-gray-400">

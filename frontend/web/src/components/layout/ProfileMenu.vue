@@ -2,7 +2,6 @@
 import { ChevronDown, LogOut, Settings } from "lucide-vue-next";
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter } from "vue-router";
 
 import LocaleToggle from "@/components/common/LocaleToggle.vue";
 import ThemeToggle from "@/components/common/ThemeToggle.vue";
@@ -12,7 +11,6 @@ import { useAuthStore } from "@/stores/auth";
 import { usePresenceStore } from "@/stores/presence";
 
 const { t } = useI18n();
-const router = useRouter();
 const auth = useAuthStore();
 const presence = usePresenceStore();
 
@@ -24,7 +22,6 @@ const displayName = () =>
 async function logout() {
   open.value = false;
   await auth.logout();
-  router.push({ name: "login" });
 }
 </script>
 

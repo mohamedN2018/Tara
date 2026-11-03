@@ -13,11 +13,13 @@ import { chatService } from "@/services/chat";
 import { type FriendRequest, graphService } from "@/services/graph";
 import { useDirectoryStore } from "@/stores/directory";
 import { usePresenceStore } from "@/stores/presence";
+import { useToastStore } from "@/stores/toasts";
 
 const { t } = useI18n();
 const router = useRouter();
 const presence = usePresenceStore();
 const directory = useDirectoryStore();
+const toasts = useToastStore();
 
 const tab = ref<"requests" | "sent" | "all">("requests");
 const requests = ref<FriendRequest[]>([]);
@@ -50,8 +52,8 @@ async function cancelRequest(id: string) {
   try {
     await graphService.declineFriendRequest(id);
     sent.value = sent.value.filter((r) => r.id !== id);
-  } catch {
-    // Request may already be resolved.
+  } catch (e) {
+    toasts.error(e);
   } finally {
     cancelling.value = "";
   }
@@ -63,8 +65,8 @@ async function openChat(friendId: string) {
   try {
     const convo = await chatService.openDm(friendId);
     router.push(`/messages/${convo.id}`);
-  } catch {
-    // Conversation service may be unavailable.
+  } catch (e) {
+    toasts.error(e);
   } finally {
     opening.value = "";
   }
@@ -115,9 +117,9 @@ onMounted(load);
       <ul v-else class="space-y-2">
         <li v-for="r in requests" :key="r.id" class="card flex items-center gap-3 p-3">
           <RouterLink :to="{ name: 'profile-by-id', params: { id: r.from_user_id } }">
-            <UserAvatar :name="directory.nameOf(r.from_user_id) || r.from_user_id" />
+            <UserAvatar :name="directory.label(r.from_user_id)" :media-id="directory.avatarOf(r.from_user_id)" />
           </RouterLink>
-          <span class="flex-1 truncate text-sm font-medium">{{ directory.label(r.from_user_id, 12) }}</span>
+          <span class="flex-1 truncate text-sm font-medium" dir="auto">{{ directory.label(r.from_user_id) }}</span>
           <FriendButton
             :user-id="r.from_user_id"
             :request-id="r.id"
@@ -133,9 +135,9 @@ onMounted(load);
       <ul v-else class="space-y-2">
         <li v-for="r in sent" :key="r.id" class="card flex items-center gap-3 p-3">
           <RouterLink :to="{ name: 'profile-by-id', params: { id: r.to_user_id } }">
-            <UserAvatar :name="directory.nameOf(r.to_user_id) || r.to_user_id" />
+            <UserAvatar :name="directory.label(r.to_user_id)" :media-id="directory.avatarOf(r.to_user_id)" />
           </RouterLink>
-          <span class="flex-1 truncate text-sm font-medium">{{ directory.label(r.to_user_id, 12) }}</span>
+          <span class="flex-1 truncate text-sm font-medium" dir="auto">{{ directory.label(r.to_user_id) }}</span>
           <span class="text-xs text-gray-400">{{ t("profile.requestSent") }}</span>
           <button
             class="btn-ghost text-sm"
@@ -158,19 +160,19 @@ onMounted(load);
         >
           <!-- Avatar → profile -->
           <RouterLink
-            :to="{ name: 'profile-by-id', params: { id }, query: { rel: 'friends' } }"
+            :to="{ name: 'profile-by-id', params: { id } }"
             class="relative rounded-full ring-brand-300 transition hover:ring-2"
             :aria-label="t('nav.profile')"
             :title="t('nav.profile')"
           >
-            <UserAvatar :name="directory.nameOf(id) || id" :size="56" />
+            <UserAvatar :name="directory.label(id)" :media-id="directory.avatarOf(id)" :size="56" />
             <span
               v-if="presence.isOnline(id)"
               class="absolute -end-0.5 -bottom-0.5 h-3.5 w-3.5 rounded-full border-2 border-white bg-green-500 dark:border-gray-900"
               :title="t('presence.online')"
             />
           </RouterLink>
-          <span class="truncate text-sm font-medium">{{ directory.label(id, 10) }}</span>
+          <span class="truncate text-sm font-medium" dir="auto">{{ directory.label(id) }}</span>
           <!-- Anywhere else → open chat in-app -->
           <button
             type="button"

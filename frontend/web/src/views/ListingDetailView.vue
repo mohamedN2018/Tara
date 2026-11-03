@@ -13,19 +13,22 @@ import { categoryGradient, categoryIcon, formatPrice } from "@/lib/listing";
 import { useMediaUrls } from "@/lib/useMediaUrl";
 import { type ListingAction, marketplaceService } from "@/services/marketplace";
 import { useAuthStore } from "@/stores/auth";
+import { useDirectoryStore } from "@/stores/directory";
+import { useToastStore } from "@/stores/toasts";
 import type { Listing } from "@/types";
 
 const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
+const directory = useDirectoryStore();
+const toasts = useToastStore();
 
 const listing = ref<Listing | null>(null);
 const loading = ref(true);
 const error = ref(false);
 const saved = ref(false);
 const busy = ref(false);
-const toast = ref("");
 const showReport = ref(false);
 const reportReason = ref("");
 
@@ -38,11 +41,6 @@ const price = computed(() =>
 );
 const gradient = computed(() => categoryGradient(listing.value?.category?.slug));
 const icon = computed(() => categoryIcon(listing.value?.category?.slug));
-
-function flash(msg: string) {
-  toast.value = msg;
-  window.setTimeout(() => (toast.value = ""), 2500);
-}
 
 async function load() {
   loading.value = true;
@@ -64,8 +62,9 @@ async function toggleSave() {
   try {
     if (next) await marketplaceService.save(listing.value.id);
     else await marketplaceService.unsave(listing.value.id);
-  } catch {
+  } catch (e) {
     saved.value = !next;
+    toasts.error(e);
   }
 }
 
@@ -74,10 +73,10 @@ async function contact() {
   busy.value = true;
   try {
     await marketplaceService.contact(listing.value.id);
-    flash(t("market.contactSent"));
+    toasts.success(t("market.contactSent"));
     window.setTimeout(() => router.push("/messages"), 1200);
-  } catch {
-    // Contact endpoint may be unavailable.
+  } catch (e) {
+    toasts.error(e);
   } finally {
     busy.value = false;
   }
@@ -88,8 +87,8 @@ async function transition(action: ListingAction) {
   busy.value = true;
   try {
     listing.value = await marketplaceService.transition(listing.value.id, action);
-  } catch {
-    // Invalid transition for the current status — ignore.
+  } catch (e) {
+    toasts.error(e);
   } finally {
     busy.value = false;
   }
@@ -99,12 +98,11 @@ async function submitReport() {
   if (!listing.value || !reportReason.value.trim()) return;
   try {
     await marketplaceService.report(listing.value.id, reportReason.value.trim());
-    flash(t("market.reportSent"));
-  } catch {
-    // ignore
-  } finally {
+    toasts.success(t("market.reportSent"));
     showReport.value = false;
     reportReason.value = "";
+  } catch (e) {
+    toasts.error(e); // Keep the text so the report can be resent.
   }
 }
 
@@ -125,7 +123,7 @@ onMounted(load);
               v-if="images.length"
               :src="images[activeImage]"
               class="h-full w-full object-cover"
-              alt=""
+              :alt="t('market.imageAlt', { n: activeImage + 1, title: listing.title })"
             />
             <div
               v-else
@@ -150,6 +148,8 @@ onMounted(load);
               :key="i"
               class="h-14 w-14 shrink-0 overflow-hidden rounded-lg border-2 transition"
               :class="i === activeImage ? 'border-brand-600' : 'border-transparent'"
+              :aria-label="t('market.showImage', { n: i + 1 })"
+              :aria-pressed="i === activeImage"
               @click="activeImage = i"
             >
               <img :src="src" class="h-full w-full object-cover" alt="" />
@@ -158,11 +158,11 @@ onMounted(load);
 
           <div class="p-4">
             <p class="text-2xl font-bold text-brand-600">{{ price }}</p>
-            <h1 class="mt-1 text-lg font-semibold">{{ listing.title }}</h1>
+            <h1 class="mt-1 text-lg font-semibold" dir="auto">{{ listing.title }}</h1>
 
             <div class="mt-2 flex flex-wrap items-center gap-2 text-sm text-gray-500">
               <span class="inline-flex items-center gap-1">
-                <MapPin class="h-4 w-4" /> {{ listing.location || "—" }}
+                <MapPin class="h-4 w-4" /> <span dir="auto">{{ listing.location || "—" }}</span>
               </span>
               <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs dark:bg-gray-800">
                 {{ t(`market.conditions.${listing.condition}`) }}
@@ -172,21 +172,21 @@ onMounted(load);
               </span>
               <span class="text-xs text-gray-400">· {{ relativeTime(listing.created_at) }}</span>
               <span v-if="listing.save_count" class="inline-flex items-center gap-1 text-xs text-gray-400">
-                · <Bookmark class="h-3 w-3" /> {{ t("market.saves", { count: listing.save_count }) }}
+                · <Bookmark class="h-3 w-3" /> {{ t("market.saves", listing.save_count) }}
               </span>
             </div>
 
-            <p class="mt-4 whitespace-pre-wrap text-sm leading-relaxed">{{ listing.description }}</p>
+            <p class="mt-4 whitespace-pre-wrap text-sm leading-relaxed" dir="auto">{{ listing.description }}</p>
 
             <!-- Seller -->
             <RouterLink
               :to="{ name: 'profile-by-id', params: { id: listing.seller_id } }"
               class="mt-4 flex items-center gap-3 rounded-xl border border-gray-100 p-3 transition hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-800/60"
             >
-              <UserAvatar :name="listing.seller_id" :size="40" />
+              <UserAvatar :name="directory.label(listing.seller_id)" :media-id="directory.avatarOf(listing.seller_id)" :size="40" />
               <div class="min-w-0">
                 <p class="text-xs text-gray-400">{{ t("market.listedBy") }}</p>
-                <p class="truncate text-sm font-semibold">{{ listing.seller_id.slice(0, 8) }}</p>
+                <p class="truncate text-sm font-semibold" dir="auto">{{ directory.label(listing.seller_id) }}</p>
               </div>
               <span class="ms-auto text-xs font-medium text-brand-600">{{ t("market.viewSeller") }}</span>
             </RouterLink>
@@ -244,6 +244,8 @@ onMounted(load);
                 <textarea
                   v-model="reportReason"
                   class="input min-h-16"
+                  dir="auto"
+                  :aria-label="t('market.reportReason')"
                   :placeholder="t('market.reportReason')"
                   rows="2"
                 />
@@ -262,26 +264,6 @@ onMounted(load);
           </div>
         </div>
       </template>
-
-      <Transition name="fade">
-        <div
-          v-if="toast"
-          class="fixed bottom-20 start-1/2 z-50 -translate-x-1/2 rounded-full bg-gray-900 px-4 py-2 text-sm text-white shadow-lg lg:bottom-6"
-        >
-          {{ toast }}
-        </div>
-      </Transition>
     </div>
   </AppShell>
 </template>
-
-<style scoped>
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.2s ease;
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-</style>

@@ -10,6 +10,10 @@ export interface Comment {
   created_at: string;
 }
 
+const BATCH_LIMIT = 50;
+// Upper bound on empty pages followed in a row, so one call can't run away.
+const MAX_EMPTY_PAGES = 25;
+
 export const postService = {
   async create(payload: {
     body: string;
@@ -46,6 +50,30 @@ export const postService = {
       params: { author_id: authorId, cursor },
     });
     return data;
+  },
+
+  /**
+   * The next page of a profile timeline that actually has something to show.
+   * Audience filtering runs after paging, so a page can be short or even empty
+   * while older posts remain: keep following next_cursor.
+   */
+  async timelinePage(authorId: string, cursor?: string): Promise<CursorPage<Post>> {
+    let page = await this.byAuthor(authorId, cursor);
+    for (let i = 0; i < MAX_EMPTY_PAGES; i++) {
+      if (page.data.length || !page.page.has_more || !page.page.next_cursor) break;
+      page = await this.byAuthor(authorId, page.page.next_cursor);
+    }
+    return page;
+  },
+
+  /** Current posts in requested order; missing ids were deleted or are no longer visible. */
+  async batch(ids: string[]): Promise<Post[]> {
+    const chunks: string[][] = [];
+    for (let i = 0; i < ids.length; i += BATCH_LIMIT) chunks.push(ids.slice(i, i + BATCH_LIMIT));
+    const pages = await Promise.all(
+      chunks.map((chunk) => api.post<{ data: Post[] }>("/posts/batch/", { ids: chunk })),
+    );
+    return pages.flatMap((p) => p.data.data);
   },
 
   async remove(id: string): Promise<void> {

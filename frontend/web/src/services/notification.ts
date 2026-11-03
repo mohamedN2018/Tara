@@ -1,8 +1,11 @@
 import { api } from "@/lib/api";
 import type { CursorPage, Notification } from "@/types";
 
+// { kind: { channel: enabled } }, e.g. { follow: { in_app: false } }.
+export type NotificationPrefs = Record<string, Record<string, boolean>>;
+
 export interface NotificationPreferences {
-  prefs: Record<string, boolean>;
+  prefs: NotificationPrefs;
   quiet_hours: { start?: string; end?: string };
 }
 
@@ -27,8 +30,8 @@ export const notificationService = {
   },
 
   async unreadCount(): Promise<number> {
-    const { data } = await api.get<{ data: { count: number } }>("/notifications/unread-count/");
-    return data.data.count;
+    const { data } = await api.get<{ data: { unread: number } }>("/notifications/unread-count/");
+    return data.data.unread;
   },
 
   // Single endpoint: POST /notifications/read/ with {ids, all}.

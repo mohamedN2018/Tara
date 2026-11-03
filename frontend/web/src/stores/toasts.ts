@@ -1,10 +1,12 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
+import { errorMessage } from "@/lib/errors";
+
 export interface Toast {
   id: number;
   text: string;
-  icon?: "bell" | "message";
+  icon?: "bell" | "message" | "error" | "success";
   to?: string; // optional route to navigate to on click
 }
 
@@ -21,5 +23,13 @@ export const useToastStore = defineStore("toasts", () => {
     items.value = items.value.filter((t) => t.id !== id);
   }
 
-  return { items, push, dismiss };
+  /** Show a failure, translated from its backend error code. */
+  function error(failure: unknown, overrides?: Record<string, string>) {
+    push({ text: errorMessage(failure, overrides), icon: "error" }, 6000);
+  }
+  function success(text: string) {
+    push({ text, icon: "success" });
+  }
+
+  return { items, push, dismiss, error, success };
 });

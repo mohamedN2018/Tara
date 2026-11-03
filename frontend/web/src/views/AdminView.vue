@@ -5,30 +5,56 @@ import { useI18n } from "vue-i18n";
 
 import AppShell from "@/components/layout/AppShell.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
+import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
 import { adminService, type HealthOverview, type ModerationCase } from "@/services/admin";
+import { useToastStore } from "@/stores/toasts";
 
-const { t } = useI18n();
+const { t, te } = useI18n();
+const toasts = useToastStore();
 
 const health = ref<HealthOverview | null>(null);
 const cases = ref<ModerationCase[]>([]);
 const loading = ref(true);
+const casesError = ref(false);
+const acting = ref("");
+
+/** Translate a backend enum value, showing it raw if a new one appears. */
+function enumLabel(group: string, value: string): string {
+  const key = `admin.${group}.${value}`;
+  return te(key) ? t(key) : value;
+}
 
 async function load() {
   loading.value = true;
+  casesError.value = false;
   try {
-    [health.value, cases.value] = await Promise.all([
+    const [overview, queue] = await Promise.all([
       adminService.health().catch(() => null),
-      adminService.cases().catch(() => []),
+      adminService.cases().catch(() => {
+        casesError.value = true;
+        return [];
+      }),
     ]);
+    health.value = overview;
+    cases.value = queue;
   } finally {
     loading.value = false;
   }
 }
 
 async function act(id: string, action: string) {
-  await adminService.actionCase(id, action).catch(() => {});
-  cases.value = cases.value.filter((c) => c.id !== id);
+  if (acting.value) return;
+  acting.value = id;
+  try {
+    await adminService.actionCase(id, action);
+    cases.value = cases.value.filter((c) => c.id !== id);
+    toasts.success(t("admin.actionDone"));
+  } catch (e) {
+    toasts.error(e); // The case stays in the queue: nothing happened to it.
+  } finally {
+    acting.value = "";
+  }
 }
 
 onMounted(load);
@@ -53,7 +79,7 @@ onMounted(load);
                 : 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
             "
           >
-            {{ health.overall }}
+            {{ enumLabel("overall", health.overall) }}
           </span>
         </h2>
         <div v-if="health" class="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -66,7 +92,9 @@ onMounted(load);
             <span
               class="h-2.5 w-2.5 shrink-0 rounded-full"
               :class="s.status === 'ready' ? 'bg-green-500' : 'bg-red-500'"
-              :title="s.status"
+              :title="enumLabel('health', s.status)"
+              role="img"
+              :aria-label="enumLabel('health', s.status)"
             />
           </div>
         </div>
@@ -77,17 +105,18 @@ onMounted(load);
       <h2 class="mb-2 flex items-center gap-2 font-semibold">
         <ShieldAlert class="h-5 w-5 text-brand-600" /> {{ t("admin.moderationQueue") }}
       </h2>
-      <EmptyState v-if="cases.length === 0">{{ t("admin.queueEmpty") }}</EmptyState>
+      <ErrorState v-if="casesError" @retry="load" />
+      <EmptyState v-else-if="cases.length === 0">{{ t("admin.queueEmpty") }}</EmptyState>
       <ul v-else class="space-y-2">
         <li v-for="c in cases" :key="c.id" class="card flex items-center gap-3 p-3">
           <span class="min-w-0 flex-1">
             <span class="block text-sm font-medium">
-              {{ c.target_type }} · {{ c.report_count }} {{ t("admin.reports") }} · {{ c.state }}
+              {{ enumLabel("targets", c.target_type) }} · {{ t("admin.reportsCount", c.report_count) }} · {{ enumLabel("states", c.state) }}
             </span>
             <span class="block truncate text-xs text-gray-500">{{ c.target_id }}</span>
           </span>
-          <button class="btn-ghost text-sm" @click="act(c.id, 'dismiss')">{{ t("admin.dismiss") }}</button>
-          <button class="btn-primary text-sm" @click="act(c.id, 'remove')">{{ t("admin.remove") }}</button>
+          <button class="btn-ghost text-sm" :disabled="acting === c.id" @click="act(c.id, 'dismiss')">{{ t("admin.dismiss") }}</button>
+          <button class="btn-primary text-sm" :disabled="acting === c.id" @click="act(c.id, 'remove')">{{ t("admin.remove") }}</button>
         </li>
       </ul>
     </template>

@@ -5,3 +5,6 @@ dist-ssr
 .env
 .vite
 *.tsbuildinfo
+test-results
+playwright-report
+e2e/.accounts.json

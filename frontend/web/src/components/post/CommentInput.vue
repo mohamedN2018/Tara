@@ -31,6 +31,7 @@ function submit() {
       ref="field"
       v-model="body"
       class="input rounded-full bg-gray-100 dark:bg-gray-800"
+      dir="auto"
       :placeholder="placeholder || t('post.addComment')"
       :aria-label="placeholder || t('post.addComment')"
     />
@@ -40,7 +41,7 @@ function submit() {
       :disabled="submitting || !body.trim()"
       :aria-label="t('post.comment')"
     >
-      <Send class="h-4 w-4" />
+      <Send class="h-4 w-4 rtl:-scale-x-100" />
     </button>
   </form>
 </template>

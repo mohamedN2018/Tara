@@ -6,10 +6,12 @@ import { useI18n } from "vue-i18n";
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import { categoryGradient, categoryIcon, formatPrice } from "@/lib/listing";
 import { useMediaUrl } from "@/lib/useMediaUrl";
+import { useDirectoryStore } from "@/stores/directory";
 import type { Listing } from "@/types";
 
 const props = defineProps<{ listing: Listing }>();
 const { t } = useI18n();
+const directory = useDirectoryStore();
 
 const cover = useMediaUrl(() => props.listing.media?.[0]?.media_id);
 const price = computed(() => formatPrice(props.listing.price, props.listing.currency));
@@ -23,7 +25,7 @@ const inactive = computed(() => props.listing.status !== "active");
   <div class="card overflow-hidden transition hover:shadow-md">
     <RouterLink :to="`/marketplace/${listing.id}`" class="block">
       <div class="relative aspect-square">
-        <img v-if="cover" :src="cover" class="h-full w-full object-cover" loading="lazy" alt="" />
+        <img v-if="cover" :src="cover" class="h-full w-full object-cover" loading="lazy" :alt="listing.title" />
         <div
           v-else
           class="flex h-full flex-col items-center justify-center gap-2 bg-gradient-to-br text-gray-500 dark:text-gray-300"
@@ -50,10 +52,10 @@ const inactive = computed(() => props.listing.status !== "active");
 
       <div class="p-3">
         <p class="font-bold text-brand-600">{{ price }}</p>
-        <h3 class="truncate text-sm font-medium">{{ listing.title }}</h3>
+        <h3 class="truncate text-sm font-medium" dir="auto">{{ listing.title }}</h3>
         <p class="mt-1 flex items-center gap-1 text-xs text-gray-500">
           <MapPin class="h-3 w-3 shrink-0" />
-          <span class="truncate">{{ listing.location || "—" }}</span>
+          <span class="truncate" dir="auto">{{ listing.location || "—" }}</span>
         </p>
       </div>
     </RouterLink>
@@ -64,8 +66,8 @@ const inactive = computed(() => props.listing.status !== "active");
         class="flex min-w-0 items-center gap-1.5 text-xs text-gray-500 hover:text-brand-600"
         :title="t('market.viewSeller')"
       >
-        <UserAvatar :name="listing.seller_id" :size="20" />
-        <span class="truncate">{{ listing.seller_id.slice(0, 6) }}</span>
+        <UserAvatar :name="directory.label(listing.seller_id)" :media-id="directory.avatarOf(listing.seller_id)" :size="20" />
+        <span class="truncate" dir="auto">{{ directory.label(listing.seller_id) }}</span>
       </RouterLink>
       <span
         v-if="listing.save_count"

@@ -1,9 +1,10 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 
-import { api } from "@/lib/api";
-import { tokenStore } from "@/lib/tokens";
+import { api, apiError, isAuthFailure } from "@/lib/api";
+import { jwtClaims, tokenStore } from "@/lib/tokens";
 import { realtime } from "@/lib/ws";
+import { useDirectoryStore } from "@/stores/directory";
 import type { Account, Profile, Tokens } from "@/types";
 
 // register returns the new account in "pending" state (email verification
@@ -14,10 +15,15 @@ interface RegisterResult {
   status: string;
 }
 
+const MAX_PROFILE_RETRIES = 5;
+
 export const useAuthStore = defineStore("auth", () => {
   const account = ref<Account | null>(null);
   const profile = ref<Profile | null>(null);
   const ready = ref(false);
+  // A stored session exists but the server couldn't be reached to restore it.
+  const sessionUnavailable = ref(false);
+  let profileRetries = 0;
 
   const isAuthenticated = computed(() => !!account.value);
   const roles = ref<string[]>([]);
@@ -25,16 +31,8 @@ export const useAuthStore = defineStore("auth", () => {
 
   // RBAC roles live in the access-token JWT (not in /me/). Decode them locally.
   function decodeRoles(token: string | null): string[] {
-    if (!token) return [];
-    try {
-      const part = token.split(".")[1];
-      const b64 = part.replace(/-/g, "+").replace(/_/g, "/");
-      const pad = b64.length % 4 ? "=".repeat(4 - (b64.length % 4)) : "";
-      const json = JSON.parse(atob(b64 + pad)) as { roles?: unknown };
-      return Array.isArray(json.roles) ? (json.roles as string[]) : [];
-    } catch {
-      return [];
-    }
+    const claimed = jwtClaims(token)?.roles;
+    return Array.isArray(claimed) ? (claimed as string[]) : [];
   }
 
   function applyTokens(t: Tokens) {
@@ -63,6 +61,7 @@ export const useAuthStore = defineStore("auth", () => {
     password: string;
     handle: string;
     display_name: string;
+    language: string;
   }): Promise<RegisterResult> {
     const { data } = await api.post<{ data: RegisterResult }>("/auth/register/", payload);
     return data.data;
@@ -72,46 +71,70 @@ export const useAuthStore = defineStore("auth", () => {
     try {
       const { data } = await api.get<{ data: Profile }>("/profile/me/");
       profile.value = data.data;
-    } catch {
+      profileRetries = 0;
+    } catch (e) {
       // Profile service may be degraded; auth still succeeds.
       profile.value = null;
+      // Profiles are provisioned from an event after registration, so a brand
+      // new account can log in before its profile exists.
+      if (apiError(e).code === "not_found" && profileRetries < MAX_PROFILE_RETRIES) {
+        profileRetries += 1;
+        window.setTimeout(() => {
+          if (account.value && !profile.value) void loadProfile();
+        }, profileRetries * 1000);
+      }
     }
   }
 
   /** Restore a session on app boot from a persisted refresh token. */
   async function bootstrap() {
+    sessionUnavailable.value = false;
     if (tokenStore.access || tokenStore.refresh) {
       try {
-        const { data } = await api.get<{ data: Account }>("/me/");
-        account.value = data.data;
+        await loadAccount();
         roles.value = decodeRoles(tokenStore.access);
         await loadProfile();
         realtime.connect();
-      } catch {
-        tokenStore.clear();
+      } catch (e) {
         account.value = null;
+        // Only a real 401 ends the session. Network errors and 5xx keep the
+        // tokens so the next attempt can still restore it.
+        if (isAuthFailure(e)) tokenStore.clear();
+        else sessionUnavailable.value = true;
       }
     }
     ready.value = true;
   }
 
-  async function logout() {
-    try {
-      await api.post("/auth/logout/", { refresh_token: tokenStore.refresh });
-    } catch {
-      // Best-effort server-side revocation.
+  /**
+   * End the session in this browser, then hard-reload: only a fresh page
+   * guarantees no KeepAlive view or store state reaches the next account.
+   * `remote: false` skips revoking a session the server already rejected.
+   */
+  async function logout({ remote = true }: { remote?: boolean } = {}) {
+    if (remote) {
+      try {
+        await api.post("/auth/logout/", { refresh_token: tokenStore.refresh });
+      } catch {
+        // Best-effort server-side revocation.
+      }
     }
     tokenStore.clear();
-    account.value = null;
-    profile.value = null;
-    roles.value = [];
     realtime.close();
+    useDirectoryStore().clear();
+    try {
+      localStorage.removeItem("tara.recentSearches");
+    } catch {
+      // Storage may be unavailable (private mode).
+    }
+    window.location.assign("/login");
   }
 
   return {
     account,
     profile,
     ready,
+    sessionUnavailable,
     isAuthenticated,
     roles,
     isStaff,

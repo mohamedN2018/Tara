@@ -1,23 +1,47 @@
 <script setup lang="ts">
 import { Bell, Heart, MessageSquare, ShoppingBag, UserPlus } from "lucide-vue-next";
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import { relativeTime } from "@/lib/format";
+import { useDirectoryStore } from "@/stores/directory";
 import type { Notification } from "@/types";
 
 const props = defineProps<{ notification: Notification }>();
 defineEmits<{ read: [id: string] }>();
 
+const { t, te } = useI18n();
+const directory = useDirectoryStore();
+
 const icon = computed(() => {
   const map: Record<string, typeof Bell> = {
-    reaction: Heart,
-    comment: MessageSquare,
-    friend_request: UserPlus,
+    "post.reaction": Heart,
+    "post.comment": MessageSquare,
+    "comment.reply": MessageSquare,
+    "friend.request": UserPlus,
+    "friend.accepted": UserPlus,
     follow: UserPlus,
-    listing: ShoppingBag,
+    message: MessageSquare,
+    "listing.status": ShoppingBag,
   };
   return map[props.notification.kind] ?? Bell;
+});
+
+const actorName = computed(() => directory.label(props.notification.actor_id));
+
+// The stored `body` is a fixed English sentence (or a message preview), so the
+// text is rebuilt from the kind; unknown kinds show the body as it came.
+const text = computed(() => {
+  const { kind, body } = props.notification;
+  const key = `notifications.kinds.${kind.replace(".", "_")}`;
+  if (!te(key)) return body;
+  if (kind === "listing.status") {
+    const status = body.split(" ").pop() ?? "";
+    const statusKey = `market.statuses.${status}`;
+    return t(key, { status: te(statusKey) ? t(statusKey) : status });
+  }
+  return t(key, { name: actorName.value, body });
 });
 </script>
 
@@ -28,7 +52,7 @@ const icon = computed(() => {
     @click="$emit('read', notification.id)"
   >
     <span class="relative mt-0.5 shrink-0">
-      <UserAvatar v-if="notification.actor_id" :name="notification.actor_id" :size="40" />
+      <UserAvatar v-if="notification.actor_id" :name="actorName" :media-id="directory.avatarOf(notification.actor_id)" :size="40" />
       <span v-else class="flex h-10 w-10 items-center justify-center rounded-full bg-brand-100 text-brand-600 dark:bg-brand-900/50">
         <component :is="icon" class="h-5 w-5" />
       </span>
@@ -40,7 +64,7 @@ const icon = computed(() => {
       </span>
     </span>
     <span class="min-w-0 flex-1">
-      <span class="block text-sm">{{ notification.body }}</span>
+      <span class="block text-sm" dir="auto">{{ text }}</span>
       <time class="text-xs text-gray-400">{{ relativeTime(notification.created_at) }}</time>
     </span>
     <span v-if="!notification.read_at" class="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-brand-500" />

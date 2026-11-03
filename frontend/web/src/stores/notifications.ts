@@ -10,7 +10,8 @@ export const useNotificationStore = defineStore("notifications", () => {
 
   async function refresh() {
     try {
-      unread.value = await notificationService.unreadCount();
+      const count = await notificationService.unreadCount();
+      if (Number.isFinite(count) && count >= 0) unread.value = count;
     } catch {
       // Notification service may be degraded; keep last known count.
     }
@@ -22,8 +23,10 @@ export const useNotificationStore = defineStore("notifications", () => {
     bound = true;
     // Gateway emits `notification.created` (see realtime bridge).
     realtime.on("notification.created", () => {
-      unread.value += 1;
+      unread.value = (Number.isFinite(unread.value) ? unread.value : 0) + 1;
     });
+    // Anything pushed while the socket was down is only recoverable over REST.
+    realtime.on("_reconnected", () => void refresh());
   }
 
   function clear() {

@@ -5,7 +5,8 @@ import { useRoute, useRouter } from "vue-router";
 
 import LocaleToggle from "@/components/common/LocaleToggle.vue";
 import ThemeToggle from "@/components/common/ThemeToggle.vue";
-import { apiError } from "@/lib/api";
+import { errorMessage } from "@/lib/errors";
+import { safeRedirect } from "@/lib/redirect";
 import { useAuthStore } from "@/stores/auth";
 
 const { t } = useI18n();
@@ -24,13 +25,21 @@ async function submit() {
   error.value = "";
   try {
     await auth.login(email.value, password.value);
-    const redirect = (route.query.redirect as string) || "/home";
-    router.push(redirect);
+    router.push(safeRedirect(route.query.redirect));
   } catch (e) {
-    error.value = apiError(e).message;
+    error.value = errorMessage(e, {
+      authentication_failed: "auth.invalidCredentials",
+      permission_denied: "auth.accountNotActive",
+    });
   } finally {
     loading.value = false;
   }
+}
+
+// The stored session is intact; the server just couldn't be reached at boot.
+async function retrySession() {
+  await auth.bootstrap();
+  if (auth.isAuthenticated) router.push(safeRedirect(route.query.redirect));
 }
 </script>
 
@@ -47,15 +56,26 @@ async function submit() {
       </RouterLink>
       <h1 class="mb-6 text-center text-sm text-gray-500">{{ t("auth.welcome") }}</h1>
 
+      <div
+        v-if="auth.sessionUnavailable"
+        class="mb-4 flex items-center justify-between gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+        role="status"
+      >
+        <span>{{ t("auth.sessionUnavailable") }}</span>
+        <button type="button" class="shrink-0 font-semibold underline" @click="retrySession">{{ t("states.retry") }}</button>
+      </div>
+
       <form class="space-y-4" @submit.prevent="submit">
         <div>
-          <label class="mb-1 block text-sm font-medium">{{ t("auth.email") }}</label>
-          <input v-model="email" type="email" class="input" required autocomplete="email" />
+          <label for="login-email" class="mb-1 block text-sm font-medium">{{ t("auth.email") }}</label>
+          <input id="login-email" v-model="email" dir="ltr" type="email" class="input" required autocomplete="email" />
         </div>
         <div>
-          <label class="mb-1 block text-sm font-medium">{{ t("auth.password") }}</label>
+          <label for="login-password" class="mb-1 block text-sm font-medium">{{ t("auth.password") }}</label>
           <input
+            id="login-password"
             v-model="password"
+            dir="ltr"
             type="password"
             class="input"
             required
@@ -63,7 +83,7 @@ async function submit() {
           />
         </div>
 
-        <p v-if="error" class="text-sm text-red-500">{{ error }}</p>
+        <p v-if="error" class="text-sm text-red-500" role="alert">{{ error }}</p>
 
         <button type="submit" class="btn-primary w-full" :disabled="loading">
           {{ loading ? t("auth.loggingIn") : t("auth.loginCta") }}

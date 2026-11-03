@@ -6,22 +6,26 @@ import { useRoute } from "vue-router";
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import AppShell from "@/components/layout/AppShell.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
+import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
 import { graphService } from "@/services/graph";
 import { useDirectoryStore } from "@/stores/directory";
 import { usePresenceStore } from "@/stores/presence";
+import { useToastStore } from "@/stores/toasts";
 
 const { t } = useI18n();
 const route = useRoute();
 const directory = useDirectoryStore();
 const presence = usePresenceStore();
+const toasts = useToastStore();
 
 type Tab = "followers" | "following" | "blocked";
 const TABS: Tab[] = ["followers", "following", "blocked"];
-const tab = ref<Tab>((route.query.tab as Tab) || "followers");
+const tab = ref<Tab>(TABS.includes(route.query.tab as Tab) ? (route.query.tab as Tab) : "followers");
 
 const ids = ref<string[]>([]);
 const loading = ref(true);
+const error = ref(false);
 const loaded = ref<Record<Tab, string[] | null>>({ followers: null, following: null, blocked: null });
 const unblocking = ref("");
 
@@ -33,9 +37,12 @@ async function fetchTab(tb: Tab): Promise<string[]> {
 
 async function load(tb: Tab) {
   loading.value = true;
+  error.value = false;
   try {
-    if (!loaded.value[tb]) loaded.value[tb] = await fetchTab(tb).catch(() => []);
+    if (!loaded.value[tb]) loaded.value[tb] = await fetchTab(tb);
     ids.value = loaded.value[tb] ?? [];
+  } catch {
+    error.value = true;
   } finally {
     loading.value = false;
   }
@@ -54,8 +61,8 @@ async function unblock(id: string) {
     await graphService.unblock(id);
     loaded.value.blocked = (loaded.value.blocked ?? []).filter((x) => x !== id);
     if (tab.value === "blocked") ids.value = loaded.value.blocked;
-  } catch {
-    /* ignore */
+  } catch (e) {
+    toasts.error(e);
   } finally {
     unblocking.value = "";
   }
@@ -82,20 +89,21 @@ onMounted(() => load(tab.value));
       </div>
 
       <LoadingSkeleton v-if="loading" :rows="4" />
+      <ErrorState v-else-if="error" @retry="load(tab)" />
       <EmptyState v-else-if="ids.length === 0">
         {{ tab === "followers" ? t("connections.noFollowers") : tab === "following" ? t("connections.noFollowing") : t("connections.noBlocked") }}
       </EmptyState>
       <ul v-else class="space-y-2">
         <li v-for="id in ids" :key="id" class="card flex items-center gap-3 p-3">
           <RouterLink :to="{ name: 'profile-by-id', params: { id } }" class="relative shrink-0">
-            <UserAvatar :name="directory.nameOf(id) || id" :size="44" />
+            <UserAvatar :name="directory.label(id)" :media-id="directory.avatarOf(id)" :size="44" />
             <span
               v-if="presence.isOnline(id)"
               class="absolute -end-0.5 -bottom-0.5 h-3 w-3 rounded-full border-2 border-white bg-green-500 dark:border-gray-900"
             />
           </RouterLink>
-          <RouterLink :to="{ name: 'profile-by-id', params: { id } }" class="min-w-0 flex-1 truncate text-sm font-medium hover:underline">
-            {{ directory.label(id, 16) }}
+          <RouterLink :to="{ name: 'profile-by-id', params: { id } }" class="min-w-0 flex-1 truncate text-sm font-medium hover:underline" dir="auto">
+            {{ directory.label(id) }}
           </RouterLink>
           <button
             v-if="tab === 'blocked'"

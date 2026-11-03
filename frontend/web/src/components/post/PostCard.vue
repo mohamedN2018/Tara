@@ -8,13 +8,13 @@ import UserAvatar from "@/components/common/UserAvatar.vue";
 import CommentInput from "@/components/post/CommentInput.vue";
 import CommentList from "@/components/post/CommentList.vue";
 import PostActions from "@/components/post/PostActions.vue";
-import { apiError } from "@/lib/api";
 import { relativeTime } from "@/lib/format";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import { useMediaUrls } from "@/lib/useMediaUrl";
 import { type Comment, postService } from "@/services/post";
 import { useAuthStore } from "@/stores/auth";
 import { useDirectoryStore } from "@/stores/directory";
+import { useToastStore } from "@/stores/toasts";
 import type { Post } from "@/types";
 
 const props = withDefaults(
@@ -23,28 +23,28 @@ const props = withDefaults(
     authorName?: string;
     authorHandle?: string;
     authorAvatar?: string | null;
-    saved?: boolean;
     startCommentsOpen?: boolean;
   }>(),
-  { saved: false, startCommentsOpen: false },
+  { startCommentsOpen: false },
 );
 const emit = defineEmits<{ removed: [id: string] }>();
 
 const { t } = useI18n();
 const auth = useAuthStore();
 const directory = useDirectoryStore();
+const toasts = useToastStore();
 
-const authorDisplay = computed(
-  () => props.authorName || directory.nameOf(props.post.author_id) || props.post.author_id.slice(0, 12),
-);
+const authorDisplay = computed(() => props.authorName || directory.label(props.post.author_id));
+const avatarId = computed(() => props.authorAvatar ?? directory.avatarOf(props.post.author_id));
 // Always navigate by account id (post.author_id) — that route loads the
 // author's posts. The handle route can't resolve posts for other users.
 const authorTo = computed<RouteLocationRaw>(() => ({
   name: "profile-by-id",
   params: { id: props.post.author_id },
-  query: { name: props.authorName || directory.nameOf(props.post.author_id) || undefined },
 }));
 const isAuthor = computed(() => auth.account?.id === props.post.author_id);
+// A feed snapshot holds at most an excerpt: saving it would truncate the post.
+const canEdit = computed(() => isAuthor.value && !props.post.partial);
 
 const AUDIENCE_ICON: Record<string, typeof Globe> = {
   public: Globe,
@@ -71,7 +71,7 @@ async function remove() {
     await postService.remove(props.post.id);
     emit("removed", props.post.id);
   } catch (e) {
-    alert(apiError(e).message);
+    toasts.error(e);
   } finally {
     removing.value = false;
     menuOpen.value = false;
@@ -86,6 +86,7 @@ const draft = ref("");
 const savingEdit = ref(false);
 function startEdit() {
   menuOpen.value = false;
+  if (!canEdit.value) return;
   draft.value = localBody.value;
   editing.value = true;
 }
@@ -98,7 +99,7 @@ async function saveEdit() {
     edited.value = true;
     editing.value = false;
   } catch (e) {
-    alert(apiError(e).message);
+    toasts.error(e);
   } finally {
     savingEdit.value = false;
   }
@@ -115,13 +116,13 @@ async function submitReport() {
     reported.value = true;
     showReport.value = false;
     reportReason.value = "";
-  } catch {
-    /* ignore */
+  } catch (e) {
+    toasts.error(e);
   }
 }
 
-const myReaction = ref<string | null>(null);
-const isSaved = ref(props.saved);
+const myReaction = ref<string | null>(props.post.my_reaction ?? null);
+const isSaved = ref(props.post.is_saved ?? false);
 const reactionCount = ref(props.post.reaction_count);
 const commentCount = ref(props.post.comment_count);
 const shareCount = ref(props.post.share_count);
@@ -148,9 +149,10 @@ async function onReact(type: string) {
   myReaction.value = type;
   try {
     await postService.react(props.post.id, type);
-  } catch {
+  } catch (e) {
     myReaction.value = prev;
     if (prev === null) reactionCount.value -= 1;
+    toasts.error(e);
   }
 }
 
@@ -161,9 +163,10 @@ async function onUnreact() {
   reactionCount.value -= 1;
   try {
     await postService.unreact(props.post.id);
-  } catch {
+  } catch (e) {
     myReaction.value = prev;
     reactionCount.value += 1;
+    toasts.error(e);
   }
 }
 
@@ -178,8 +181,9 @@ async function toggleComments() {
     try {
       const page = await postService.comments(props.post.id);
       comments.value = page.data;
-    } catch {
+    } catch (e) {
       comments.value = [];
+      toasts.error(e);
     } finally {
       loadingComments.value = false;
     }
@@ -194,7 +198,7 @@ async function submitComment(body: string) {
     comments.value.push(created);
     commentCount.value += 1;
   } catch (e) {
-    alert(apiError(e).message);
+    toasts.error(e);
   } finally {
     submitting.value = false;
   }
@@ -208,7 +212,7 @@ async function submitReply({ targetId, body }: { targetId: string; body: string 
     comments.value.push(created);
     commentCount.value += 1;
   } catch (e) {
-    alert(apiError(e).message);
+    toasts.error(e);
   } finally {
     submitting.value = false;
   }
@@ -218,8 +222,8 @@ async function share() {
   try {
     await postService.share(props.post.id);
     shareCount.value += 1;
-  } catch {
-    // Share endpoint may be unavailable; keep the UI responsive.
+  } catch (e) {
+    toasts.error(e);
   }
 }
 
@@ -229,8 +233,9 @@ async function toggleSave() {
   try {
     if (next) await postService.save(props.post.id);
     else await postService.unsave(props.post.id);
-  } catch {
+  } catch (e) {
     isSaved.value = !next;
+    toasts.error(e);
   }
 }
 </script>
@@ -238,11 +243,11 @@ async function toggleSave() {
 <template>
   <article class="card p-4">
     <header class="flex items-center gap-3">
-      <RouterLink :to="authorTo">
-        <UserAvatar :name="authorDisplay" :media-id="authorAvatar" :size="40" />
+      <RouterLink :to="authorTo" :aria-label="authorDisplay">
+        <UserAvatar :name="authorDisplay" :media-id="avatarId" :size="40" />
       </RouterLink>
       <div class="min-w-0">
-        <RouterLink :to="authorTo" class="block truncate text-sm font-semibold hover:underline">
+        <RouterLink :to="authorTo" class="block truncate text-sm font-semibold hover:underline" dir="auto">
           {{ authorDisplay }}
         </RouterLink>
         <div class="flex items-center gap-1 text-xs text-gray-500">
@@ -278,7 +283,7 @@ async function toggleSave() {
             <div class="fixed inset-0 z-40" @click="menuOpen = false" />
             <div class="card absolute end-0 z-50 mt-1 w-44 p-1.5" role="menu">
               <button
-                v-if="isAuthor"
+                v-if="canEdit"
                 class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-start text-sm transition hover:bg-gray-100 dark:hover:bg-gray-800"
                 @click="startEdit"
               >
@@ -307,13 +312,13 @@ async function toggleSave() {
 
     <!-- Edit mode -->
     <div v-if="editing" class="mt-3">
-      <textarea v-model="draft" class="input min-h-24 text-[15px]" rows="3" />
+      <textarea v-model="draft" class="input min-h-24 text-[15px]" rows="3" dir="auto" :aria-label="t('post.editBody')" />
       <div class="mt-2 flex justify-end gap-2">
         <button class="btn-ghost" @click="editing = false">{{ t("feed.cancel") }}</button>
         <button class="btn-primary" :disabled="savingEdit" @click="saveEdit">{{ t("post.save") }}</button>
       </div>
     </div>
-    <p v-else-if="localBody" class="mt-3 whitespace-pre-wrap text-[15px] leading-relaxed">
+    <p v-else-if="localBody" class="mt-3 whitespace-pre-wrap break-words text-[15px] leading-relaxed" dir="auto">
       {{ localBody }}
       <span v-if="edited" class="text-xs text-gray-400">· {{ t("messages.edited") }}</span>
     </p>
@@ -321,7 +326,7 @@ async function toggleSave() {
     <!-- Report box -->
     <div v-if="showReport" class="mt-3 rounded-xl border border-gray-200 p-3 dark:border-gray-800">
       <p class="mb-2 text-sm font-medium">{{ t("post.reportReason") }}</p>
-      <textarea v-model="reportReason" class="input min-h-16" rows="2" />
+      <textarea v-model="reportReason" class="input min-h-16" rows="2" dir="auto" :aria-label="t('post.reportReason')" />
       <div class="mt-2 flex justify-end gap-2">
         <button class="btn-ghost" @click="showReport = false">{{ t("feed.cancel") }}</button>
         <button class="btn-primary" :disabled="!reportReason.trim()" @click="submitReport">{{ t("post.report") }}</button>
@@ -341,7 +346,7 @@ async function toggleSave() {
         class="max-h-96 w-full object-cover"
         loading="lazy"
         decoding="async"
-        alt=""
+        :alt="t('post.imageAlt', { n: i + 1, name: authorDisplay })"
       />
     </div>
 

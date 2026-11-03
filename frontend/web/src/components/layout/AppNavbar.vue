@@ -22,7 +22,6 @@ import ProfileMenu from "@/components/layout/ProfileMenu.vue";
 import NotificationPanel from "@/components/notifications/NotificationPanel.vue";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import { type Suggestion, searchService } from "@/services/search";
-import { useDirectoryStore } from "@/stores/directory";
 import { useNotificationStore } from "@/stores/notifications";
 import { useUiStore } from "@/stores/ui";
 
@@ -30,7 +29,6 @@ const { t } = useI18n();
 const router = useRouter();
 const ui = useUiStore();
 const notifications = useNotificationStore();
-const directory = useDirectoryStore();
 
 const showNotifs = ref(false);
 const showMessages = ref(false);
@@ -83,10 +81,6 @@ watch(q, (val) => {
   suggestTimer = window.setTimeout(async () => {
     try {
       suggestions.value = await searchService.suggest(term);
-      // Cache names so users you search show real names across the app.
-      suggestions.value.forEach((s) => {
-        if (s.type === "user") directory.remember(s.id, s.title);
-      });
     } catch {
       suggestions.value = []; // Endpoint optional; fall back to free-text search.
     }
@@ -108,15 +102,14 @@ function submitSearch() {
   go(q.value);
 }
 
-// Person suggestions jump straight to that profile (carrying the real name from
-// the search index); everything else runs a full-text search.
+// Person suggestions jump straight to that profile; everything else runs a
+// full-text search.
 function pickSuggestion(s: Suggestion) {
   rememberTerm(s.title);
-  if (s.type === "user") directory.remember(s.id, s.title);
   showSearch.value = false;
   q.value = s.title;
   if (s.type === "user" && s.id) {
-    router.push({ name: "profile-by-id", params: { id: s.id }, query: { name: s.title } });
+    router.push({ name: "profile-by-id", params: { id: s.id } });
   } else {
     router.push({ name: "search", query: { q: s.title } });
   }
@@ -183,8 +176,8 @@ const navIcons = [
                   <component :is="iconFor(s.type)" class="h-4 w-4" />
                 </span>
                 <span class="min-w-0 flex-1">
-                  <span class="block truncate font-medium">{{ s.title }}</span>
-                  <span v-if="s.snippet" class="block truncate text-xs text-gray-400">{{ s.snippet }}</span>
+                  <span class="block truncate font-medium" dir="auto">{{ s.title }}</span>
+                  <span v-if="s.snippet" class="block truncate text-xs text-gray-400" dir="auto">{{ s.snippet }}</span>
                 </span>
               </button>
               <p class="px-3 py-2 text-xs text-gray-400">{{ t("search.hint") }}</p>

@@ -9,6 +9,7 @@ import MarketplaceCard from "@/components/marketplace/MarketplaceCard.vue";
 import PostCard from "@/components/post/PostCard.vue";
 import SearchBar from "@/components/search/SearchBar.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
+import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
 import { marketplaceService } from "@/services/marketplace";
 import { postService } from "@/services/post";
@@ -29,6 +30,7 @@ const query = ref("");
 const tab = ref<Tab>("all");
 const loading = ref(false);
 const searched = ref(false);
+const error = ref(false);
 
 const people = ref<Suggestion[]>([]);
 const posts = ref<Post[]>([]);
@@ -40,10 +42,10 @@ async function run() {
   if (route.query.q !== q) router.replace({ name: "search", query: { q } });
   loading.value = true;
   searched.value = true;
+  error.value = false;
   try {
     const hits = await searchService.query(q, "all");
     people.value = hits.filter((h) => h.type === "user");
-    people.value.forEach((h) => directory.remember(h.id, h.title));
     // Resolve full objects so posts/listings render as real cards.
     const postHits = hits.filter((h) => h.type === "post");
     const listingHits = hits.filter((h) => h.type === "listing");
@@ -59,6 +61,7 @@ async function run() {
     people.value = [];
     posts.value = [];
     listings.value = [];
+    error.value = true;
   } finally {
     loading.value = false;
   }
@@ -98,6 +101,7 @@ const show = (section: Tab) => tab.value === "all" || tab.value === section;
 
     <div class="mt-4">
       <LoadingSkeleton v-if="loading" :rows="3" />
+      <ErrorState v-else-if="error" @retry="run" />
       <template v-else-if="searched">
         <EmptyState v-if="isEmpty">{{ t("search.noResults", { q: query }) }}</EmptyState>
         <template v-else>
@@ -106,13 +110,13 @@ const show = (section: Tab) => tab.value === "all" || tab.value === section;
             <ul class="space-y-2">
               <li v-for="p in people" :key="p.id">
                 <RouterLink
-                  :to="{ name: 'profile-by-id', params: { id: p.id }, query: { name: p.title } }"
+                  :to="{ name: 'profile-by-id', params: { id: p.id } }"
                   class="card flex items-center gap-3 p-3 transition hover:shadow-sm"
                 >
-                  <UserAvatar :name="p.title || p.id" />
+                  <UserAvatar :name="directory.label(p.id)" :media-id="directory.avatarOf(p.id)" />
                   <span class="min-w-0">
-                    <span class="block truncate text-sm font-medium">{{ p.title || p.id.slice(0, 8) }}</span>
-                    <span v-if="p.snippet" class="block truncate text-xs text-gray-500">{{ p.snippet }}</span>
+                    <span class="block truncate text-sm font-medium" dir="auto">{{ directory.label(p.id) }}</span>
+                    <span v-if="p.snippet" class="block truncate text-xs text-gray-500" dir="auto">{{ p.snippet }}</span>
                   </span>
                 </RouterLink>
               </li>

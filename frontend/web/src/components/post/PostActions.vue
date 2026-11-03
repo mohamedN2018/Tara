@@ -72,14 +72,14 @@ onBeforeUnmount(() => {
       class="flex items-center justify-between px-1 py-1 text-xs text-gray-500"
     >
       <span v-if="reactionCount" class="inline-flex items-center gap-1">
-        <span class="text-sm leading-none">{{ summaryEmoji }}</span>
-        {{ reactionCount }}
+        <span class="text-sm leading-none" aria-hidden="true">{{ summaryEmoji }}</span>
+        <span :aria-label="t('post.reactionsCount', reactionCount)">{{ reactionCount }}</span>
       </span>
       <span v-else aria-hidden="true" />
       <span>
-        <template v-if="commentCount">{{ t("post.commentsCount", { count: commentCount }) }}</template>
+        <template v-if="commentCount">{{ t("post.commentsCount", commentCount) }}</template>
         <template v-if="commentCount && shareCount"> · </template>
-        <template v-if="shareCount">{{ t("post.sharesCount", { count: shareCount }) }}</template>
+        <template v-if="shareCount">{{ t("post.sharesCount", shareCount) }}</template>
       </span>
     </div>
 

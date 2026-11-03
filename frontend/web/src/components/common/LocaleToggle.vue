@@ -11,7 +11,7 @@ function toggle() {
 </script>
 
 <template>
-  <button class="btn-ghost px-2" :title="ui.locale === 'ar' ? 'English' : 'العربية'" @click="toggle">
+  <button class="btn-ghost px-2" :title="ui.locale === 'ar' ? 'English' : 'العربية'" :aria-label="ui.locale === 'ar' ? 'English' : 'العربية'" @click="toggle">
     <Languages class="h-4 w-4" />
     <span class="text-xs font-semibold uppercase">{{ ui.locale === "ar" ? "EN" : "ع" }}</span>
   </button>
