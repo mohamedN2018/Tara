@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
 
+import GoogleSignInButton from "@/components/auth/GoogleSignInButton.vue";
 import AuthLayout from "@/components/brand/AuthLayout.vue";
 import { apiError } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
+import { securityErrorKey } from "@/lib/securityErrors";
 import { useAuthStore } from "@/stores/auth";
 
 const { t, locale } = useI18n();
 const auth = useAuthStore();
+const router = useRouter();
 
 const form = ref({ display_name: "", handle: "", email: "", password: "" });
 type Field = keyof typeof form.value;
@@ -34,6 +38,27 @@ function applyErrors(e: unknown) {
   }
   fieldErrors.value = next;
   error.value = Object.keys(next).length ? "" : errorMessage(e);
+}
+
+// Google already proved the address: the account is active at once.
+async function googleSignUp(credential: string) {
+  if (loading.value) return;
+  loading.value = true;
+  error.value = "";
+  fieldErrors.value = {};
+  try {
+    await auth.loginWithGoogle(credential, locale.value);
+    router.push("/home");
+  } catch (e) {
+    error.value = t(
+      securityErrorKey(e, {
+        authentication_failed: "accountSecurity.google.failed",
+        permission_denied: "auth.accountNotActive",
+      }),
+    );
+  } finally {
+    loading.value = false;
+  }
 }
 
 async function submit() {
@@ -143,6 +168,8 @@ async function submit() {
           {{ t("auth.registerCta") }}
         </button>
       </form>
+
+      <GoogleSignInButton v-if="!done" text="signup_with" divider @credential="googleSignUp" />
 
       <p class="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">
         {{ t("auth.haveAccount") }}

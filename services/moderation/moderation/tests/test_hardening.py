@@ -6,7 +6,12 @@ import pytest
 from django.urls import reverse
 
 from moderation import services
-from moderation.handlers import on_listing_reported, on_post_reported
+from moderation.handlers import (
+    on_comment_reported,
+    on_listing_reported,
+    on_listing_review_reported,
+    on_post_reported,
+)
 from moderation.models import (
     Appeal,
     ModerationAction,
@@ -394,6 +399,50 @@ def test_listing_reported_owner_id_is_stored_on_the_case():
     )
     case = ModerationCase.objects.get(target_type="listing", target_id=listing_id)
     assert str(case.owner_id) == seller
+
+
+def test_comment_reported_opens_a_comment_case_with_its_owner():
+    comment_id, author = _acct(), _acct()
+    on_comment_reported(
+        EventEnvelope(
+            event_type="comment.reported",
+            subject_id=comment_id,
+            producer="post-service",
+            payload={
+                "comment_id": comment_id,
+                "post_id": _acct(),
+                "reporter": _acct(),
+                "owner_id": author,
+                "reason": "spam",
+            },
+        )
+    )
+    case = ModerationCase.objects.get(target_type="comment", target_id=comment_id)
+    assert str(case.owner_id) == author
+    assert Report.objects.filter(target_type="comment", target_id=comment_id).count() == 1
+
+
+def test_review_report_opens_a_listing_review_case_that_can_be_removed():
+    review_id, buyer = _acct(), _acct()
+    on_listing_review_reported(
+        EventEnvelope(
+            event_type="marketplace.review.reported",
+            subject_id=review_id,
+            producer="marketplace-service",
+            payload={
+                "review_id": review_id,
+                "listing_id": _acct(),
+                "seller_id": _acct(),
+                "reporter": _acct(),
+                "owner_id": buyer,
+                "reason": "abuse",
+            },
+        )
+    )
+    case = ModerationCase.objects.get(target_type="listing_review", target_id=review_id)
+    assert str(case.owner_id) == buyer
+    assert "remove" in services.ACTIONS_BY_TARGET["listing_review"]
+    assert services.REVERSALS[("listing_review", "remove")] == "approve"
 
 
 @pytest.mark.parametrize(

@@ -3,19 +3,32 @@ import { MessageSquare, Share2, ThumbsUp } from "lucide-vue-next";
 import { computed, onBeforeUnmount, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
+import { topReactions } from "@/lib/reactionCounts";
 import { REACTIONS, reactionByKey } from "@/lib/reactions";
 
 const props = defineProps<{
   myReaction: string | null;
   reactionCount: number;
+  reactionCounts?: Record<string, number>;
   commentCount: number;
   shareCount: number;
 }>();
-const emit = defineEmits<{ react: [type: string]; unreact: []; comment: []; share: [] }>();
+const emit = defineEmits<{
+  react: [type: string];
+  unreact: [];
+  comment: [];
+  share: [];
+  reactions: [];
+  shares: [];
+}>();
 const { t } = useI18n();
 
 const current = computed(() => reactionByKey(props.myReaction));
-const summaryEmoji = computed(() => current.value?.emoji ?? "👍");
+// The post's most used reactions; the viewer's own while counts are unknown.
+const summaryEmojis = computed(() => {
+  const top = topReactions(props.reactionCounts ?? {}).map((k) => reactionByKey(k)?.emoji ?? "👍");
+  return top.length ? top : [current.value?.emoji ?? "👍"];
+});
 
 // --- Reaction picker: hover (desktop) + long-press (touch). ---
 const pickerOpen = ref(false);
@@ -71,18 +84,27 @@ onBeforeUnmount(() => {
       v-if="reactionCount || commentCount || shareCount"
       class="flex items-center justify-between px-1 py-1 text-xs text-gray-500 dark:text-gray-400"
     >
-      <span v-if="reactionCount" class="inline-flex items-center gap-1.5">
-        <span
-          class="flex h-5 w-5 items-center justify-center rounded-full bg-brand-50 text-[11px] leading-none ring-2 ring-white dark:bg-brand-950 dark:ring-gray-900"
-          aria-hidden="true"
-        >{{ summaryEmoji }}</span>
-        <span :aria-label="t('post.reactionsCount', reactionCount)">{{ reactionCount }}</span>
-      </span>
+      <button
+        v-if="reactionCount"
+        type="button"
+        class="inline-flex items-center gap-1.5 rounded-full hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
+        :aria-label="`${t('post.reactionsCount', reactionCount)} · ${t('post.reactionsTitle')}`"
+        @click="emit('reactions')"
+      >
+        <span class="flex -space-x-1 rtl:space-x-reverse" aria-hidden="true">
+          <span
+            v-for="(emoji, i) in summaryEmojis"
+            :key="i"
+            class="flex h-5 w-5 items-center justify-center rounded-full bg-brand-50 text-[11px] leading-none ring-2 ring-white dark:bg-brand-950 dark:ring-gray-900"
+          >{{ emoji }}</span>
+        </span>
+        <span class="tabular-nums" aria-hidden="true">{{ reactionCount }}</span>
+      </button>
       <span v-else aria-hidden="true" />
       <span>
-        <template v-if="commentCount">{{ t("post.commentsCount", commentCount) }}</template>
+        <button v-if="commentCount" type="button" class="hover:underline" @click="emit('comment')">{{ t("post.commentsCount", commentCount) }}</button>
         <template v-if="commentCount && shareCount"> · </template>
-        <template v-if="shareCount">{{ t("post.sharesCount", shareCount) }}</template>
+        <button v-if="shareCount" type="button" class="hover:underline" @click="emit('shares')">{{ t("post.sharesCount", shareCount) }}</button>
       </span>
     </div>
 

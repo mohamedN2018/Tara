@@ -6,6 +6,8 @@ app_name = "chat"
 
 urlpatterns = [
     path("conversations/", views.ConversationsView.as_view(), name="conversations"),
+    path("conversations/unread/", views.UnreadView.as_view(), name="unread"),
+    path("conversations/delivered/", views.DeliveredView.as_view(), name="delivered"),
     path(
         "conversations/<uuid:conversation_id>/",
         views.ConversationDetailView.as_view(),
@@ -43,6 +45,38 @@ urlpatterns = [
     ),
     path(
         "conversations/<uuid:conversation_id>/pin/", views.ConversationPinView.as_view(), name="pin"
+    ),
+    path(
+        "conversations/<uuid:conversation_id>/archive/",
+        views.ConversationArchiveView.as_view(),
+        name="archive",
+    ),
+    path(
+        "conversations/<uuid:conversation_id>/clear/",
+        views.ConversationClearView.as_view(),
+        name="clear",
+    ),
+    path(
+        "conversations/<uuid:conversation_id>/search/",
+        views.ConversationSearchView.as_view(),
+        name="conversation-search",
+    ),
+    path(
+        "conversations/<uuid:conversation_id>/media/",
+        views.ConversationMediaView.as_view(),
+        name="shared-media",
+    ),
+    path("messages/search/", views.MessageSearchView.as_view(), name="message-search"),
+    path("messages/<uuid:message_id>/", views.MessageDetailView.as_view(), name="message"),
+    path(
+        "messages/<uuid:message_id>/forward/",
+        views.MessageForwardView.as_view(),
+        name="message-forward",
+    ),
+    path(
+        "messages/<uuid:message_id>/attachments/<uuid:media_id>/",
+        views.MessageAttachmentView.as_view(),
+        name="message-attachment",
     ),
     path(
         "messages/<uuid:message_id>/reactions/",

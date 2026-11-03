@@ -22,7 +22,9 @@ import ProfileMenu from "@/components/layout/ProfileMenu.vue";
 import TaraLogo from "@/components/brand/TaraLogo.vue";
 import NotificationPanel from "@/components/notifications/NotificationPanel.vue";
 import { useEscapeKey } from "@/lib/useEscapeKey";
+import { badgeText } from "@/lib/chat";
 import { type Suggestion, searchService } from "@/services/search";
+import { useChatUnreadStore } from "@/stores/chatUnread";
 import { useNotificationStore } from "@/stores/notifications";
 import { useUiStore } from "@/stores/ui";
 
@@ -30,6 +32,7 @@ const { t } = useI18n();
 const router = useRouter();
 const ui = useUiStore();
 const notifications = useNotificationStore();
+const chatUnread = useChatUnreadStore();
 
 const showNotifs = ref(false);
 const showMessages = ref(false);
@@ -230,14 +233,17 @@ const navIcons = [
       <!-- Messages dropdown (mobile uses the bottom bar instead) -->
       <div class="relative hidden sm:block">
         <button
-          class="icon-btn"
+          class="icon-btn relative"
           :class="showMessages ? '!bg-brand-50 !text-brand-700 dark:!bg-brand-950/70 dark:!text-brand-300' : ''"
-          :aria-label="t('nav.messages')"
+          :aria-label="chatUnread.conversations > 0 ? t('messages.unreadBadge', { count: chatUnread.conversations }) : t('nav.messages')"
           aria-haspopup="menu"
           :aria-expanded="showMessages"
           @click="showMessages = !showMessages"
         >
           <MessageCircle class="h-5 w-5" />
+          <span v-if="chatUnread.conversations > 0" class="badge absolute -end-1 -top-1 ring-2 ring-white dark:ring-gray-950" data-testid="messages-badge">
+            {{ badgeText(chatUnread.conversations) }}
+          </span>
         </button>
         <template v-if="showMessages">
           <div class="fixed inset-0 z-40" @click="showMessages = false" />
@@ -278,7 +284,7 @@ const navIcons = [
                 {{ t("notifications.viewAll") }}
               </RouterLink>
             </div>
-            <NotificationPanel :limit="6" />
+            <NotificationPanel :limit="6" @navigate="showNotifs = false" />
           </div>
         </template>
       </div>

@@ -31,6 +31,7 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "corsheaders",
     "django_prometheus",
+    "django.contrib.postgres",
     "chat",
 ]
 
@@ -93,6 +94,16 @@ TARA_JWT_PUBLIC_KEY = os.getenv("TARA_JWT_PUBLIC_KEY", "")
 TARA_JWT_ISSUER = os.getenv("JWT_ISSUER", "tara-identity")
 TARA_JWT_AUDIENCE = os.getenv("JWT_AUDIENCE", "tara")
 TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-secret-change-me")
+
+MEDIA_INTERNAL_URL = os.getenv("MEDIA_INTERNAL_URL", "http://media:8000")
+MEDIA_CALL_TIMEOUT = float(os.getenv("MEDIA_CALL_TIMEOUT", "2.0"))
+
+# Message lifecycle windows (seconds).
+CHAT_EDIT_WINDOW_SECONDS = int(os.getenv("CHAT_EDIT_WINDOW_SECONDS", "900"))
+CHAT_DELETE_WINDOW_SECONDS = int(os.getenv("CHAT_DELETE_WINDOW_SECONDS", "3600"))
+# Chat-side caps on top of media's own per-kind limits (roadmap 3.2).
+_MB = 1024 * 1024
+CHAT_ATTACHMENT_MAX_BYTES = {"video": 64 * _MB, "file": 25 * _MB}
 
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")
 TARA_EVENT_PUBLISHER = "rabbitmq" if RABBITMQ_URL else "null"

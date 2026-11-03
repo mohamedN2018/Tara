@@ -81,6 +81,12 @@ x-identity-env: &identity-env
   DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:?}
   FRONTEND_BASE_URL: https://${DOMAIN:?}
   IDENTITY_JWT_KEY_DIR: /app/.keys
+  # Optional sign-in and phone verification: each is off while empty.
+  AUTH_LOGIN_TARGET_RATE: ${AUTH_LOGIN_TARGET_RATE:-}
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+  TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+  TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
 
 x-profile-env: &profile-env
   <<: *common-env

@@ -26,6 +26,8 @@ def on_moderation_actioned(event: EventEnvelope) -> None:
     p = event.payload
     if p.get("target_type") == "post":
         services.apply_moderation(p["target_id"], p.get("action", ""))
+    elif p.get("target_type") == "comment":
+        services.apply_comment_moderation(p["target_id"], p.get("action", ""))
 
 
 @on_event("post.created")
@@ -62,5 +64,16 @@ def on_comment_mentions(event: EventEnvelope) -> None:
         actor_id=p["author"],
         post_id=p["post_id"],
         handles=p.get("mentions", []),
+        comment_id=p.get("comment_id"),
+    )
+
+
+@on_event("comment.edited")
+def on_comment_edited_mentions(event: EventEnvelope) -> None:
+    p = event.payload
+    services.notify_mentions(
+        actor_id=p["author"],
+        post_id=p["post_id"],
+        handles=p.get("new_mentions", []),
         comment_id=p.get("comment_id"),
     )

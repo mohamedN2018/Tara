@@ -6,6 +6,7 @@ import UserAvatar from "@/components/common/UserAvatar.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
+import { badgeText } from "@/lib/chat";
 import { relativeTime } from "@/lib/format";
 import { chatService } from "@/services/chat";
 import { useAuthStore } from "@/stores/auth";
@@ -69,6 +70,9 @@ onMounted(load);
           <time v-if="c.last_message_at" class="shrink-0 text-[10px] text-gray-500 dark:text-gray-400">
             {{ relativeTime(c.last_message_at) }}
           </time>
+          <span v-if="c.unread_count" class="badge shrink-0" :aria-label="t('messages.unreadCount', { count: c.unread_count })">
+            {{ badgeText(c.unread_count) }}
+          </span>
         </RouterLink>
       </li>
     </ul>

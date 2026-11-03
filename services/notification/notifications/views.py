@@ -4,15 +4,17 @@ from __future__ import annotations
 
 from django.conf import settings
 from drf_spectacular.utils import extend_schema
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from tara_common.exceptions import TaraAPIError
 from tara_common.pagination import CursorPagination
 from tara_common.responses import data_response
 
-from . import push, services
+from . import push, registry, services
 from .serializers import (
     NotificationSerializer,
     PreferenceSerializer,
@@ -20,6 +22,7 @@ from .serializers import (
     PushTokenSerializer,
     PushUnsubscribeSerializer,
     ReadSerializer,
+    ResolveSerializer,
 )
 
 
@@ -33,10 +36,69 @@ class NotificationsView(APIView):
     @extend_schema(responses={200: NotificationSerializer(many=True)}, tags=["notifications"])
     def get(self, request: Request) -> Response:
         unread_only = request.query_params.get("unread") in ("1", "true")
-        qs = services.list_for(_me(request), unread_only=unread_only)
+        category = request.query_params.get("category", "")
+        if category not in ("", *registry.CATEGORIES):
+            raise ValidationError({"category": "Unknown category."})
+        qs = services.list_for(_me(request), unread_only=unread_only, category=category)
         paginator = CursorPagination()
         page = paginator.paginate_queryset(qs, request)
         return paginator.get_paginated_response(NotificationSerializer(page, many=True).data)
+
+
+def _not_found() -> TaraAPIError:
+    return TaraAPIError("Notification not found.", code="not_found", http_status_code=404)
+
+
+class NotificationDetailView(APIView):
+    """One notification (the live list fetches rows announced by id), or dismiss it."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: NotificationSerializer}, tags=["notifications"])
+    def get(self, request: Request, pk) -> Response:
+        notification = services.get_for(_me(request), str(pk))
+        if notification is None:
+            raise _not_found()
+        return data_response(NotificationSerializer(notification).data)
+
+    @extend_schema(responses={204: None}, tags=["notifications"])
+    def delete(self, request: Request, pk) -> Response:
+        services.delete(_me(request), str(pk))  # idempotent: gone is gone
+        return Response(status=204)
+
+
+class ResolveView(APIView):
+    """Record the outcome of an inline action (accepted, declined, followed back)."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        request=ResolveSerializer, responses={200: NotificationSerializer}, tags=["notifications"]
+    )
+    def post(self, request: Request, pk) -> Response:
+        serializer = ResolveSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            notification = services.resolve(
+                _me(request), str(pk), serializer.validated_data["resolution"]
+            )
+        except ValueError as exc:
+            raise ValidationError({"resolution": "Not allowed for this notification."}) from exc
+        if notification is None:
+            raise _not_found()
+        return data_response(NotificationSerializer(notification).data)
+
+
+class KindsView(APIView):
+    """The kind registry: categories and default channels, for the Settings screen."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: None}, tags=["notifications"])
+    def get(self, request: Request) -> Response:
+        return data_response(
+            {"categories": list(registry.CATEGORIES), "kinds": registry.describe()}
+        )
 
 
 class UnreadCountView(APIView):
@@ -73,13 +135,7 @@ class PreferencesView(APIView):
     def patch(self, request: Request) -> Response:
         serializer = PreferenceUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        v = serializer.validated_data
-        pref = services.get_or_create_preferences(_me(request))
-        if "prefs" in v:
-            pref.prefs = v["prefs"]
-        if "quiet_hours" in v:
-            pref.quiet_hours = v["quiet_hours"]
-        pref.save()
+        pref = services.update_preferences(_me(request), serializer.validated_data)
         return data_response(PreferenceSerializer(pref).data)
 
 

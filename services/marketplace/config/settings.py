@@ -115,7 +115,13 @@ CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", not bool(RABBITM
 CELERY_BEAT_SCHEDULE = {
     "drain-outbox": {"task": "tara_events.publish_outbox", "schedule": 2.0},
     "purge-events": {"task": "tara_events.purge_events", "schedule": 3600.0},
+    "flush-view-counts": {"task": "marketplace.flush_view_counts", "schedule": 30.0},
 }
+
+# Listing views: a per-viewer cooldown and a buffer in Redis, flushed by the beat above.
+MARKETPLACE_REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/8")
+MARKETPLACE_VIEW_KEY_PREFIX = os.getenv("MARKETPLACE_VIEW_KEY_PREFIX", "mkt:views:")
+MARKETPLACE_VIEW_COOLDOWN_SECONDS = int(os.getenv("MARKETPLACE_VIEW_COOLDOWN_SECONDS", "1800"))
 
 CORS_ALLOWED_ORIGINS = env_list("MARKETPLACE_CORS_ORIGINS", "http://localhost:5173")
 CORS_ALLOW_CREDENTIALS = True

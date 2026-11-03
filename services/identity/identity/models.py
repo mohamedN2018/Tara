@@ -44,6 +44,11 @@ class Account(AbstractBaseUser, PermissionsMixin):
     last_login_at = models.DateTimeField(null=True, blank=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
 
+    # E.164-ish number proven through the Telegram bot's "share contact" button.
+    # Set only together with phone_verified_at (see telegram.py).
+    phone = models.CharField(max_length=32, blank=True, default="")
+    phone_verified_at = models.DateTimeField(null=True, blank=True)
+
     objects = AccountManager()
 
     USERNAME_FIELD = "email"
@@ -52,6 +57,14 @@ class Account(AbstractBaseUser, PermissionsMixin):
     class Meta:
         db_table = "account"
         indexes = [models.Index(fields=["status"], name="account_status_idx")]
+        constraints = [
+            # One account per verified phone number.
+            models.UniqueConstraint(
+                fields=["phone"],
+                condition=models.Q(phone_verified_at__isnull=False),
+                name="account_verified_phone_uniq",
+            ),
+        ]
 
     def __str__(self) -> str:
         return self.email
@@ -59,6 +72,10 @@ class Account(AbstractBaseUser, PermissionsMixin):
     @property
     def is_usable(self) -> bool:
         return self.status == self.Status.ACTIVE and self.is_active
+
+    @property
+    def phone_verified(self) -> bool:
+        return self.phone_verified_at is not None
 
 
 class AccountRole(models.Model):
@@ -176,6 +193,74 @@ class PasswordReset(models.Model):
 
     class Meta:
         db_table = "password_reset"
+
+
+class SocialIdentity(models.Model):
+    """An external login (Google) linked to an account.
+
+    Keyed on the provider's stable subject id (`sub`), never on the email: the
+    email at the provider can change or be recycled, the subject cannot.
+    """
+
+    class Provider(models.TextChoices):
+        GOOGLE = "google", "Google"
+
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="social_identities")
+    provider = models.CharField(max_length=16, choices=Provider.choices)
+    subject = models.CharField(max_length=255)
+    email = models.EmailField(blank=True, default="")  # as last reported by the provider
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "social_identity"
+        constraints = [
+            models.UniqueConstraint(fields=["provider", "subject"], name="social_subject_uniq"),
+            models.UniqueConstraint(fields=["account", "provider"], name="social_account_uniq"),
+        ]
+
+
+class EmailChangeRequest(models.Model):
+    """A pending email change. The address only changes once the link sent to
+    the NEW address is opened (proving the user owns it)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="email_changes")
+    new_email = models.EmailField()
+    token_hash = models.CharField(max_length=64, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "email_change_request"
+        indexes = [models.Index(fields=["account", "created_at"], name="emailchange_account_idx")]
+
+
+class PhoneVerification(models.Model):
+    """One Telegram phone-verification attempt.
+
+    The deep-link code is stored hashed. `/start <code>` binds the Telegram
+    chat and user; only a contact shared by that same Telegram user, for
+    themselves, completes it.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    account = models.ForeignKey(
+        Account, on_delete=models.CASCADE, related_name="phone_verifications"
+    )
+    code_hash = models.CharField(max_length=64, unique=True)
+    telegram_chat_id = models.CharField(max_length=32, blank=True, default="")
+    telegram_user_id = models.BigIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "phone_verification"
+        indexes = [models.Index(fields=["telegram_chat_id"], name="phonever_chat_idx")]
 
 
 class SecurityEvent(models.Model):

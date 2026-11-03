@@ -8,6 +8,7 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from tara_common.exceptions import TaraAPIError
@@ -29,6 +30,7 @@ from .serializers import (
     TokenResponseSerializer,
     VerifyEmailSerializer,
 )
+from .throttling import LoginTargetThrottle
 from .tokens import build_jwks
 
 REFRESH_COOKIE = "refresh_token"
@@ -119,6 +121,8 @@ class RegisterView(APIView):
 class LoginView(APIView):
     permission_classes = [AllowAny]
     throttle_scope = "auth_login"
+    # Per IP (auth_login) AND per targeted email (auth_login_target).
+    throttle_classes = [ScopedRateThrottle, LoginTargetThrottle]
 
     @extend_schema(request=LoginSerializer, responses={200: TokenResponseSerializer}, tags=["auth"])
     def post(self, request: Request) -> Response:

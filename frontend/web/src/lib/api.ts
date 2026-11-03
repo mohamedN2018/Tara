@@ -89,7 +89,7 @@ export function notifyUnauthorized() {
 }
 
 // Calls where a 401 is the answer itself, not a sign of an expired access token.
-const NO_REFRESH = /\/auth\/(login|register|refresh|logout)\/?(\?.*)?$/;
+const NO_REFRESH = /\/auth\/(login|register|refresh|logout|google)\/?(\?.*)?$/;
 export const skipsRefresh = (url?: string): boolean => NO_REFRESH.test(url ?? "");
 
 api.interceptors.response.use(

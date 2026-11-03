@@ -50,7 +50,13 @@ The current state of the code is described in the companion document [02-tara-au
 | 1.0e Ads-only serve-token secret | Done | `ADS_SERVE_TOKEN_SECRET`; old tokens are rejected immediately (no 30-minute grace window) |
 | 1.1 Social-core correctness | Done | Feed, search, graph and post parts; backfills `relabel_feed_reasons` and `reconcile_hashtags` |
 | 1.2 Moderation hardening | Done | Owner-only appeals, 409s, row locks, first-report race, report throttle, `owner_id` on `post.reported` and `listing.reported` |
-| 1.5 Media privacy and upload safety | **Done (safety part)** | See the design note below. The UX part of 1.5 (media grid, URL-backed viewer, HEIC) is not started |
+| 1.3 Comments v2 | Done | Flattened threads (`reply_to`), paged replies, edit/delete, comment reactions, per-post comment policy, comment reports (moderation consumes `comment.reported`) |
+| 1.4 Reaction and share lists | Done | `PostReactionCount`, who-reacted by type, who-shared, `post.unreacted` |
+| 1.5 Media privacy and upload safety | **Done** | Safety part: see the design note below. UX part: media grid, `?view=` viewer, HEIC in the browser. **Open:** heic2any needs `'unsafe-eval'`, which the production CSP does not allow, so HEIC fails there with a clear message; planned fix is server-side conversion (pillow-heif in media) |
+| 2.14–2.17 (most), 2.18 (part) Notifications v2 | Done | Kind registry and deep links, aggregation, inline actions, live list with cross-tab and cross-device sync, per-kind in-app/push prefs, sound, push lifecycle. Not built: quiet-hour deferral, device list, digest (2.19) |
+| Step 3 messenger (QTech port) | Partly done | Presence (multi-tab, last seen, peers only), seq read pointers and unread counts, archive, clear for me, edit/delete/forward, search, shared media, file/video attachments. Run `backfill_message_seq` once after deploy |
+| Step 4 marketplace (4.3, 4.4, parts of 4.6–4.8) | Partly done | Three price types, filters/sort/facets, Arabic-aware search, view counter, favorites, compare, inquiries, seller page and reviews (moderation consumes `marketplace.review.reported`). Not built: lat/lng radius (4.5) |
+| Account security (QTech port) | Done | Google sign-in and linking, per-email login throttle, change password and email, Telegram phone verification |
 
 **Design as built for 1.5 (differs from the row below):** post media is restricted
 when the post's audience is not public. Post binds the media to the post through

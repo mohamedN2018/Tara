@@ -2,12 +2,24 @@
 
 from django.urls import path
 
-from . import views
+from . import security_views, views
 
 app_name = "identity"
 
 urlpatterns = [
     # Auth
+    path("auth/providers/", security_views.AuthProvidersView.as_view(), name="auth-providers"),
+    path("auth/google/", security_views.GoogleSignInView.as_view(), name="google-sign-in"),
+    path(
+        "auth/email/confirm/",
+        security_views.ConfirmEmailChangeView.as_view(),
+        name="email-change-confirm",
+    ),
+    path(
+        "auth/telegram/webhook/",
+        security_views.TelegramWebhookView.as_view(),
+        name="telegram-webhook",
+    ),
     path("auth/register/", views.RegisterView.as_view(), name="register"),
     path("auth/login/", views.LoginView.as_view(), name="login"),
     path("auth/refresh/", views.RefreshView.as_view(), name="refresh"),
@@ -27,4 +39,14 @@ urlpatterns = [
     ),
     # Account
     path("me/", views.MeView.as_view(), name="me"),
+    path("me/security/", security_views.SecurityOverviewView.as_view(), name="me-security"),
+    path("me/password/", security_views.ChangePasswordView.as_view(), name="me-password"),
+    path("me/email/", security_views.ChangeEmailView.as_view(), name="me-email"),
+    path("me/google/", security_views.GoogleLinkView.as_view(), name="me-google"),
+    path("me/phone/", security_views.PhoneView.as_view(), name="me-phone"),
+    path(
+        "me/phone/telegram/",
+        security_views.TelegramPhoneStartView.as_view(),
+        name="me-phone-telegram",
+    ),
 ]

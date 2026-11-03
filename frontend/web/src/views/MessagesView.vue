@@ -1,25 +1,51 @@
 <script setup lang="ts">
-import { ArrowLeft, Bell, BellOff, ChevronDown, Info, Pin, Users } from "lucide-vue-next";
+import {
+  Archive,
+  ArrowLeft,
+  Bell,
+  BellOff,
+  ChevronDown,
+  Images,
+  Inbox,
+  Info,
+  MoreVertical,
+  Pin,
+  Search,
+  Users,
+  X,
+} from "lucide-vue-next";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
+import ChatSearch from "@/components/chat/ChatSearch.vue";
 import ConversationList from "@/components/chat/ConversationList.vue";
+import ForwardModal from "@/components/chat/ForwardModal.vue";
 import GroupPanel from "@/components/chat/GroupPanel.vue";
 import NewGroupModal from "@/components/chat/NewGroupModal.vue";
 import MessageBubble from "@/components/chat/MessageBubble.vue";
-import MessageComposer from "@/components/chat/MessageComposer.vue";
+import MessageComposer, { type ComposerAttachment } from "@/components/chat/MessageComposer.vue";
+import SharedMediaPanel from "@/components/chat/SharedMediaPanel.vue";
 import AppShell from "@/components/layout/AppShell.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
-import { applyReaction, isSeenByOthers, mergeMessages } from "@/lib/chat";
+import {
+  advancePointer,
+  applyReaction,
+  canDeleteForEveryone,
+  canEdit,
+  deliveryStatus,
+  mergeMessages,
+  withoutMessage,
+} from "@/lib/chat";
+import { relativeTime } from "@/lib/format";
 import type { VoiceNote } from "@/lib/useVoiceRecorder";
 import { realtime } from "@/lib/ws";
 import { chatService } from "@/services/chat";
-import { mediaService } from "@/services/media";
 import { useAuthStore } from "@/stores/auth";
+import { useChatUnreadStore } from "@/stores/chatUnread";
 import { useDirectoryStore } from "@/stores/directory";
 import { usePresenceStore } from "@/stores/presence";
 import { useToastStore } from "@/stores/toasts";
@@ -32,9 +58,12 @@ const auth = useAuthStore();
 const presence = usePresenceStore();
 const directory = useDirectoryStore();
 const toasts = useToastStore();
+const chatUnread = useChatUnreadStore();
 
 // How far back to look for the overlap with what's loaded after a reconnect.
 const MAX_CATCH_UP_PAGES = 5;
+// How far back "jump to message" pages history before giving up.
+const MAX_JUMP_PAGES = 10;
 const OLDER_RETRY_MS = 5000;
 const SEND_FAILED = {
   network_error: "errors.sendFailed",
@@ -44,6 +73,9 @@ const SEND_FAILED = {
 };
 
 const conversations = ref<Conversation[]>([]);
+// The open conversation when it is not in the folder being shown (e.g. archived).
+const opened = ref<Conversation | null>(null);
+const folder = ref<"inbox" | "archived">("inbox");
 const messages = ref<Message[]>([]);
 const activeId = computed(() => (route.params.id as string) || "");
 const loadingList = ref(true);
@@ -61,8 +93,14 @@ const peerTyping = ref(false);
 const scroller = ref<HTMLElement | null>(null);
 
 const replyTarget = ref<Message | null>(null);
+const editTarget = ref<Message | null>(null);
+const forwardTarget = ref<Message | null>(null);
 const atBottom = ref(true);
 const hasNew = ref(false);
+const searchingAll = ref(false);
+const sidePanel = ref<"search" | "media" | null>(null);
+const showConversationMenu = ref(false);
+let pendingJump = "";
 
 let typingTimer: number | null = null;
 let unsubs: Array<() => void> = [];
@@ -74,7 +112,9 @@ let syncAgain = false;
 
 const myId = computed(() => auth.account?.id ?? "");
 const activeConversation = computed(
-  () => conversations.value.find((c) => c.id === activeId.value) ?? null,
+  () =>
+    conversations.value.find((c) => c.id === activeId.value) ??
+    (opened.value?.id === activeId.value ? opened.value : null),
 );
 const isGroup = computed(() => activeConversation.value?.type === "group");
 const isGroupAdmin = computed(
@@ -99,14 +139,14 @@ const activePeerId = computed(() => {
   if (!c || c.type === "group") return "";
   return c.members.find((m) => m !== myId.value) ?? c.members[0] ?? "";
 });
+const peerLastSeen = computed(() => presence.lastSeen(activePeerId.value));
 
-const activeTitle = computed(() => {
-  const c = activeConversation.value;
-  if (!c) return "";
+function titleOf(c: Conversation): string {
   if (c.title) return c.title;
   const others = c.members.filter((m) => m !== myId.value);
   return others.map((m) => directory.label(m)).join("، ") || t("messages.groupFallback");
-});
+}
+const activeTitle = computed(() => (activeConversation.value ? titleOf(activeConversation.value) : ""));
 
 function nameOf(senderId: string): string {
   if (senderId === myId.value) return t("messages.you");
@@ -152,35 +192,58 @@ const rows = computed<Row[]>(() => {
   return out;
 });
 
-const lastMineId = computed(() => {
-  for (let i = messages.value.length - 1; i >= 0; i--) {
-    if (messages.value[i].sender_id === myId.value) return messages.value[i].id;
-  }
-  return null;
-});
-const peerSeen = computed(() =>
-  isSeenByOthers(messages.value, activeConversation.value?.member_states ?? [], myId.value),
-);
+function statusOf(m: Message) {
+  return deliveryStatus(m, activeConversation.value?.member_states ?? [], myId.value);
+}
+function replyName(m: Message): string {
+  const sender = m.reply_preview?.sender_id ?? (m.reply_to_id ? messagesById.value[m.reply_to_id]?.sender_id : "");
+  return sender ? nameOf(sender) : "";
+}
+
+function findConversation(id: unknown): Conversation | undefined {
+  if (typeof id !== "string") return undefined;
+  return conversations.value.find((c) => c.id === id) ?? (opened.value?.id === id ? opened.value : undefined);
+}
+function myState(c: Conversation | undefined) {
+  return c?.member_states.find((s) => s.account_id === myId.value);
+}
 
 async function loadConversations(silent = false) {
   if (!silent) loadingList.value = true;
   listError.value = false;
+  const archived = folder.value === "archived";
   try {
-    const page = await chatService.conversationsPage();
+    const page = await chatService.conversationsPage(undefined, archived);
     conversations.value = page.data;
-    // The open conversation may sit beyond the first page, and it is the only
-    // source of its members (there is no single-conversation endpoint).
+    // The open conversation may sit beyond the first page.
     let next = page.page.next_cursor;
-    while (next && activeId.value && !activeConversation.value) {
-      const more = await chatService.conversationsPage(next);
+    while (next && activeId.value && !conversations.value.some((c) => c.id === activeId.value)) {
+      const more = await chatService.conversationsPage(next, archived);
       conversations.value.push(...more.data);
       next = more.page.next_cursor;
+    }
+    // ...or in the other folder.
+    if (activeId.value && !conversations.value.some((c) => c.id === activeId.value)) {
+      opened.value = await chatService.get(activeId.value).catch(() => null);
     }
   } catch {
     if (!silent) listError.value = true;
   } finally {
     loadingList.value = false;
   }
+}
+
+const FOLDERS = ["inbox", "archived"] as const;
+
+function onMediaJump(messageId: string) {
+  sidePanel.value = null;
+  void jumpTo(messageId);
+}
+
+function setFolder(next: "inbox" | "archived") {
+  if (folder.value === next) return;
+  folder.value = next;
+  void loadConversations();
 }
 
 function setOlder(page: CursorPage<Message>) {
@@ -208,6 +271,11 @@ async function loadMessages(id: string) {
     loadingMessages.value = false;
     await scrollToBottom();
     await fillViewport(generation);
+    if (pendingJump) {
+      const target = pendingJump;
+      pendingJump = "";
+      await jumpTo(target);
+    }
   } catch {
     if (generation === loadGeneration) messagesError.value = true;
   } finally {
@@ -308,14 +376,33 @@ async function syncLatest() {
   }
 }
 
+/** Refetch one message (edited, or deleted for everyone) and merge it in. */
+async function refreshMessage(messageId: string) {
+  if (!messagesById.value[messageId]) return;
+  try {
+    const fresh = await chatService.message(messageId);
+    messages.value = mergeMessages(messages.value, [fresh]);
+  } catch {
+    // Hidden from us now (moderation, or deleted for me elsewhere).
+    messages.value = withoutMessage(messages.value, messageId);
+  }
+}
+
 function markLatestRead() {
   const id = activeId.value;
   const last = messages.value.at(-1);
   if (!id || !last || last.id === markedReadId) return;
   markedReadId = last.id;
-  chatService.markRead(id, last.id).catch(() => {
-    markedReadId = ""; // Retried the next time the reader reaches the bottom.
-  });
+  const conversation = findConversation(id);
+  const mine = myState(conversation);
+  if (mine) advancePointer(mine, "last_read_seq", last.seq);
+  if (conversation) conversation.unread_count = 0;
+  chatService
+    .markRead(id, last.id)
+    .then(() => chatUnread.refresh())
+    .catch(() => {
+      markedReadId = ""; // Retried the next time the reader reaches the bottom.
+    });
 }
 
 async function scrollToBottom() {
@@ -340,22 +427,30 @@ function onScroll() {
 }
 
 function select(id: string) {
+  searchingAll.value = false;
   router.push(`/messages/${id}`);
 }
 
 function onReply(m: Message) {
+  editTarget.value = null;
   replyTarget.value = m;
 }
 
-async function send({ body, mediaId }: { body: string; mediaId: string | null }) {
+async function send({ body, attachment }: { body: string; attachment: ComposerAttachment | null }) {
   if (!activeId.value) return;
   const replyToId = replyTarget.value?.id ?? null;
   try {
-    const payload = mediaId
+    const payload = attachment
       ? {
           body,
-          type: "image",
-          attachments: [{ media_id: mediaId, kind: "image", duration_ms: null }],
+          attachments: [
+            {
+              media_id: attachment.media_id,
+              kind: attachment.kind,
+              duration_ms: null,
+              file_name: attachment.file_name,
+            },
+          ],
           reply_to_id: replyToId,
         }
       : { body, reply_to_id: replyToId };
@@ -365,7 +460,7 @@ async function send({ body, mediaId }: { body: string; mediaId: string | null })
     await scrollToBottom();
   } catch (e) {
     toasts.error(e, SEND_FAILED);
-    composer.value?.restore(body, mediaId);
+    composer.value?.restore(body, attachment?.media_id ?? null);
   }
 }
 
@@ -373,7 +468,7 @@ async function sendVoice(note: VoiceNote) {
   const id = activeId.value;
   if (!id) return;
   try {
-    const asset = await mediaService.upload(note.file, "voice");
+    const asset = await chatService.upload(note.file, "voice");
     const message = await chatService.sendVoice(id, asset.id, Math.max(1, note.durationMs));
     if (id === activeId.value) {
       messages.value = mergeMessages(messages.value, [message]);
@@ -381,6 +476,50 @@ async function sendVoice(note: VoiceNote) {
     }
   } catch (e) {
     toasts.error(e, SEND_FAILED);
+  }
+}
+
+function onEdit(m: Message) {
+  replyTarget.value = null;
+  editTarget.value = m;
+}
+
+async function saveEdit({ message, body }: { message: Message; body: string }) {
+  try {
+    const fresh = await chatService.edit(message.id, body);
+    messages.value = mergeMessages(messages.value, [fresh]);
+    editTarget.value = null;
+  } catch (e) {
+    toasts.error(e);
+  }
+}
+
+async function onDelete(m: Message, scope: "me" | "everyone") {
+  if (scope === "everyone" && !window.confirm(t("messages.deleteConfirm"))) return;
+  try {
+    await chatService.deleteMessage(m.id, scope);
+    if (scope === "me") {
+      messages.value = withoutMessage(messages.value, m.id);
+    } else {
+      messages.value = mergeMessages(messages.value, [
+        { ...m, deleted: true, body: "", attachments: [], reactions: [], edited_at: null },
+      ]);
+      if (pinnedIds.value.has(m.id)) void refreshConversation(activeId.value);
+    }
+    if (editTarget.value?.id === m.id) editTarget.value = null;
+  } catch (e) {
+    toasts.error(e);
+  }
+}
+
+function onForwarded(copies: Message[]) {
+  forwardTarget.value = null;
+  for (const copy of copies) {
+    bumpConversation(copy.conversation_id, copy.seq);
+    if (copy.conversation_id === activeId.value) {
+      messages.value = mergeMessages(messages.value, [copy]);
+      void scrollToBottom();
+    }
   }
 }
 
@@ -401,6 +540,7 @@ async function refreshConversation(id: string) {
     const fresh = await chatService.get(id);
     const index = conversations.value.findIndex((c) => c.id === id);
     if (index >= 0) conversations.value[index] = fresh;
+    else if (opened.value?.id === id) opened.value = fresh;
     else conversations.value.unshift(fresh);
   } catch {
     // Removed from it, or it is gone.
@@ -426,20 +566,74 @@ async function setMute(minutes: number) {
   try {
     await chatService.mute(id, minutes);
     await refreshConversation(id);
+    void chatUnread.refresh();
   } catch (e) {
     toasts.error(e);
   }
 }
 
-function jumpTo(messageId: string) {
-  scroller.value
-    ?.querySelector(`[data-message-id="${messageId}"]`)
-    ?.scrollIntoView({ behavior: "smooth", block: "center" });
+async function toggleArchive() {
+  const c = activeConversation.value;
+  showConversationMenu.value = false;
+  if (!c) return;
+  try {
+    const fresh = await chatService.archive(c.id, !c.archived);
+    // It leaves the folder being shown, but stays open.
+    conversations.value = conversations.value.filter((x) => x.id !== c.id);
+    opened.value = fresh;
+    void chatUnread.refresh();
+  } catch (e) {
+    toasts.error(e);
+  }
+}
+
+async function clearChat() {
+  const id = activeId.value;
+  showConversationMenu.value = false;
+  if (!id || !window.confirm(t("messages.clearConfirm"))) return;
+  try {
+    await chatService.clear(id);
+    messages.value = [];
+    hasOlder.value = false;
+    olderCursor.value = null;
+    const conversation = findConversation(id);
+    if (conversation) conversation.unread_count = 0;
+    void chatUnread.refresh();
+  } catch (e) {
+    toasts.error(e);
+  }
+}
+
+/** Scroll to a message, paging back through history if it isn't loaded yet. */
+async function jumpTo(messageId: string) {
+  for (let i = 0; i <= MAX_JUMP_PAGES; i++) {
+    await nextTick();
+    const el = scroller.value?.querySelector(`[data-message-id="${messageId}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    if (!hasOlder.value || i === MAX_JUMP_PAGES) return;
+    await loadOlder();
+  }
+}
+
+function openSearchResult(m: Message) {
+  sidePanel.value = null;
+  if (m.conversation_id === activeId.value) {
+    void jumpTo(m.id);
+    return;
+  }
+  pendingJump = m.id;
+  select(m.conversation_id);
 }
 
 function pinPreview(pin: { body: string; type: string }): string {
   if (pin.body) return pin.body;
-  return pin.type === "voice" ? t("messages.voiceNote") : t("messages.photo");
+  if (pin.type === "voice") return t("messages.voiceNote");
+  if (pin.type === "video") return t("messages.video");
+  if (pin.type === "file") return t("messages.file");
+  return t("messages.photo");
 }
 
 function onGroupCreated(conversation: Conversation) {
@@ -460,18 +654,24 @@ function onLeft() {
   router.push("/messages");
 }
 
-function bumpConversation(id: string) {
-  const c = conversations.value.find((x) => x.id === id);
-  if (!c) {
+function bumpConversation(id: string, seq?: unknown, fromOther = false) {
+  const c = findConversation(id);
+  if (!c || (folder.value === "archived" && !conversations.value.includes(c))) {
+    // New, or brought back from the archive by this message: the server knows.
     void loadConversations(true);
     return;
   }
   c.last_message_at = new Date().toISOString();
-  conversations.value = [c, ...conversations.value.filter((x) => x !== c)];
+  if (typeof seq === "number" && seq > (c.last_seq ?? 0)) c.last_seq = seq;
+  const reading = id === activeId.value && atBottom.value && document.visibilityState === "visible";
+  if (fromOther && !reading) c.unread_count = (c.unread_count ?? 0) + 1;
+  if (conversations.value.includes(c)) {
+    conversations.value = [c, ...conversations.value.filter((x) => x !== c)];
+  }
 }
 
 function onTyping() {
-  if (!activeId.value) return;
+  if (!activeId.value || editTarget.value) return;
   realtime.send({ action: "typing", conversation_id: activeId.value });
 }
 
@@ -490,7 +690,7 @@ onMounted(() => {
   unsubs = [
     realtime.on("chat.message.created", (frame) => {
       if (typeof frame.conversation_id !== "string") return;
-      bumpConversation(frame.conversation_id);
+      bumpConversation(frame.conversation_id, frame.seq, frame.sender !== myId.value);
       if (frame.conversation_id !== activeId.value) return;
       // Frames carry only a short preview, so the message itself comes over REST.
       if (!messagesById.value[frame.message_id as string]) void syncLatest();
@@ -503,9 +703,30 @@ onMounted(() => {
       }
     }),
     realtime.on("chat.message.read", (frame) => {
-      const conversation = conversations.value.find((c) => c.id === frame.conversation_id);
+      const conversation = findConversation(frame.conversation_id);
       const state = conversation?.member_states.find((s) => s.account_id === frame.reader);
-      if (state) state.last_read_message_id = (frame.up_to_message_id as string) ?? null;
+      if (!conversation || !state) return;
+      advancePointer(state, "last_read_seq", frame.up_to_seq as number | null);
+      state.last_read_message_id = (frame.up_to_message_id as string) ?? state.last_read_message_id;
+      if (frame.reader === myId.value) {
+        conversation.unread_count = Math.max(0, (conversation.last_seq ?? 0) - (state.last_read_seq ?? 0));
+      }
+    }),
+    realtime.on("chat.message.delivered", (frame) => {
+      const state = findConversation(frame.conversation_id)?.member_states.find(
+        (s) => s.account_id === frame.account,
+      );
+      if (state) advancePointer(state, "last_delivered_seq", frame.up_to_seq as number | null);
+    }),
+    realtime.on("chat.message.edited", (frame) => {
+      if (frame.conversation_id === activeId.value) void refreshMessage(frame.message_id as string);
+    }),
+    realtime.on("chat.message.deleted", (frame) => {
+      if (frame.conversation_id !== activeId.value) return;
+      const id = frame.message_id as string;
+      if (frame.scope === "moderation") messages.value = withoutMessage(messages.value, id);
+      else void refreshMessage(id);
+      if (pinnedIds.value.has(id)) void refreshConversation(activeId.value);
     }),
     realtime.on("chat.message.reacted", (frame) => {
       const message = messagesById.value[frame.message_id as string];
@@ -537,9 +758,12 @@ watch(activeId, (id, prev) => {
   if (prev) unsubscribe(prev);
   subscribe(id);
   replyTarget.value = null;
+  editTarget.value = null;
   hasNew.value = false;
   atBottom.value = true;
   peerTyping.value = false;
+  showConversationMenu.value = false;
+  if (sidePanel.value === "media") sidePanel.value = null;
   olderRetryAt = 0;
   loadMessages(id);
   if (id && !activeConversation.value) void loadConversations(true);
@@ -551,27 +775,60 @@ watch(activeId, (id, prev) => {
     <div class="card grid h-[calc(100vh-7rem)] grid-cols-1 grid-rows-[minmax(0,1fr)] overflow-hidden md:grid-cols-[280px_1fr]">
       <!-- Conversation list -->
       <div
-        class="min-h-0 overflow-y-auto border-e border-gray-200 dark:border-gray-800"
-        :class="activeId ? 'hidden md:block' : 'block'"
+        class="flex min-h-0 flex-col border-e border-gray-200 dark:border-gray-800"
+        :class="activeId ? 'hidden md:flex' : 'flex'"
       >
         <div class="flex items-center justify-between border-b border-gray-200 px-4 py-2 dark:border-gray-800">
           <h2 class="font-bold">{{ t("messages.title") }}</h2>
-          <button class="btn-ghost px-2" :aria-label="t('messages.newGroup')" :title="t('messages.newGroup')" @click="showNewGroup = true">
-            <Users class="h-5 w-5" />
-          </button>
+          <div class="flex items-center">
+            <button
+              class="btn-ghost px-2"
+              :aria-label="t('messages.searchAll')"
+              :title="t('messages.searchAll')"
+              :aria-pressed="searchingAll"
+              @click="searchingAll = !searchingAll"
+            >
+              <X v-if="searchingAll" class="h-5 w-5" />
+              <Search v-else class="h-5 w-5" />
+            </button>
+            <button class="btn-ghost px-2" :aria-label="t('messages.newGroup')" :title="t('messages.newGroup')" @click="showNewGroup = true">
+              <Users class="h-5 w-5" />
+            </button>
+          </div>
         </div>
-        <LoadingSkeleton v-if="loadingList" :rows="4" />
-        <ErrorState v-else-if="listError" @retry="loadConversations()" />
-        <EmptyState v-else-if="conversations.length === 0">
-          {{ t("messages.noConversations") }}
-        </EmptyState>
-        <ConversationList
-          v-else
-          :conversations="conversations"
-          :active-id="activeId"
-          :self-id="myId"
-          @select="select"
-        />
+        <ChatSearch v-if="searchingAll" class="min-h-0 flex-1" :name-of="nameOf" @open="openSearchResult" />
+        <template v-else>
+          <div class="flex gap-1 px-3 py-2" role="tablist">
+            <button
+              v-for="f in FOLDERS"
+              :key="f"
+              role="tab"
+              :aria-selected="folder === f"
+              class="inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium"
+              :class="folder === f ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-200'"
+              :data-testid="`folder-${f}`"
+              @click="setFolder(f)"
+            >
+              <Inbox v-if="f === 'inbox'" class="h-3.5 w-3.5" />
+              <Archive v-else class="h-3.5 w-3.5" />
+              {{ f === "inbox" ? t("messages.inbox") : t("messages.archivedFolder") }}
+            </button>
+          </div>
+          <div class="min-h-0 flex-1 overflow-y-auto">
+            <LoadingSkeleton v-if="loadingList" :rows="4" />
+            <ErrorState v-else-if="listError" @retry="loadConversations()" />
+            <EmptyState v-else-if="conversations.length === 0">
+              {{ folder === "archived" ? t("messages.noArchived") : t("messages.noConversations") }}
+            </EmptyState>
+            <ConversationList
+              v-else
+              :conversations="conversations"
+              :active-id="activeId"
+              :self-id="myId"
+              @select="select"
+            />
+          </div>
+        </template>
       </div>
 
       <!-- Active conversation -->
@@ -591,17 +848,39 @@ watch(activeId, (id, prev) => {
               <span
                 v-if="presence.isOnline(activePeerId)"
                 class="absolute -end-0.5 -bottom-0.5 h-3 w-3 rounded-full border-2 border-white bg-green-500 dark:border-gray-900"
+                data-testid="peer-online"
               />
             </RouterLink>
             <div class="min-w-0">
               <span class="block truncate text-sm font-semibold" dir="auto" data-testid="conversation-title">{{ activeTitle }}</span>
-              <span class="block text-xs text-brand-500">
+              <span class="block text-xs text-brand-500" data-testid="conversation-subtitle">
                 <template v-if="peerTyping">{{ t("messages.typing") }}</template>
                 <template v-else-if="isGroup">{{ t("messages.membersCount", activeConversation?.members.length ?? 0) }}</template>
                 <template v-else-if="presence.isOnline(activePeerId)">{{ t("presence.online") }}</template>
+                <span v-else-if="peerLastSeen" class="text-gray-500 dark:text-gray-400">
+                  {{ t("messages.lastSeen", { time: relativeTime(peerLastSeen) }) }}
+                </span>
               </span>
             </div>
             <div class="ms-auto flex items-center gap-1">
+              <button
+                class="btn-ghost px-2"
+                :aria-label="t('messages.search')"
+                :title="t('messages.search')"
+                :aria-pressed="sidePanel === 'search'"
+                @click="sidePanel = sidePanel === 'search' ? null : 'search'"
+              >
+                <Search class="h-5 w-5" />
+              </button>
+              <button
+                class="btn-ghost px-2"
+                :aria-label="t('messages.sharedMedia')"
+                :title="t('messages.sharedMedia')"
+                :aria-pressed="sidePanel === 'media'"
+                @click="sidePanel = sidePanel === 'media' ? null : 'media'"
+              >
+                <Images class="h-5 w-5" />
+              </button>
               <div class="relative">
                 <button
                   class="btn-ghost px-2"
@@ -630,6 +909,30 @@ watch(activeId, (id, prev) => {
               <button v-if="isGroup" class="btn-ghost px-2" :aria-label="t('messages.groupInfo')" :title="t('messages.groupInfo')" @click="showGroupPanel = true">
                 <Info class="h-5 w-5" />
               </button>
+              <div class="relative">
+                <button
+                  class="btn-ghost px-2"
+                  :aria-label="t('messages.conversationActions')"
+                  :title="t('messages.conversationActions')"
+                  aria-haspopup="menu"
+                  :aria-expanded="showConversationMenu"
+                  data-testid="conversation-menu"
+                  @click="showConversationMenu = !showConversationMenu"
+                >
+                  <MoreVertical class="h-5 w-5" />
+                </button>
+                <template v-if="showConversationMenu">
+                  <div class="fixed inset-0 z-40" @click="showConversationMenu = false" />
+                  <div class="popover absolute end-0 z-50 mt-1 w-48 p-1" role="menu">
+                    <button class="block w-full rounded-lg px-3 py-2 text-start text-sm hover:bg-gray-100 dark:hover:bg-gray-800" role="menuitem" @click="toggleArchive">
+                      {{ activeConversation?.archived ? t("messages.unarchive") : t("messages.archive") }}
+                    </button>
+                    <button class="block w-full rounded-lg px-3 py-2 text-start text-sm text-red-600 hover:bg-gray-100 dark:hover:bg-gray-800" role="menuitem" @click="clearChat">
+                      {{ t("messages.clearChat") }}
+                    </button>
+                  </div>
+                </template>
+              </div>
             </div>
           </header>
 
@@ -663,29 +966,28 @@ watch(activeId, (id, prev) => {
                     {{ row.label }}
                   </span>
                 </div>
-                <template v-else>
-                  <MessageBubble
-                    :data-message-id="row.message.id"
-                    :message="row.message"
-                    :mine="row.message.sender_id === myId"
-                    :self-id="myId"
-                    :show-sender="isGroup"
-                    :can-pin="canPin"
-                    :pinned="pinnedIds.has(row.message.id)"
-                    :reply-to="row.replyTo"
-                    :reply-to-name="row.replyTo ? nameOf(row.replyTo.sender_id) : ''"
-                    :sender-name="nameOf(row.message.sender_id)"
-                    @reply="onReply"
-                    @react="onReact"
-                    @pin="onPin"
-                  />
-                  <p
-                    v-if="row.message.id === lastMineId && peerSeen"
-                    class="pe-1 pt-0.5 text-end text-[10px] text-gray-500 dark:text-gray-400"
-                  >
-                    ✓ {{ t("messages.seen") }}
-                  </p>
-                </template>
+                <MessageBubble
+                  v-else
+                  :data-message-id="row.message.id"
+                  :message="row.message"
+                  :mine="row.message.sender_id === myId"
+                  :self-id="myId"
+                  :show-sender="isGroup"
+                  :can-pin="canPin"
+                  :pinned="pinnedIds.has(row.message.id)"
+                  :reply-to="row.replyTo"
+                  :reply-to-name="replyName(row.message)"
+                  :sender-name="nameOf(row.message.sender_id)"
+                  :status="statusOf(row.message)"
+                  :can-edit="canEdit(row.message, myId)"
+                  :can-delete-for-everyone="canDeleteForEveryone(row.message, myId)"
+                  @reply="onReply"
+                  @react="onReact"
+                  @pin="onPin"
+                  @edit="onEdit"
+                  @forward="forwardTarget = $event"
+                  @delete="onDelete"
+                />
               </template>
             </template>
           </div>
@@ -703,11 +1005,42 @@ watch(activeId, (id, prev) => {
             ref="composer"
             :replying-to="replyTarget"
             :replying-to-name="replyTarget ? nameOf(replyTarget.sender_id) : ''"
+            :editing="editTarget"
             @send="send"
+            @save-edit="saveEdit"
             @voice="sendVoice"
             @typing="onTyping"
             @cancel-reply="replyTarget = null"
+            @cancel-edit="editTarget = null"
           />
+
+          <!-- Side panel: search in this conversation, or its shared media -->
+          <aside
+            v-if="sidePanel"
+            class="absolute inset-y-0 end-0 z-20 flex w-full flex-col border-s border-gray-200 bg-white shadow-pop dark:border-gray-800 dark:bg-gray-900 sm:w-80"
+            :aria-label="sidePanel === 'search' ? t('messages.search') : t('messages.sharedMedia')"
+          >
+            <div class="flex items-center justify-between border-b border-gray-200 px-3 py-2 dark:border-gray-800">
+              <h3 class="text-sm font-semibold">{{ sidePanel === "search" ? t("messages.search") : t("messages.sharedMedia") }}</h3>
+              <button class="rounded-full p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800" :aria-label="t('messages.close')" @click="sidePanel = null">
+                <X class="h-4 w-4" />
+              </button>
+            </div>
+            <ChatSearch
+              v-if="sidePanel === 'search'"
+              class="min-h-0 flex-1"
+              :conversation-id="activeId"
+              :name-of="nameOf"
+              @open="openSearchResult"
+            />
+            <SharedMediaPanel
+              v-else
+              :key="activeId"
+              class="min-h-0 flex-1"
+              :conversation-id="activeId"
+              @jump="onMediaJump"
+            />
+          </aside>
         </template>
 
         <EmptyState v-else>{{ t("messages.empty") }}</EmptyState>
@@ -729,6 +1062,14 @@ watch(activeId, (id, prev) => {
       @changed="refreshConversation(activeConversation!.id)"
       @left="onLeft"
       @add="showGroupPanel = false; showAddMembers = true"
+    />
+    <ForwardModal
+      v-if="forwardTarget"
+      :message="forwardTarget"
+      :conversations="conversations"
+      :title-of="titleOf"
+      @close="forwardTarget = null"
+      @done="onForwarded"
     />
   </AppShell>
 </template>

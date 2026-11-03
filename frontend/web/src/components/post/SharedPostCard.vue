@@ -4,18 +4,26 @@ import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import LinkPreviewCard from "@/components/post/LinkPreviewCard.vue";
+import MediaGrid from "@/components/post/MediaGrid.vue";
+import MediaTheater from "@/components/post/MediaTheater.vue";
 import RichText from "@/components/post/RichText.vue";
 import { relativeTime } from "@/lib/format";
-import { useMediaUrls } from "@/lib/useMediaUrl";
+import { useMediaViewer } from "@/lib/useMediaViewer";
 import { useDirectoryStore } from "@/stores/directory";
 import type { SharedPost } from "@/types";
 
 // `post` is null when this reader may not see the original, or it is gone.
-const props = defineProps<{ post: SharedPost | null | undefined }>();
+// `viewKey` is the sharing post's id, so `?view=` opens this card's photos even
+// when the same original is shared more than once on a page.
+const props = defineProps<{ post: SharedPost | null | undefined; viewKey?: string }>();
 
 const { t } = useI18n();
 const directory = useDirectoryStore();
-const images = useMediaUrls(() => props.post?.media_ids ?? []);
+const mediaIds = computed(() => props.post?.media_ids ?? []);
+const viewer = useMediaViewer(
+  () => props.viewKey ?? props.post?.id ?? "",
+  () => mediaIds.value.length,
+);
 const author = computed(() => (props.post ? directory.label(props.post.author_id) : ""));
 </script>
 
@@ -23,7 +31,15 @@ const author = computed(() => (props.post ? directory.label(props.post.author_id
   <div class="mt-3 overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700" data-testid="shared-post">
     <p v-if="!post" class="p-3 text-sm text-gray-500 dark:text-gray-400">{{ t("post.sharedUnavailable") }}</p>
     <template v-else>
-      <img v-if="images.length" :src="images[0]" class="max-h-72 w-full object-cover" loading="lazy" :alt="t('post.imageAlt', { n: 1, name: author })" />
+      <MediaGrid v-if="mediaIds.length" compact class="!mt-0" :media-ids="mediaIds" :author-name="author" @open="viewer.open" />
+      <MediaTheater
+        v-if="viewer.index.value !== null"
+        :media-ids="mediaIds"
+        :index="viewer.index.value"
+        :author-name="author"
+        @go="viewer.go"
+        @close="viewer.close"
+      />
       <div class="p-3">
         <RouterLink :to="`/posts/${post.id}`" class="flex items-center gap-2 text-xs text-gray-500 hover:underline dark:text-gray-400">
           <UserAvatar :name="author" :media-id="directory.avatarOf(post.author_id)" :size="24" />

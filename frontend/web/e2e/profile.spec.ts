@@ -64,7 +64,8 @@ test("notification preferences save the nested shape and persist", async ({ brow
   const { a } = await sharedAccounts();
   const page = await pageAs(browser, a);
   await page.goto("/settings");
-  const box = page.getByRole("checkbox", { name: "المتابعون الجدد" });
+  // Per-kind grid: one checkbox per channel (in-app, push).
+  const box = page.getByTestId("pref-follow-in_app");
   await expect(box).toBeVisible();
   const wasChecked = await box.isChecked();
 
@@ -76,7 +77,7 @@ test("notification preferences save the nested shape and persist", async ({ brow
 
   await page.waitForResponse((r) => r.url().includes("/notifications/preferences/"));
   await page.reload();
-  await expect(page.getByRole("checkbox", { name: "المتابعون الجدد" })).toBeChecked({
+  await expect(page.getByTestId("pref-follow-in_app")).toBeChecked({
     checked: !wasChecked,
   });
 });

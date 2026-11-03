@@ -12,6 +12,7 @@ from tara_common.auth import verify_internal_token
 from tara_common.exceptions import TaraAPIError
 from tara_common.responses import data_response
 
+from . import services
 from .models import ConversationMember
 
 
@@ -36,3 +37,16 @@ class MembershipView(APIView):
             conversation_id=conversation_id, account_id=account_id, left_at__isnull=True
         ).exists()
         return data_response({"is_member": is_member})
+
+
+class PresencePeersView(APIView):
+    """Accounts allowed to see this account's presence, as far as chat knows
+    (DM peers, never blocked pairs). Realtime adds friends from graph."""
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+    throttle_classes: list = []
+
+    def get(self, request: Request, account_id: str) -> Response:
+        _require_internal(request)
+        return data_response({"peers": services.presence_peers(str(account_id))})

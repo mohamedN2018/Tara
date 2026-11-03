@@ -115,3 +115,39 @@ def test_message_frame_tells_each_recipient_if_they_muted(monkeypatch):
         )
     )
     assert (pushed["a"]["muted"], pushed["b"]["muted"]) == (False, True)
+
+
+def test_notification_read_and_deleted_frames_reach_only_the_recipient(monkeypatch):
+    from realtime import bridge
+    from tara_events.envelope import EventEnvelope
+
+    pushed = []
+    monkeypatch.setattr(bridge, "_push_to_user", lambda who, data: pushed.append((who, data)))
+    bridge.on_notification_read(
+        EventEnvelope(
+            event_type="notification.read",
+            subject_id="u1",
+            producer="notification-service",
+            payload={"recipient": "u1", "notification_ids": ["n1", "n2"], "all": False},
+        )
+    )
+    bridge.on_notification_deleted(
+        EventEnvelope(
+            event_type="notification.deleted",
+            subject_id="u1",
+            producer="notification-service",
+            payload={"recipient": "u1", "notification_ids": ["n3"]},
+        )
+    )
+    bridge.on_notification_deleted(  # nothing to delete: no frame
+        EventEnvelope(
+            event_type="notification.deleted",
+            subject_id="u1",
+            producer="notification-service",
+            payload={"recipient": "u1", "notification_ids": []},
+        )
+    )
+    assert pushed == [
+        ("u1", {"event": "notification.read", "notification_ids": ["n1", "n2"], "all": False}),
+        ("u1", {"event": "notification.deleted", "notification_ids": ["n3"]}),
+    ]

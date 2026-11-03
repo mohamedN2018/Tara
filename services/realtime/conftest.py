@@ -57,3 +57,24 @@ def token_for():
 @pytest.fixture(autouse=True)
 def _everyone_is_a_member(monkeypatch):
     monkeypatch.setattr("realtime.chat_client.is_member", lambda conversation, account: True)
+
+
+@pytest.fixture(autouse=True)
+def _memory_presence(settings):
+    """In-process presence store, fresh for every test."""
+    from realtime import presence
+
+    settings.PRESENCE_BACKEND = "memory"
+    presence.reset_store()
+    yield
+    presence.reset_store()
+
+
+@pytest.fixture(autouse=True)
+def audiences(monkeypatch):
+    """``audiences[account] = {peers}``; anyone not listed has no peers."""
+    table: dict[str, set[str]] = {}
+    monkeypatch.setattr(
+        "realtime.peers.audience", lambda account_id: set(table.get(str(account_id), set()))
+    )
+    return table

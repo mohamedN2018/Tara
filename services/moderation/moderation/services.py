@@ -27,6 +27,7 @@ ACTIONS_BY_TARGET: dict[str, frozenset[str]] = {
     "comment": _CONTENT_ACTIONS,
     "message": _CONTENT_ACTIONS,
     "listing": _CONTENT_ACTIONS,
+    "listing_review": _CONTENT_ACTIONS,
     "page": frozenset({"remove", "restrict", "warn", "dismiss"}),
     "user": frozenset({"restrict", "shadow", "warn", "dismiss"}),
 }
@@ -43,7 +44,14 @@ APPEALABLE_ACTIONS = frozenset({"remove", "restrict", "shadow", "warn"})
 # those is recorded in the audit log and emits nothing: an ``approve`` there
 # would restore content that another case removed.
 REVERSALS: dict[tuple[str, str], str] = {
-    (target_type, "remove"): "approve" for target_type in ("post", "comment", "message", "listing")
+    (target_type, "remove"): "approve"
+    for target_type in (
+        "post",
+        "comment",
+        "message",
+        "listing",
+        "listing_review",
+    )
 }
 
 
@@ -347,8 +355,10 @@ def resolve_appeal(appeal_id: str, moderator_id: str, status: str) -> Appeal:
 
 _REPORT_EVENT_TARGETS = {
     "post.reported": ("post", "post_id"),
+    "comment.reported": ("comment", "comment_id"),
     "listing.reported": ("listing", "listing_id"),
     "message.reported": ("message", "message_id"),
+    "marketplace.review.reported": ("listing_review", "review_id"),
 }
 
 

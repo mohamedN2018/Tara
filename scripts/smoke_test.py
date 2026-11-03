@@ -137,11 +137,20 @@ def posts(alice, alice_id, bob):
     status, body = call("GET", f"/posts/{post_id}/", bob)
     check("post shows the viewer's reaction", data(body).get("my_reaction") == "like", body)
 
+    # follow + reaction + comment stay unread; the friend request was accepted, so
+    # its notification is settled (resolution "accepted", read) by notifications v2.
     unread = eventually(
         lambda: call("GET", "/notifications/unread-count/", alice)[1],
-        lambda r: data(r).get("unread", 0) >= 4,
+        lambda r: data(r).get("unread", 0) >= 3,
     )
-    check("notifications arrive", data(unread).get("unread", 0) >= 4, unread)
+    check("notifications arrive", data(unread).get("unread", 0) >= 3, unread)
+    status, items = call("GET", "/notifications/", alice)
+    request = next((n for n in data(items) if n.get("kind") == "friend.request"), {})
+    check(
+        "accepted friend request is settled",
+        request.get("resolution") == "accepted" and bool(request.get("read_at")),
+        request,
+    )
 
 
 def media(alice):

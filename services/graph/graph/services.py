@@ -147,7 +147,26 @@ def reject_or_cancel_request(actor_id: str, friendship_id: str) -> None:
     friendship = _load_pending(friendship_id)
     if not _is_member(friendship, actor_id):
         raise TaraAPIError("Not permitted.", code="permission_denied", http_status_code=403)
-    friendship.delete()
+    with transaction.atomic():
+        # Only the request that actually went away emits, so a cancel racing a
+        # reject (or a double click) cannot announce the withdrawal twice.
+        deleted, _ = Friendship.objects.filter(
+            id=friendship.id, status=Friendship.Status.PENDING
+        ).delete()
+        if deleted and str(friendship.requested_by) == str(actor_id):
+            # The requester took it back: the recipient's notification resolves.
+            # A reject by the recipient emits nothing (the requester was never told).
+            other = (
+                friendship.account_high_id
+                if str(friendship.account_low_id) == str(actor_id)
+                else friendship.account_low_id
+            )
+            events.emit(
+                "friendship.request.withdrawn",
+                subject_id=str(friendship.id),
+                payload={"from": str(actor_id), "to": str(other)},
+                actor_id=str(actor_id),
+            )
 
 
 def _end_friendship(low: str, high: str, *, actor_id: str, reason: str) -> None:

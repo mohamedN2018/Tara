@@ -104,6 +104,7 @@ Events are **never** published directly inside the business transaction. Instead
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
 | `friendship.requested` | request | from, to | Notification |
+| `friendship.request.withdrawn` | request | from, to (emitted only when the requester cancels; a reject by the recipient emits nothing) | Notification |
 | `friendship.accepted` | friendship | a, b | Notification, Feed (edge), Search (mutuals) |
 | `friendship.removed` | friendship | a, b, reason (`unfriend` \| `block`) | Feed |
 | `user.followed` | follow | follower, target(type) | Notification, Feed (edge) |
@@ -117,11 +118,17 @@ A block ends every edge between the two accounts in the same transaction: graph 
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
 | `post.created` | post | author, audience, media_ids, hashtags, mentions | Feed (fan-out), Search, Notification (mentions) |
-| `post.updated` | post | post_id, author_id, audience (may change on edit), excerpt, new_mentions | Feed, Search |
+| `post.updated` | post | post_id, author_id, audience (may change on edit), comment_policy (additive, v1), excerpt, new_mentions | Feed, Search |
 | `post.deleted` | post | — | Feed, Search |
 | `post.reacted` | post | reactor, reaction_type | Notification |
+| `post.unreacted` | post | post_id, reactor, reaction_type, author_id. Once per removed reaction | — (for later notification clean-up) |
 | `post.commented` | comment | post_id, author | Notification, Feed (signal) |
-| `comment.replied` | comment | parent_id, author | Notification |
+| `comment.replied` | comment | parent_id (the thread root: replies are flattened onto it since 1.3), reply_to_id, parent_author_id (the author of the comment answered, who gets the notification), root_author_id, post_author_id, author | Notification |
+| `comment.edited` | comment | post_id, comment_id, author, new_mentions | Post (mention notifications) |
+| `comment.deleted` | comment | post_id, comment_id, author_id, post_author_id, parent_id, removed_ids (a root takes its thread), by (`author`, `post_author` or `moderation`) | — |
+| `comment.restored` | comment | post_id, comment_id, restored_ids (a moderation removal overturned) | — |
+| `comment.reacted` | comment | post_id, comment_id, reactor, reaction_type, author_id. Only a new reaction | — |
+| `comment.reported` | comment | comment_id, post_id, reporter, reason, owner_id (the comment author). Emitted once per reporter per comment, and only when the reporter can see the comment | Moderation (needs `comment.reported` in its intake map) |
 | `post.shared` | post | sharer, post_id, share_post_id, author_id | Notification |
 | `user.mentioned` | post | recipient, actor, post_id, comment_id (only readers who can open the post) | Notification |
 | `post.reported` | post | post_id, reporter, reason, owner_id (the post author; additive, v1). Emitted once per reporter per post, and only when the reporter can see the post | Moderation |

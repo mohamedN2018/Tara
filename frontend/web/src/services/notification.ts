@@ -2,12 +2,54 @@ import { api } from "@/lib/api";
 import type { WebPushSubscription } from "@/lib/pwa";
 import type { CursorPage, Notification } from "@/types";
 
-// { kind: { channel: enabled } }, e.g. { follow: { in_app: false } }.
-export type NotificationPrefs = Record<string, Record<string, boolean>>;
+export type NotificationChannel = "in_app" | "push";
+
+// { kind or category: { channel: enabled } }, e.g. { follow: { in_app: false } }.
+export type NotificationPrefs = Record<string, Partial<Record<NotificationChannel, boolean>>>;
+
+export interface QuietHours {
+  start?: string;
+  end?: string;
+  timezone?: string;
+}
 
 export interface NotificationPreferences {
   prefs: NotificationPrefs;
-  quiet_hours: { start?: string; end?: string; timezone?: string };
+  quiet_hours: QuietHours;
+  message_previews: boolean;
+}
+
+// PATCH merges server-side: send only what changed. `null` clears one override.
+export interface PreferenceChanges {
+  prefs?: Record<string, Partial<Record<NotificationChannel, boolean | null>>>;
+  quiet_hours?: QuietHours;
+  message_previews?: boolean;
+}
+
+export interface NotificationKindInfo {
+  kind: string;
+  category: string;
+  defaults: Record<NotificationChannel, boolean>;
+  aggregates: boolean;
+  resolutions: string[];
+}
+
+export interface NotificationRegistry {
+  categories: string[];
+  kinds: NotificationKindInfo[];
+}
+
+export interface ListOptions {
+  cursor?: string | null;
+  unread?: boolean;
+  category?: string;
+}
+
+function normalisePrefs(raw: Partial<NotificationPreferences> | undefined): NotificationPreferences {
+  const prefs = Object.fromEntries(
+    Object.entries(raw?.prefs ?? {}).filter(([, channels]) => channels && typeof channels === "object"),
+  );
+  return { prefs, quiet_hours: raw?.quiet_hours ?? {}, message_previews: raw?.message_previews !== false };
 }
 
 export const notificationService = {
@@ -26,21 +68,46 @@ export const notificationService = {
 
   async getPreferences(): Promise<NotificationPreferences> {
     const { data } = await api.get<{ data: NotificationPreferences }>("/notifications/preferences/");
-    return { prefs: data.data?.prefs ?? {}, quiet_hours: data.data?.quiet_hours ?? {} };
+    return normalisePrefs(data.data);
   },
-  async updatePreferences(payload: Partial<NotificationPreferences>): Promise<NotificationPreferences> {
+  async updatePreferences(changes: PreferenceChanges): Promise<NotificationPreferences> {
     const { data } = await api.patch<{ data: NotificationPreferences }>(
       "/notifications/preferences/",
-      payload,
+      changes,
     );
-    return { prefs: data.data?.prefs ?? {}, quiet_hours: data.data?.quiet_hours ?? {} };
+    return normalisePrefs(data.data);
+  },
+  async registry(): Promise<NotificationRegistry> {
+    const { data } = await api.get<{ data: NotificationRegistry }>("/notifications/kinds/");
+    return data.data;
   },
 
-  async list(cursor?: string): Promise<CursorPage<Notification>> {
+  async list(options: ListOptions | string = {}): Promise<CursorPage<Notification>> {
+    const opts = typeof options === "string" ? { cursor: options } : options;
     const { data } = await api.get<CursorPage<Notification>>("/notifications/", {
-      params: { cursor },
+      params: {
+        cursor: opts.cursor || undefined,
+        unread: opts.unread ? "1" : undefined,
+        category: opts.category || undefined,
+      },
     });
     return data;
+  },
+
+  async get(id: string): Promise<Notification> {
+    const { data } = await api.get<{ data: Notification }>(`/notifications/${id}/`);
+    return data.data;
+  },
+
+  async remove(id: string): Promise<void> {
+    await api.delete(`/notifications/${id}/`);
+  },
+
+  async resolve(id: string, resolution: string): Promise<Notification> {
+    const { data } = await api.post<{ data: Notification }>(`/notifications/${id}/resolve/`, {
+      resolution,
+    });
+    return data.data;
   },
 
   async unreadCount(): Promise<number> {
@@ -48,9 +115,10 @@ export const notificationService = {
     return data.data.unread;
   },
 
-  // Single endpoint: POST /notifications/read/ with {ids, all}.
-  async markRead(id: string): Promise<void> {
-    await api.post("/notifications/read/", { ids: [id], all: false });
+  // Single endpoint: POST /notifications/read/ with {ids, all}; at most 100 ids.
+  async markRead(ids: string | string[]): Promise<void> {
+    const list = (Array.isArray(ids) ? ids : [ids]).slice(0, 100);
+    await api.post("/notifications/read/", { ids: list, all: false });
   },
 
   async markAllRead(): Promise<void> {

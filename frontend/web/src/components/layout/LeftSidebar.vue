@@ -5,6 +5,7 @@ import { useRouter } from "vue-router";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import { useAuthStore } from "@/stores/auth";
+import { useChatUnreadStore } from "@/stores/chatUnread";
 import { useNotificationStore } from "@/stores/notifications";
 import { useUiStore } from "@/stores/ui";
 
@@ -15,9 +16,11 @@ const router = useRouter();
 const auth = useAuthStore();
 const ui = useUiStore();
 const notifications = useNotificationStore();
+const chatUnread = useChatUnreadStore();
 
-function badgeFor(kind?: "notifications") {
+function badgeFor(kind?: "notifications" | "messages") {
   if (kind === "notifications") return notifications.unread;
+  if (kind === "messages") return chatUnread.conversations;
   return 0;
 }
 

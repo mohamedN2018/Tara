@@ -91,13 +91,21 @@ export async function apiAs(account: Account): Promise<APIRequestContext> {
   return request.newContext({ extraHTTPHeaders: { Authorization: `Bearer ${tokens.access}` } });
 }
 
+/** The SPA under test: the Vite dev server, or `vite preview` of the build. */
+export const BASE_URL = process.env.E2E_BASE_URL ?? "http://127.0.0.1:5173";
+
 /** A browser context signed in as `account` (tokens seeded, skipping the login form). */
-export async function pageAs(browser: Browser, account: Account, baseURL = "http://127.0.0.1:5173"): Promise<Page> {
+export async function pageAs(
+  browser: Browser,
+  account: Account,
+  baseURL = BASE_URL,
+  serviceWorkers: "allow" | "block" = "allow",
+): Promise<Page> {
   const anon = await request.newContext();
   const tokens = await apiLogin(anon, account.email);
   await anon.dispose();
   if (!tokens) throw new Error(`cannot log in ${account.email}`);
-  const context = await browser.newContext({ baseURL });
+  const context = await browser.newContext({ baseURL, serviceWorkers });
   await context.addInitScript(
     ([access, refresh]) => {
       if (localStorage.getItem("e2e.seeded")) return;

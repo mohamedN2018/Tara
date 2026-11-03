@@ -10,3 +10,4 @@ redis>=5.0,<6
 django-cors-headers>=4.3
 django-prometheus>=2.3
 gunicorn>=21.2
+requests>=2.31

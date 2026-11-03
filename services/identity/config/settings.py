@@ -141,8 +141,21 @@ REST_FRAMEWORK = {
         "auth_login": os.getenv("AUTH_LOGIN_RATE", "20/min"),
         "auth_password": os.getenv("AUTH_PASSWORD_RATE", "5/hour"),
         "auth_refresh": "60/min",
+        # Per targeted email, however many IPs the attempts come from.
+        # `or`: compose passes an unset variable as "" and "" is not a rate.
+        "auth_login_target": os.getenv("AUTH_LOGIN_TARGET_RATE") or "10/min",
     },
 }
+
+# ---- External sign-in and phone verification (all off unless configured) ----
+# Google Identity Services: the OAuth *web* client id (public, not a secret).
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
+# Telegram bot for free phone verification. The webhook secret is echoed back
+# by Telegram in X-Telegram-Bot-Api-Secret-Token (A-Z a-z 0-9 _ -, 32+ chars).
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_BOT_USERNAME = os.getenv("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@")
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Tara Identity API",

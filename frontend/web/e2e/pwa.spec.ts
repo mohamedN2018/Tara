@@ -1,5 +1,6 @@
 // Needs a production build, since the service worker registers only there:
-//   npm run build && npx vite preview --port 4173 --host 127.0.0.1
+//   VITE_STORAGE_PROXY=true npm run build && npx vite preview --port 4173 --host 127.0.0.1
+// (the flag routes presigned uploads through the local storage proxy, as in dev)
 import { execSync } from "node:child_process";
 
 import { expect, request, test } from "@playwright/test";
@@ -67,11 +68,26 @@ test("a delivered push shows a localised notification that opens the app", async
     });
   });
   const payload = { kind: "follow", url: "/notifications", tag: "probe-follow", body: "started following you" };
-  await cdp.send("ServiceWorker.deliverPushMessage", {
-    origin: PREVIEW,
-    registrationId,
-    data: JSON.stringify(payload),
+  const deliver = (data: object) =>
+    cdp.send("ServiceWorker.deliverPushMessage", { origin: PREVIEW, registrationId, data: JSON.stringify(data) });
+
+  // A focused Tara window shows the push live, so the worker tells that window
+  // instead of raising an OS notification on top of it.
+  await page.evaluate(() => {
+    const w = window as unknown as { __pushes: unknown[] };
+    w.__pushes = [];
+    navigator.serviceWorker.addEventListener("message", (e) => w.__pushes.push(e.data));
   });
+  await deliver({ ...payload, notification_id: "n-focused" });
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { __pushes: unknown[] }).__pushes))
+    .toEqual([{ type: "tara.push", kind: "follow", notification_id: "n-focused" }]);
+  expect(await page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).length)).toBe(0);
+
+  // With no Tara window open, the push becomes a localised OS notification.
+  await page.goto("about:blank");
+  await deliver(payload);
+  await page.goto(`${PREVIEW}/`);
 
   await expect
     .poll(() =>

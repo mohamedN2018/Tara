@@ -100,7 +100,8 @@ def test_preferences_mute_suppresses_notification(client_for):
         format="json",
     )
     notify(me, "follow", actor_id=_acct(), body="should be suppressed")
-    assert Notification.objects.filter(recipient_id=me, kind="follow").count() == 0
+    # Push is decoupled (still on), so only a hidden push carrier may exist.
+    assert not Notification.objects.filter(recipient_id=me, visible_in_app=True).exists()
 
 
 def test_flat_preferences_are_rejected_and_nested_ones_mute(client_for):
@@ -110,7 +111,7 @@ def test_flat_preferences_are_rejected_and_nested_ones_mute(client_for):
 
     assert client.patch(url, {"prefs": {"follow": True}}, format="json").status_code == 400
 
-    body = {"prefs": {"follow": {"in_app": False}}}
+    body = {"prefs": {"follow": {"in_app": False, "push": False}}}
     assert client.patch(url, body, format="json").status_code == 200
     assert notify(user, "follow", actor_id=_acct()) is None
 

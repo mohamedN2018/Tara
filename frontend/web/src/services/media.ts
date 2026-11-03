@@ -35,9 +35,12 @@ const URL_TTL_MS = 10 * 60 * 1000;
 // Presigned storage URLs are signed for the internal host `minio:9000`, which
 // the browser can't resolve. In dev, route them through the Vite proxy (/__s3)
 // which forwards to localhost:9000 with the signed Host header preserved. In a
-// production build the absolute URL is returned unchanged.
-function viaStorageProxy(url: string | null): string | null {
-  if (!url || !import.meta.env.DEV || url.startsWith("/")) return url;
+// production build the absolute URL is returned unchanged, unless the build is
+// for local e2e (`VITE_STORAGE_PROXY=true`, served by `vite preview`, which
+// shares the dev proxy).
+const STORAGE_PROXY = import.meta.env.DEV || import.meta.env.VITE_STORAGE_PROXY === "true";
+export function viaStorageProxy(url: string | null): string | null {
+  if (!url || !STORAGE_PROXY || url.startsWith("/")) return url;
   try {
     const u = new URL(url);
     return `/__s3${u.pathname}${u.search}`;

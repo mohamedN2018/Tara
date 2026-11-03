@@ -17,6 +17,7 @@ from django.conf import settings
 from django.utils import timezone
 from pywebpush import WebPushException, webpush
 
+from . import registry
 from .models import Notification, NotificationDeliveryLog, NotificationPreference, PushDeviceToken
 
 logger = logging.getLogger("tara.notification.push")
@@ -80,20 +81,22 @@ def _log(notification: Notification, status: str, error: str = "", attempts: int
     )
 
 
-def _payload(notification: Notification) -> str:
-    url = "/notifications"
-    kind, _, ref = notification.subject_ref.partition(":")
-    if kind == "post":
-        url = f"/posts/{ref}"
-    elif kind == "conversation":
-        url = f"/messages/{ref}"
+def _payload(notification: Notification, pref: NotificationPreference | None = None) -> str:
+    """What the service worker shows: ids, a count and a same-origin path. A
+    message's text is included only while the user allows message previews."""
+    previews = pref.message_previews if pref else True
+    body = notification.body if notification.kind != "message" or previews else ""
     return json.dumps(
         {
             "kind": notification.kind,
             "notification_id": str(notification.id),
-            "body": notification.body,
-            "url": url,
-            "tag": notification.group_key or str(notification.id),
+            "body": body,
+            "count": notification.actor_count,
+            "url": registry.url_for(notification),
+            # A browser replaces a notification with the same tag instead of stacking it.
+            "tag": notification.aggregate_key.split("~", 1)[0]
+            or notification.group_key
+            or str(notification.id),
         }
     )
 
@@ -137,14 +140,14 @@ def deliver(notification_id: str) -> str:
     if not tokens:
         return "no_subscribers"
     pref = NotificationPreference.objects.filter(account_id=notification.recipient_id).first()
-    if pref and not pref.channel_enabled(notification.kind, "push", default=True):
+    if not registry.channel_enabled(pref.prefs if pref else {}, notification.kind, "push"):
         _log(notification, "muted")
         return "muted"
     if pref and in_quiet_hours(pref.quiet_hours):
         _log(notification, "quiet")
         return "quiet"
 
-    data = _payload(notification)
+    data = _payload(notification, pref)
     failures: list[str] = []
     delivered = 0
     # One bad subscription retries the task; the shared `tag` makes a browser

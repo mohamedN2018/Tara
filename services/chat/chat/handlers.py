@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from tara_common.exceptions import TaraAPIError
 from tara_events import on_event
 from tara_events.envelope import EventEnvelope
 
@@ -13,7 +14,11 @@ from .models import BlockedPair
 def on_marketplace_contact(event: EventEnvelope) -> None:
     """A buyer contacted a seller -> open (or reuse) their marketplace thread."""
     p = event.payload
-    services.create_marketplace_conversation(p["buyer_id"], p["seller_id"], p["listing_id"])
+    try:
+        services.create_marketplace_conversation(p["buyer_id"], p["seller_id"], p["listing_id"])
+    except TaraAPIError:
+        # A blocked pair gets no thread; retrying would only dead-letter the event.
+        return
 
 
 @on_event("user.blocked")
@@ -31,5 +36,9 @@ def on_user_unblocked(event: EventEnvelope) -> None:
 @on_event("moderation.actioned")
 def on_moderation_actioned(event: EventEnvelope) -> None:
     p = event.payload
-    if p.get("target_type") == "message" and p.get("action") == "remove":
+    if p.get("target_type") != "message":
+        return
+    if p.get("action") == "remove":
         services.remove_message(p["target_id"])
+    elif p.get("action") == "restore":
+        services.restore_message(p["target_id"])

@@ -7,6 +7,7 @@ from datetime import timedelta
 
 from django.db import IntegrityError, transaction
 from django.db.models import F, Q
+from django.db.models.functions import Greatest
 from django.utils import timezone
 
 from tara_common.exceptions import Conflict, TaraAPIError
@@ -19,6 +20,9 @@ from .models import (
     Audience,
     BlockedPair,
     Comment,
+    CommentPolicy,
+    CommentReaction,
+    CommentReport,
     Hashtag,
     Mention,
     Poll,
@@ -28,6 +32,7 @@ from .models import (
     PostHashtag,
     PostMedia,
     PostReaction,
+    PostReactionCount,
     PostReport,
     SavedCollection,
     SavedItem,
@@ -186,12 +191,15 @@ def create_post(
     shared_post_id=None,
     author_type: str = "user",
     poll: dict | None = None,
+    comment_policy: str = CommentPolicy.EVERYONE,
 ) -> Post:
     """Media are checked and bound to the post through media before the write
     transaction opens, so a media outage fails the request (503) instead of
     publishing restricted photos as public."""
     if audience not in Audience.values:
         raise TaraAPIError("Invalid audience.", code="validation_error", http_status_code=400)
+    if comment_policy not in CommentPolicy.values:
+        raise _bad_request("Invalid comment policy.")
     if post_type == Post.Type.VIDEO:
         raise _video_not_supported()
     if not body and not media_ids and not shared_post_id:
@@ -218,6 +226,7 @@ def create_post(
             body=body,
             audience=audience,
             shared_post_id=shared_post_id,
+            comment_policy=comment_policy,
         )
         if poll:
             _create_poll(post, poll)
@@ -262,19 +271,26 @@ def _editable_post(author_id: str, post_id: str, *, lock: bool = False) -> Post:
 
 
 def edit_post(
-    author_id: str, post_id: str, body: str | None = None, *, audience: str | None = None
+    author_id: str,
+    post_id: str,
+    body: str | None = None,
+    *,
+    audience: str | None = None,
+    comment_policy: str | None = None,
 ) -> Post:
-    """Change the body, the audience, or both.
+    """Change the body, the audience, the comment policy, or any of them.
 
     Moving to a non-public audience restricts the post's media through media
     before the write transaction (503 if media is down, nothing changes).
     Widening needs no media change: restricted media follow the post's
     visibility, which already lets the wider audience in.
     """
-    if body is None and audience is None:
+    if body is None and audience is None and comment_policy is None:
         raise _bad_request("Nothing to change.")
     if audience is not None and audience not in Audience.values:
         raise _bad_request("Invalid audience.")
+    if comment_policy is not None and comment_policy not in CommentPolicy.values:
+        raise _bad_request("Invalid comment policy.")
     post = _editable_post(author_id, post_id)
     if audience is not None and audience != post.audience and post.shared_post_id:
         original = Post.objects.filter(id=post.shared_post_id).first()
@@ -295,6 +311,9 @@ def edit_post(
         if audience is not None:
             post.audience = audience
             fields.append("audience")
+        if comment_policy is not None:
+            post.comment_policy = comment_policy
+            fields.append("comment_policy")
         if body is not None:
             mentioned_before = set(post.mentions.values_list("mentioned_handle", flat=True))
             post.body = body
@@ -312,6 +331,7 @@ def edit_post(
                 "post_id": str(post.id),
                 "author_id": str(author_id),
                 "audience": post.audience,
+                "comment_policy": post.comment_policy,
                 "excerpt": post.body[:280],
                 "new_mentions": new_mentions,
             },
@@ -345,7 +365,9 @@ def get_post(viewer_id: str, post_id: str) -> Post:
 
 def with_detail(queryset):
     """What the serializer needs per post, loaded once for the whole list."""
-    return queryset.select_related("poll").prefetch_related("media", "poll__options")
+    return queryset.select_related("poll").prefetch_related(
+        "media", "poll__options", "reaction_counts"
+    )
 
 
 def author_posts_queryset(author_id: str | None):
@@ -424,78 +446,464 @@ def apply_moderation(post_id: str, action: str) -> None:
 # ---- reactions --------------------------------------------------------------
 
 
+def _bump_type_count(post_id, reaction_type: str, delta: int) -> None:
+    if delta > 0:
+        PostReactionCount.objects.get_or_create(post_id=post_id, type=reaction_type)
+        PostReactionCount.objects.filter(post_id=post_id, type=reaction_type).update(
+            count=F("count") + delta
+        )
+    else:
+        PostReactionCount.objects.filter(post_id=post_id, type=reaction_type).update(
+            count=Greatest(F("count") + delta, 0)
+        )
+
+
 def react(viewer_id: str, post_id: str, reaction_type: str) -> PostReaction:
+    """Add or change the viewer's reaction. Only a new reaction notifies anyone."""
     if reaction_type not in REACTION_TYPES:
         raise TaraAPIError("Invalid reaction.", code="validation_error", http_status_code=400)
     post = _require_visible(viewer_id, post_id)
     with transaction.atomic():
-        reaction, created = PostReaction.objects.update_or_create(
-            post=post, account_id=viewer_id, defaults={"type": reaction_type}
+        reaction = (
+            PostReaction.objects.select_for_update().filter(post=post, account_id=viewer_id).first()
         )
-        if created:  # Changing an existing reaction notifies nobody.
-            Post.objects.filter(id=post.id).update(reaction_count=F("reaction_count") + 1)
-            events.emit(
-                "post.reacted",
-                subject_id=str(post.id),
-                payload={
-                    "post_id": str(post.id),
-                    "reactor": str(viewer_id),
-                    "reaction_type": reaction_type,
-                    "author_id": str(post.author_id),
-                },
-                actor_id=str(viewer_id),
-            )
+        if reaction is not None:
+            if reaction.type != reaction_type:
+                _bump_type_count(post.id, reaction.type, -1)
+                _bump_type_count(post.id, reaction_type, +1)
+                reaction.type = reaction_type
+                reaction.save(update_fields=["type"])
+            return reaction
+        try:
+            with transaction.atomic():
+                reaction = PostReaction.objects.create(
+                    post=post, account_id=viewer_id, type=reaction_type
+                )
+        except IntegrityError:  # a concurrent first reaction won; treat this as a change
+            reaction = PostReaction.objects.select_for_update().get(post=post, account_id=viewer_id)
+            if reaction.type != reaction_type:
+                _bump_type_count(post.id, reaction.type, -1)
+                _bump_type_count(post.id, reaction_type, +1)
+                reaction.type = reaction_type
+                reaction.save(update_fields=["type"])
+            return reaction
+        Post.objects.filter(id=post.id).update(reaction_count=F("reaction_count") + 1)
+        _bump_type_count(post.id, reaction_type, +1)
+        events.emit(
+            "post.reacted",
+            subject_id=str(post.id),
+            payload={
+                "post_id": str(post.id),
+                "reactor": str(viewer_id),
+                "reaction_type": reaction_type,
+                "author_id": str(post.author_id),
+            },
+            actor_id=str(viewer_id),
+        )
     return reaction
 
 
 def unreact(viewer_id: str, post_id: str) -> None:
-    deleted, _ = PostReaction.objects.filter(post_id=post_id, account_id=viewer_id).delete()
-    if deleted:
-        Post.objects.filter(id=post_id).update(reaction_count=F("reaction_count") - 1)
+    """Remove the viewer's reaction. Always allowed: it only removes the viewer's own data."""
+    with transaction.atomic():
+        reaction = (
+            PostReaction.objects.select_for_update()
+            .select_related("post")
+            .filter(post_id=post_id, account_id=viewer_id)
+            .first()
+        )
+        if reaction is None:
+            return
+        reaction_type, post = reaction.type, reaction.post
+        reaction.delete()
+        Post.objects.filter(id=post.id).update(reaction_count=Greatest(F("reaction_count") - 1, 0))
+        _bump_type_count(post.id, reaction_type, -1)
+        events.emit(
+            "post.unreacted",
+            subject_id=str(post.id),
+            payload={
+                "post_id": str(post.id),
+                "reactor": str(viewer_id),
+                "reaction_type": reaction_type,
+                "author_id": str(post.author_id),
+            },
+            actor_id=str(viewer_id),
+        )
+
+
+def list_reactions(viewer_id: str, post_id: str, reaction_type: str | None = None):
+    """Who reacted, newest first. 404 when the viewer cannot see the post; accounts
+    blocked either way are left out."""
+    if reaction_type and reaction_type not in REACTION_TYPES:
+        raise _bad_request("Invalid reaction.")
+    post = _require_visible(viewer_id, post_id)
+    qs = PostReaction.objects.filter(post=post).exclude(account_id__in=blocked_ids(viewer_id))
+    if reaction_type:
+        qs = qs.filter(type=reaction_type)
+    return qs.order_by("-created_at")
+
+
+def list_share_posts(viewer_id: str, post_id: str):
+    """Shares of a post, newest first, as the sharers' own posts. 404 when the
+    viewer cannot see the original. Filter the page with ``only_visible``: a
+    share is listed only to someone who could open it."""
+    post = _require_visible(viewer_id, post_id)
+    return (
+        Post.objects.filter(
+            shared_post_id=post.id,
+            deleted_at__isnull=True,
+            moderation_status=Post.ModerationStatus.OK,
+        )
+        .exclude(author_id__in=blocked_ids(viewer_id))
+        .order_by("-created_at")
+    )
 
 
 # ---- comments ---------------------------------------------------------------
 
 
-def add_comment(viewer_id: str, post_id: str, body: str, parent_id: str | None = None) -> Comment:
+def _comment_not_found() -> TaraAPIError:
+    return TaraAPIError("Comment not found.", code="not_found", http_status_code=404)
+
+
+def _check_comment_policy(viewer_id: str, post: Post) -> None:
+    """The post's comment policy, checked on every new comment and reply."""
+    if post.comment_policy == CommentPolicy.OFF:
+        raise TaraAPIError(
+            "Comments are turned off for this post.",
+            code="comments_disabled",
+            http_status_code=403,
+        )
+    if post.comment_policy == CommentPolicy.FRIENDS and str(viewer_id) != str(post.author_id):
+        if not get_relationship(str(viewer_id), str(post.author_id)).are_friends:
+            raise TaraAPIError(
+                "Only the author's friends can comment on this post.",
+                code="comments_friends_only",
+                http_status_code=403,
+            )
+
+
+def visible_comment(viewer_id: str, comment_id: str) -> Comment:
+    """A live comment on a post the viewer can see, by someone the viewer has not
+    blocked (and who has not blocked the viewer). Anything else is 404."""
+    comment = (
+        Comment.objects.select_related("post", "parent")
+        .filter(id=comment_id, deleted_at__isnull=True)
+        .first()
+    )
+    if comment is None or (comment.parent_id and comment.parent.deleted_at is not None):
+        raise _comment_not_found()
+    if not visible_to_viewer(viewer_id, comment.post):
+        raise _comment_not_found()
+    if str(comment.author_id) != str(viewer_id) and _is_locally_blocked(
+        viewer_id, comment.author_id
+    ):
+        raise _comment_not_found()
+    return comment
+
+
+def add_comment(viewer_id: str, post_id: str, body: str, reply_to_id: str | None = None) -> Comment:
+    """A root comment, or a reply to ``reply_to_id`` (a root or a reply).
+
+    Replies are flattened onto the thread root: ``parent`` is the root and
+    ``reply_to`` is the comment answered. The target must be on this post, so a
+    client can never attach a reply to another post's thread.
+    """
     post = _require_visible(viewer_id, post_id)
-    parent = None
-    if parent_id:
-        parent = Comment.objects.filter(id=parent_id, post=post, deleted_at__isnull=True).first()
-        if parent is None:
+    target = root = None
+    if reply_to_id:
+        target = (
+            Comment.objects.select_related("parent")
+            .filter(id=reply_to_id, post=post, deleted_at__isnull=True)
+            .first()
+        )
+        if target is None or _is_locally_blocked(viewer_id, target.author_id):
             raise TaraAPIError("Parent comment not found.", code="not_found", http_status_code=404)
-        if _is_locally_blocked(viewer_id, parent.author_id):
+        root = target.parent if target.parent_id else target
+        if root.deleted_at is not None or _is_locally_blocked(viewer_id, root.author_id):
             raise TaraAPIError("Parent comment not found.", code="not_found", http_status_code=404)
+    _check_comment_policy(viewer_id, post)
+    mentions = extract_mentions(body)
     with transaction.atomic():
-        comment = Comment.objects.create(post=post, author_id=viewer_id, parent=parent, body=body)
-        for handle in extract_mentions(body):
+        comment = Comment.objects.create(
+            post=post, author_id=viewer_id, parent=root, reply_to=target, body=body
+        )
+        for handle in mentions:
             Mention.objects.create(comment=comment, mentioned_handle=handle)
         Post.objects.filter(id=post.id).update(comment_count=F("comment_count") + 1)
-        event_type = "comment.replied" if parent else "post.commented"
+        if root is not None:
+            Comment.objects.filter(id=root.id).update(reply_count=F("reply_count") + 1)
         events.emit(
-            event_type,
+            "comment.replied" if target else "post.commented",
             subject_id=str(comment.id),
             payload={
                 "post_id": str(post.id),
                 "comment_id": str(comment.id),
                 "author": str(viewer_id),
-                "parent_id": str(parent_id) if parent_id else None,
-                "parent_author_id": str(parent.author_id) if parent else None,
+                # The thread root: replies are flattened onto it.
+                "parent_id": str(root.id) if root else None,
+                # Whoever was answered: the reply notification goes to them.
+                "parent_author_id": str(target.author_id) if target else None,
+                "reply_to_id": str(target.id) if target else None,
+                "root_author_id": str(root.author_id) if root else None,
                 "post_author_id": str(post.author_id),
-                "mentions": extract_mentions(body),
+                "mentions": mentions,
             },
             actor_id=str(viewer_id),
         )
     return comment
 
 
+def edit_comment(viewer_id: str, comment_id: str, body: str) -> Comment:
+    """The author changes their comment's text. 404 for anyone else, and once the
+    post is out of the author's sight."""
+    comment = visible_comment(viewer_id, comment_id)
+    if str(comment.author_id) != str(viewer_id):
+        raise _comment_not_found()
+    with transaction.atomic():
+        comment = (
+            Comment.objects.select_for_update()
+            .filter(id=comment.id, deleted_at__isnull=True)
+            .first()
+        )
+        if comment is None:
+            raise _comment_not_found()
+        before = set(comment.mentions.values_list("mentioned_handle", flat=True))
+        comment.body = body
+        comment.edited_at = timezone.now()
+        comment.save(update_fields=["body", "edited_at"])
+        comment.mentions.all().delete()
+        mentions = extract_mentions(body)
+        for handle in mentions:
+            Mention.objects.create(comment=comment, mentioned_handle=handle)
+        events.emit(
+            "comment.edited",
+            subject_id=str(comment.id),
+            payload={
+                "post_id": str(comment.post_id),
+                "comment_id": str(comment.id),
+                "author": str(viewer_id),
+                "new_mentions": sorted(set(mentions) - before),
+            },
+            actor_id=str(viewer_id),
+        )
+    return Comment.objects.select_related("reply_to").get(id=comment.id)
+
+
+def _remove_comment(comment: Comment, *, actor_id: str, by: str) -> int:
+    """Soft-delete a comment, and the whole thread when it is a root. Keeps
+    ``comment_count`` and the root's ``reply_count`` right, and returns the
+    post's new ``comment_count``. Call inside a transaction."""
+    locked = Comment.objects.select_for_update().filter(id=comment.id).first()
+    if locked is None or locked.deleted_at is not None:  # a concurrent delete won
+        return Post.objects.get(id=comment.post_id).comment_count
+    comment = locked
+    ids = [comment.id]
+    if comment.parent_id is None:
+        ids += list(
+            Comment.objects.filter(parent=comment, deleted_at__isnull=True).values_list(
+                "id", flat=True
+            )
+        )
+    changes: dict = {"deleted_at": timezone.now()}
+    if by == "moderation":
+        changes["moderation_status"] = Comment.ModerationStatus.REMOVED
+    Comment.objects.filter(id__in=ids).update(**changes)
+    Post.objects.filter(id=comment.post_id).update(
+        comment_count=Greatest(F("comment_count") - len(ids), 0)
+    )
+    if comment.parent_id:
+        Comment.objects.filter(id=comment.parent_id).update(
+            reply_count=Greatest(F("reply_count") - 1, 0)
+        )
+    post = Post.objects.get(id=comment.post_id)
+    events.emit(
+        "comment.deleted",
+        subject_id=str(comment.id),
+        payload={
+            "post_id": str(post.id),
+            "comment_id": str(comment.id),
+            "author_id": str(comment.author_id),
+            "post_author_id": str(post.author_id),
+            "parent_id": str(comment.parent_id) if comment.parent_id else None,
+            "removed_ids": [str(i) for i in ids],
+            "by": by,  # author | post_author | moderation
+        },
+        actor_id=str(actor_id),
+    )
+    return post.comment_count
+
+
+def delete_comment(viewer_id: str, comment_id: str) -> int:
+    """The comment's author or the post's author may delete it (a root takes its
+    replies with it). Returns the post's new ``comment_count``. Someone who can
+    see the comment but may not delete it gets 403, anyone else 404."""
+    comment = (
+        Comment.objects.select_related("post")
+        .filter(id=comment_id, deleted_at__isnull=True, post__deleted_at__isnull=True)
+        .first()
+    )
+    if comment is None:
+        raise _comment_not_found()
+    if str(comment.author_id) == str(viewer_id):
+        by = "author"
+    elif str(comment.post.author_id) == str(viewer_id):
+        by = "post_author"
+    else:
+        visible_comment(viewer_id, comment_id)  # 404 when hidden
+        raise TaraAPIError(
+            "Only the comment's author or the post's author can delete it.",
+            code="permission_denied",
+            http_status_code=403,
+        )
+    with transaction.atomic():
+        return _remove_comment(comment, actor_id=viewer_id, by=by)
+
+
+def apply_comment_moderation(comment_id: str, action: str) -> None:
+    """Driven by moderation.actioned for comments. ``remove`` hides the comment
+    (and its thread, for a root); ``approve`` (an overturned removal) brings
+    back exactly what that removal hid."""
+    comment = Comment.objects.filter(id=comment_id).first()
+    if comment is None:
+        return
+    with transaction.atomic():
+        if action == "remove":
+            _remove_comment(comment, actor_id=str(comment.author_id), by="moderation")
+            return
+        if action != "approve":
+            return
+        comment = Comment.objects.select_for_update().get(id=comment.id)
+        if comment.moderation_status != Comment.ModerationStatus.REMOVED:
+            return
+        # The rows that one removal hid share its timestamp.
+        hidden = Comment.objects.filter(
+            Q(id=comment.id) | Q(parent=comment),
+            moderation_status=Comment.ModerationStatus.REMOVED,
+            deleted_at=comment.deleted_at,
+        )
+        ids = list(hidden.values_list("id", flat=True))
+        hidden.update(deleted_at=None, moderation_status=Comment.ModerationStatus.OK)
+        Post.objects.filter(id=comment.post_id).update(comment_count=F("comment_count") + len(ids))
+        if comment.parent_id:
+            Comment.objects.filter(id=comment.parent_id).update(reply_count=F("reply_count") + 1)
+        events.emit(
+            "comment.restored",
+            subject_id=str(comment.id),
+            payload={
+                "post_id": str(comment.post_id),
+                "comment_id": str(comment.id),
+                "restored_ids": [str(i) for i in ids],
+            },
+            actor_id=str(comment.author_id),
+        )
+
+
 def list_comments(viewer_id: str, post_id: str):
+    """Thread roots, oldest first. Replies are paged per root (``list_replies``),
+    so a reply can never land on a page without its root."""
     post = _require_visible(viewer_id, post_id)
     return (
-        post.comments.filter(deleted_at__isnull=True)
+        post.comments.filter(parent__isnull=True, deleted_at__isnull=True)
         .exclude(author_id__in=blocked_ids(viewer_id))
+        .select_related("reply_to")
         .order_by("created_at")
     )
+
+
+def list_replies(viewer_id: str, root_id: str):
+    """One thread's replies, oldest first. 404 when the root is hidden from the viewer."""
+    root = visible_comment(viewer_id, root_id)
+    return (
+        Comment.objects.filter(parent=root, deleted_at__isnull=True)
+        .exclude(author_id__in=blocked_ids(viewer_id))
+        .select_related("reply_to")
+        .order_by("created_at")
+    )
+
+
+def comment_reactions_of(viewer_id: str, comments) -> dict:
+    """``{comment_id: type}`` for the viewer's own reactions on these comments."""
+    return dict(
+        CommentReaction.objects.filter(
+            comment_id__in=[c.id for c in comments], account_id=viewer_id
+        ).values_list("comment_id", "type")
+    )
+
+
+def react_comment(viewer_id: str, comment_id: str, reaction_type: str) -> Comment:
+    """Add or change the viewer's reaction to a comment; only a new one emits."""
+    if reaction_type not in REACTION_TYPES:
+        raise _bad_request("Invalid reaction.")
+    comment = visible_comment(viewer_id, comment_id)
+    with transaction.atomic():
+        try:
+            with transaction.atomic():
+                _, created = CommentReaction.objects.update_or_create(
+                    comment=comment, account_id=viewer_id, defaults={"type": reaction_type}
+                )
+        except IntegrityError:  # a concurrent first reaction won
+            created = False
+            CommentReaction.objects.filter(comment=comment, account_id=viewer_id).update(
+                type=reaction_type
+            )
+        if created:
+            Comment.objects.filter(id=comment.id).update(reaction_count=F("reaction_count") + 1)
+            events.emit(
+                "comment.reacted",
+                subject_id=str(comment.id),
+                payload={
+                    "post_id": str(comment.post_id),
+                    "comment_id": str(comment.id),
+                    "reactor": str(viewer_id),
+                    "reaction_type": reaction_type,
+                    "author_id": str(comment.author_id),
+                },
+                actor_id=str(viewer_id),
+            )
+    comment.refresh_from_db(fields=["reaction_count"])
+    return comment
+
+
+def unreact_comment(viewer_id: str, comment_id: str) -> None:
+    """Always allowed: it only removes the viewer's own reaction."""
+    with transaction.atomic():
+        deleted, _ = CommentReaction.objects.filter(
+            comment_id=comment_id, account_id=viewer_id
+        ).delete()
+        if deleted:
+            Comment.objects.filter(id=comment_id).update(
+                reaction_count=Greatest(F("reaction_count") - 1, 0)
+            )
+
+
+def report_comment(viewer_id: str, comment_id: str, reason: str) -> CommentReport:
+    """As for posts: 404 (nothing written) when the reporter cannot see the
+    comment, and one report per account per comment."""
+    comment = visible_comment(viewer_id, comment_id)
+    existing = CommentReport.objects.filter(comment=comment, reporter_id=viewer_id).first()
+    if existing is not None:
+        return existing
+    try:
+        with transaction.atomic():
+            report = CommentReport.objects.create(
+                comment=comment, reporter_id=viewer_id, reason=reason
+            )
+            events.emit(
+                "comment.reported",
+                subject_id=str(comment.id),
+                payload={
+                    "comment_id": str(comment.id),
+                    "post_id": str(comment.post_id),
+                    "reporter": str(viewer_id),
+                    "reason": reason,
+                    "owner_id": str(comment.author_id),
+                },
+                actor_id=str(viewer_id),
+            )
+    except IntegrityError:  # a concurrent duplicate won the unique constraint
+        return CommentReport.objects.get(comment=comment, reporter_id=viewer_id)
+    return report
 
 
 # ---- shares -----------------------------------------------------------------

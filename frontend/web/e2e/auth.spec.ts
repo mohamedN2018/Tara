@@ -1,6 +1,6 @@
 import { expect, request, test } from "@playwright/test";
 
-import { pageAs, PASSWORD, sharedAccounts, unique, verificationToken } from "./helpers";
+import { BASE_URL, pageAs, PASSWORD, sharedAccounts, unique, verificationToken } from "./helpers";
 
 test("register, verify through the mailed link, log in", async ({ page }) => {
   const tag = unique();
@@ -75,12 +75,12 @@ test("a wrong password stays on the login page with a translated error", async (
 
 test("the redirect param can't leave the site", async ({ browser }) => {
   const { a } = await sharedAccounts();
-  const page = await (await browser.newContext({ baseURL: "http://127.0.0.1:5173" })).newPage();
+  const page = await (await browser.newContext({ baseURL: BASE_URL })).newPage();
   await page.goto("/login?redirect=//evil.example/");
   await page.getByLabel("البريد الإلكتروني").fill(a.email);
   await page.getByLabel("كلمة المرور").fill(PASSWORD);
   await page.getByRole("button", { name: "دخول" }).click();
-  await expect(page).toHaveURL(/127\.0\.0\.1:5173\/home$/);
+  await expect(page).toHaveURL(`${BASE_URL}/home`);
 });
 
 test("the API being down does not end the session", async ({ browser }) => {
@@ -140,12 +140,14 @@ test("logging out in one tab ends the session in the other", async ({ browser })
 
 test("a chunk missing after a deploy reloads the page once", async ({ browser }) => {
   const { a } = await sharedAccounts();
-  const page = await pageAs(browser, a);
+  // The build's service worker would serve the precached chunk past page.route.
+  const page = await pageAs(browser, a, BASE_URL, "block");
   await page.goto("/home");
   await expect(page.getByText(a.name).first()).toBeVisible();
 
   let blocked = 0;
-  await page.route("**/src/views/SavedView.vue*", (route) => {
+  // Dev serves the view as a module, the build as a hashed chunk.
+  await page.route(/\/(src\/views\/SavedView\.vue|assets\/SavedView-[\w-]+\.js)/, (route) => {
     if (blocked++ === 0) return route.abort();
     return route.continue();
   });

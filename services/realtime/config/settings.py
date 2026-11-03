@@ -27,6 +27,8 @@ DEBUG = env_bool("REALTIME_DEBUG", False)
 ALLOWED_HOSTS = env_list("REALTIME_ALLOWED_HOSTS", "localhost,127.0.0.1")
 SERVICE_NAME = "realtime"
 CHAT_INTERNAL_URL = os.getenv("CHAT_INTERNAL_URL", "http://chat:8000")
+GRAPH_INTERNAL_URL = os.getenv("GRAPH_INTERNAL_URL", "http://graph:8000")
+INTERNAL_CALL_TIMEOUT = float(os.getenv("INTERNAL_CALL_TIMEOUT", "2.0"))
 TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-secret-change-me")
 
 INSTALLED_APPS = [
@@ -72,7 +74,15 @@ TARA_EVENT_BROKER_URL = RABBITMQ_URL
 TARA_EVENT_EXCHANGE = os.getenv("TARA_EVENT_EXCHANGE", "tara.events")
 TARA_EVENT_QUEUE = "realtime.events"
 
-PRESENCE_TTL = int(os.getenv("PRESENCE_TTL", "60"))
+# Presence (realtime/presence.py): a socket counts as live for PRESENCE_TTL
+# seconds after its last frame (clients ping every 30 s); the per-account key
+# expires on its own after PRESENCE_KEY_TTL. "memory" keeps it in-process.
+PRESENCE_BACKEND = os.getenv("PRESENCE_BACKEND", "redis")
+PRESENCE_TTL = int(os.getenv("PRESENCE_TTL", "70"))
+PRESENCE_KEY_TTL = int(os.getenv("PRESENCE_KEY_TTL", "120"))
+PRESENCE_AUDIENCE_TTL = int(os.getenv("PRESENCE_AUDIENCE_TTL", "60"))
+PRESENCE_QUERY_MAX = 100
+TYPING_MIN_INTERVAL = 2.0
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = os.getenv("TZ", "UTC")

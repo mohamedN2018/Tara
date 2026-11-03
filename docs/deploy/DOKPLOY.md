@@ -118,6 +118,33 @@ docker exec tara-feed-1  python manage.py relabel_feed_reasons       # friend/fo
 docker exec tara-search-1 python manage.py reconcile_hashtags        # hashtags only from public posts
 ```
 
+**Step 1 wave B (comments v2, notifications v2, messenger, marketplace
+catalogue, account security).** All new variables are optional:
+`GOOGLE_CLIENT_ID`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` and
+`TELEGRAM_WEBHOOK_SECRET` (each feature stays off while empty), and
+`AUTH_LOGIN_TARGET_RATE` (default `10/min`).
+
+- **Order:** deploy notification, moderation and realtime first. They consume
+  the new event types, so they must be running before post, chat, graph and
+  marketplace start emitting them.
+- **Marketplace:** recreate `marketplace` together with its relay and consumer.
+  The old image writes `price=0` with type `fixed`, and the new check
+  constraints reject that.
+- **Migrations:** chat `0004`, marketplace `0007` and notification `0005` build
+  indexes `CONCURRENTLY`, and the first two create the `pg_trgm` extension.
+  The database owner can create it, because it is a trusted extension.
+
+After the stack is up, run once:
+
+```bash
+docker exec tara-chat-1 python manage.py backfill_message_seq   # read pointers and unread counts for old chats
+# Only if Telegram phone verification is configured:
+docker exec tara-identity-1 python manage.py set_telegram_webhook --url https://<your-domain>
+```
+
+Push subscriptions made before this release have no recorded owner. They are
+dropped at the next login, so those users have to turn push on again in Settings.
+
 Add a bucket lifecycle rule that deletes objects under `staging/` after one day.
 Uploads now land there first. If an upload is abandoned, its staging object is
 never served, but it does take up space.

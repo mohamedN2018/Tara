@@ -63,16 +63,16 @@ def _hash(raw: str) -> str:
     return token_engine.hash_token(raw)
 
 
-def _validate_password(password: str, account: Account | None = None) -> None:
+def _validate_password(
+    password: str, account: Account | None = None, *, field: str = "password"
+) -> None:
     try:
         validate_password(password, account)
     except DjangoValidationError as exc:
         raise TaraAPIError(
             "Password does not meet the security requirements.",
             code="validation_error",
-            details=[
-                {"field": "password", "code": "weak_password", "message": m} for m in exc.messages
-            ],
+            details=[{"field": field, "code": "weak_password", "message": m} for m in exc.messages],
             http_status_code=400,
         ) from exc
 

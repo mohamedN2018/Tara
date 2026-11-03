@@ -53,10 +53,10 @@ def test_send_message_emits_event_with_recipients(client_for):
     assert set(event.payload["payload"]["recipients"]) == {a, b}
 
 
-def test_voice_message(client_for):
+def test_voice_message(client_for, media):
     a, b = _acct(), _acct()
     conv = services.create_or_get_dm(a, b)
-    media_id = str(uuid.uuid4())
+    media_id = media.add(a, "voice")
     resp = client_for(a).post(
         reverse("chat:voice-messages", args=[conv.id]),
         {"media_id": media_id, "duration_ms": 4200},

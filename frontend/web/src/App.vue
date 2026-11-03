@@ -52,7 +52,9 @@ onMounted(() => {
 
   // App-wide live toasts (real-time across every page).
   unsubs.push(
-    realtime.on("notification.created", () => {
+    realtime.on("notification.created", (f) => {
+      // Messages already get their own toast below (one toast per message, not two).
+      if (f.kind === "message") return;
       toasts.push({ text: t("toasts.newNotification"), icon: "bell", to: "/notifications" });
     }),
   );

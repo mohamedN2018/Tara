@@ -3,6 +3,7 @@ import { Bell, Home, MessageCircle, Plus, Users } from "lucide-vue-next";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 
+import { useChatUnreadStore } from "@/stores/chatUnread";
 import { useNotificationStore } from "@/stores/notifications";
 import { useUiStore } from "@/stores/ui";
 
@@ -10,6 +11,7 @@ const { t } = useI18n();
 const router = useRouter();
 const ui = useUiStore();
 const notifications = useNotificationStore();
+const chatUnread = useChatUnreadStore();
 
 // Two links either side of the central create button.
 const start = [
@@ -45,7 +47,7 @@ function createPost() {
           >
             <component :is="item.icon" class="h-[22px] w-[22px]" />
             <span
-              v-if="item.name === 'notifications' && notifications.unread > 0"
+              v-if="(item.name === 'notifications' && notifications.unread > 0) || (item.name === 'messages' && chatUnread.conversations > 0)"
               class="absolute end-[26%] top-1.5 h-2.5 w-2.5 rounded-full bg-accent-500 ring-2 ring-white dark:ring-gray-950"
             />
             {{ t(item.label) }}

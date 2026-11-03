@@ -3,9 +3,11 @@ import { Pause, Play } from "lucide-vue-next";
 import { computed, onBeforeUnmount, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
+import { chatService } from "@/services/chat";
 import { mediaService } from "@/services/media";
 
-const props = defineProps<{ mediaId: string; durationMs: number | null }>();
+// Chat voice notes are private: pass `messageId` and chat mints the URL.
+const props = defineProps<{ mediaId: string; durationMs: number | null; messageId?: string }>();
 const { t } = useI18n();
 
 const audio = ref<HTMLAudioElement | null>(null);
@@ -35,7 +37,9 @@ async function toggle() {
   loading.value = true;
   try {
     if (!src.value) {
-      src.value = await mediaService.resolveUrl(props.mediaId);
+      src.value = props.messageId
+        ? ((await chatService.attachmentUrl(props.messageId, props.mediaId))?.url ?? null)
+        : await mediaService.resolveUrl(props.mediaId);
       if (!src.value) throw new Error("media not ready");
       el.src = src.value;
     }

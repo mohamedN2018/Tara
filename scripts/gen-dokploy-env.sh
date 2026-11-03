@@ -159,6 +159,15 @@ EMAIL_HOST_USER=
 EMAIL_HOST_PASSWORD=
 EMAIL_USE_TLS=true
 DEFAULT_FROM_EMAIL=no-reply@${DOMAIN}
+# Login attempts per targeted email, whatever the IP.
+AUTH_LOGIN_TARGET_RATE=10/min
+# Google sign-in: paste the OAuth web client id (public) to turn it on.
+GOOGLE_CLIENT_ID=
+# Telegram phone verification: set the bot token and username to turn it on,
+# then run `python manage.py set_telegram_webhook` in the identity container.
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_BOT_USERNAME=
+TELEGRAM_WEBHOOK_SECRET=$(secret)
 # New listings and ads wait for a moderator.
 MARKETPLACE_AUTO_APPROVE=false
 ADS_AUTO_APPROVE=false

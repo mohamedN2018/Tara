@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from .models import Account, RefreshToken, SecurityEvent, UserSession
+from .models import Account, RefreshToken, SecurityEvent, SocialIdentity, UserSession
 
 
 @admin.register(Account)
@@ -14,6 +14,7 @@ class AccountAdmin(UserAdmin):
     fieldsets = (
         (None, {"fields": ("id", "email", "password")}),
         ("Status", {"fields": ("status", "email_verified", "is_active")}),
+        ("Phone", {"fields": ("phone", "phone_verified_at")}),
         ("Preferences", {"fields": ("language", "theme")}),
         ("Permissions", {"fields": ("is_staff", "is_superuser", "groups", "user_permissions")}),
         ("Timestamps", {"fields": ("created_at", "updated_at", "last_login_at")}),
@@ -46,3 +47,11 @@ class RefreshTokenAdmin(admin.ModelAdmin):
         "expires_at",
     )
     search_fields = ("account__email", "family_id")
+
+
+@admin.register(SocialIdentity)
+class SocialIdentityAdmin(admin.ModelAdmin):
+    list_display = ("id", "account", "provider", "email", "created_at", "last_used_at")
+    list_filter = ("provider",)
+    search_fields = ("account__email", "email")
+    readonly_fields = ("subject",)

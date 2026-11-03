@@ -1,23 +1,38 @@
 <script setup lang="ts">
-import { Bookmark, Flag, Globe, Lock, MoreHorizontal, PenSquare, Trash2, UserCheck, Users } from "lucide-vue-next";
+import {
+  Bookmark,
+  Flag,
+  Globe,
+  Lock,
+  MessageSquareOff,
+  MoreHorizontal,
+  PenSquare,
+  Trash2,
+  UserCheck,
+  Users,
+} from "lucide-vue-next";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type { RouteLocationRaw } from "vue-router";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
-import CommentInput from "@/components/post/CommentInput.vue";
 import CommentList from "@/components/post/CommentList.vue";
 import LinkPreviewCard from "@/components/post/LinkPreviewCard.vue";
+import MediaGrid from "@/components/post/MediaGrid.vue";
+import MediaTheater from "@/components/post/MediaTheater.vue";
 import PollCard from "@/components/post/PollCard.vue";
 import PostActions from "@/components/post/PostActions.vue";
+import ReactionsDialog from "@/components/post/ReactionsDialog.vue";
 import RichText from "@/components/post/RichText.vue";
 import ShareBox from "@/components/post/ShareBox.vue";
 import SharedPostCard from "@/components/post/SharedPostCard.vue";
+import SharesDialog from "@/components/post/SharesDialog.vue";
 import { relativeTime } from "@/lib/format";
+import { applyReactionChange } from "@/lib/reactionCounts";
 import { hasLink } from "@/lib/richText";
 import { useEscapeKey } from "@/lib/useEscapeKey";
-import { useMediaUrls } from "@/lib/useMediaUrl";
-import { type Comment, postService } from "@/services/post";
+import { useMediaViewer } from "@/lib/useMediaViewer";
+import { COMMENT_POLICIES, type CommentPolicy, postService } from "@/services/post";
 import { useAuthStore } from "@/stores/auth";
 import { useDirectoryStore } from "@/stores/directory";
 import { useToastStore } from "@/stores/toasts";
@@ -131,6 +146,26 @@ async function saveEdit() {
   }
 }
 
+// Who can comment (author). The server enforces it; this only sets it.
+const commentPolicy = ref<CommentPolicy>(props.post.comment_policy ?? "everyone");
+const POLICY_LABEL: Record<CommentPolicy, string> = {
+  everyone: "post.commentPolicyEveryone",
+  friends: "post.commentPolicyFriends",
+  off: "post.commentPolicyOff",
+};
+async function setPolicy(policy: CommentPolicy) {
+  menuOpen.value = false;
+  if (policy === commentPolicy.value) return;
+  const prev = commentPolicy.value;
+  commentPolicy.value = policy;
+  try {
+    await postService.setCommentPolicy(props.post.id, policy);
+  } catch (e) {
+    commentPolicy.value = prev;
+    toasts.error(e);
+  }
+}
+
 // Report (non-author)
 const showReport = ref(false);
 const reportReason = ref("");
@@ -150,16 +185,20 @@ async function submitReport() {
 const myReaction = ref<string | null>(props.post.my_reaction ?? null);
 const isSaved = ref(props.post.is_saved ?? false);
 const reactionCount = ref(props.post.reaction_count);
+const reactionCounts = ref<Record<string, number>>({ ...(props.post.reaction_counts ?? {}) });
 const commentCount = ref(props.post.comment_count);
 const shareCount = ref(props.post.share_count);
 const showComments = ref(false);
-const comments = ref<Comment[]>([]);
-const commentsCursor = ref<string | null>(null);
-const loadingComments = ref(false);
-const loadingMoreComments = ref(false);
-const submitting = ref(false);
+const commentsMounted = ref(false);
+const showReactions = ref(false);
+const showShares = ref(false);
 
-const images = useMediaUrls(() => props.post.media_ids);
+// Photos: grid in the card, full-screen viewer kept in `?view=<post>:<index>`.
+const mediaIds = computed(() => props.post.media_ids ?? []);
+const viewer = useMediaViewer(
+  () => props.post.id,
+  () => mediaIds.value.length,
+);
 
 // Names we genuinely know — used to label comments (others fall back to a short
 // id). Never invents a name.
@@ -173,12 +212,15 @@ const knownNames = computed(() => {
 async function onReact(type: string) {
   const prev = myReaction.value;
   if (prev === type) return;
+  const before = reactionCounts.value;
   if (prev === null) reactionCount.value += 1;
   myReaction.value = type;
+  reactionCounts.value = applyReactionChange(before, prev, type);
   try {
     await postService.react(props.post.id, type);
   } catch (e) {
     myReaction.value = prev;
+    reactionCounts.value = before;
     if (prev === null) reactionCount.value -= 1;
     toasts.error(e);
   }
@@ -187,12 +229,15 @@ async function onReact(type: string) {
 async function onUnreact() {
   const prev = myReaction.value;
   if (prev === null) return;
+  const before = reactionCounts.value;
   myReaction.value = null;
   reactionCount.value -= 1;
+  reactionCounts.value = applyReactionChange(before, prev, null);
   try {
     await postService.unreact(props.post.id);
   } catch (e) {
     myReaction.value = prev;
+    reactionCounts.value = before;
     reactionCount.value += 1;
     toasts.error(e);
   }
@@ -206,65 +251,9 @@ onMounted(() => {
 });
 onBeforeUnmount(() => window.clearTimeout(previewTimer));
 
-async function toggleComments() {
+function toggleComments() {
   showComments.value = !showComments.value;
-  if (showComments.value && comments.value.length === 0) {
-    loadingComments.value = true;
-    try {
-      const page = await postService.comments(props.post.id);
-      comments.value = page.data;
-      commentsCursor.value = page.page.next_cursor;
-    } catch (e) {
-      comments.value = [];
-      toasts.error(e);
-    } finally {
-      loadingComments.value = false;
-    }
-  }
-}
-
-async function loadMoreComments() {
-  if (!commentsCursor.value || loadingMoreComments.value) return;
-  loadingMoreComments.value = true;
-  try {
-    const page = await postService.comments(props.post.id, commentsCursor.value);
-    // A comment posted here while paging can come back from the server too.
-    const known = new Set(comments.value.map((c) => c.id));
-    comments.value.push(...page.data.filter((c) => !known.has(c.id)));
-    commentsCursor.value = page.page.next_cursor;
-  } catch (e) {
-    toasts.error(e);
-  } finally {
-    loadingMoreComments.value = false;
-  }
-}
-
-async function submitComment(body: string) {
-  if (submitting.value) return;
-  submitting.value = true;
-  try {
-    const created = await postService.addComment(props.post.id, body);
-    comments.value.push(created);
-    commentCount.value += 1;
-  } catch (e) {
-    toasts.error(e);
-  } finally {
-    submitting.value = false;
-  }
-}
-
-async function submitReply({ targetId, body }: { targetId: string; body: string }) {
-  if (submitting.value) return;
-  submitting.value = true;
-  try {
-    const created = await postService.reply(targetId, body);
-    comments.value.push(created);
-    commentCount.value += 1;
-  } catch (e) {
-    toasts.error(e);
-  } finally {
-    submitting.value = false;
-  }
+  if (showComments.value) commentsMounted.value = true;
 }
 
 const sharing = ref(false);
@@ -303,6 +292,7 @@ async function toggleSave() {
           </RouterLink>
           <span aria-hidden="true">·</span>
           <component :is="audienceIcon" class="h-3 w-3" :title="t(`feed.audience${post.audience === 'only_me' ? 'OnlyMe' : post.audience.charAt(0).toUpperCase() + post.audience.slice(1)}`)" />
+          <MessageSquareOff v-if="commentPolicy === 'off'" class="h-3 w-3" :aria-label="t('post.commentsOff')" />
         </div>
       </div>
 
@@ -336,6 +326,20 @@ async function toggleSave() {
               >
                 <PenSquare class="h-4 w-4" /> {{ t("post.edit") }}
               </button>
+              <div v-if="isAuthor" role="group" :aria-label="t('post.commentPolicy')" class="my-1 border-y border-gray-100 py-1 dark:border-gray-800">
+                <p class="px-3 pb-0.5 pt-1 text-[11px] font-semibold text-gray-500 dark:text-gray-400">{{ t("post.commentPolicy") }}</p>
+                <button
+                  v-for="p in COMMENT_POLICIES"
+                  :key="p"
+                  role="menuitemradio"
+                  :aria-checked="commentPolicy === p"
+                  class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-start text-sm transition hover:bg-gray-100 dark:hover:bg-gray-800"
+                  :class="commentPolicy === p ? 'font-semibold text-brand-600 dark:text-brand-300' : ''"
+                  @click="setPolicy(p)"
+                >
+                  {{ t(POLICY_LABEL[p]) }}
+                </button>
+              </div>
               <button
                 v-if="isAuthor"
                 class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-start text-sm text-red-600 transition hover:bg-red-50 disabled:opacity-60 dark:hover:bg-red-950/40"
@@ -372,7 +376,7 @@ async function toggleSave() {
 
     <LinkPreviewCard v-if="linkPreview && !editing" :preview="linkPreview" />
     <PollCard v-if="post.poll" :post-id="post.id" :poll="post.poll" />
-    <SharedPostCard v-if="isShare" :post="post.shared_post" />
+    <SharedPostCard v-if="isShare" :post="post.shared_post" :view-key="post.id" />
 
     <!-- Report box -->
     <div v-if="showReport" class="mt-3 rounded-xl border border-gray-200 p-3 dark:border-gray-800">
@@ -385,54 +389,55 @@ async function toggleSave() {
     </div>
     <p v-if="reported" class="mt-2 text-xs font-medium text-green-600">{{ t("post.reportSent") }}</p>
 
-    <div
-      v-if="images.length"
-      class="mt-3 grid gap-1 overflow-hidden rounded-2xl bg-gray-100 dark:bg-gray-950"
-      :class="images.length === 1 ? 'grid-cols-1' : 'grid-cols-2'"
-    >
-      <img
-        v-for="(src, i) in images"
-        :key="i"
-        :src="src"
-        class="w-full object-cover"
-        :class="images.length === 1 ? 'max-h-[32rem]' : 'aspect-square'"
-        loading="lazy"
-        decoding="async"
-        :alt="t('post.imageAlt', { n: i + 1, name: authorDisplay })"
-      />
-    </div>
+    <MediaGrid v-if="mediaIds.length" :media-ids="mediaIds" :author-name="authorDisplay" @open="viewer.open" />
+    <MediaTheater
+      v-if="viewer.index.value !== null"
+      :media-ids="mediaIds"
+      :index="viewer.index.value"
+      :author-name="authorDisplay"
+      @go="viewer.go"
+      @close="viewer.close"
+    />
 
     <div class="mt-3">
       <PostActions
         :my-reaction="myReaction"
         :reaction-count="reactionCount"
+        :reaction-counts="reactionCounts"
         :comment-count="commentCount"
         :share-count="shareCount"
         @react="onReact"
         @unreact="onUnreact"
         @comment="toggleComments"
         @share="sharing = !sharing"
+        @reactions="showReactions = true"
+        @shares="showShares = true"
       />
     </div>
     <ShareBox v-if="sharing" :post="post" @cancel="sharing = false" @shared="onShared" />
 
-    <section v-if="showComments" class="mt-3 space-y-3 border-t border-gray-100 pt-3 dark:border-gray-800">
-      <CommentInput :submitting="submitting" @submit="submitComment" />
+    <section
+      v-if="commentsMounted"
+      v-show="showComments"
+      class="mt-3 border-t border-gray-100 pt-3 dark:border-gray-800"
+    >
       <CommentList
-        :comments="comments"
-        :loading="loadingComments"
-        :submitting="submitting"
+        :post-id="post.id"
+        :post-author-id="post.author_id"
+        :policy="commentPolicy"
         :known-names="knownNames"
-        @reply="submitReply"
+        @added="commentCount += 1"
+        @total="commentCount = $event"
       />
-      <button
-        v-if="commentsCursor"
-        class="text-xs font-semibold text-brand-600 hover:underline dark:text-brand-300"
-        :disabled="loadingMoreComments"
-        @click="loadMoreComments"
-      >
-        {{ loadingMoreComments ? t("states.loading") : t("post.moreComments") }}
-      </button>
     </section>
+
+    <ReactionsDialog
+      v-if="showReactions"
+      :post-id="post.id"
+      :counts="reactionCounts"
+      :total="reactionCount"
+      @close="showReactions = false"
+    />
+    <SharesDialog v-if="showShares" :post-id="post.id" @close="showShares = false" />
   </article>
 </template>

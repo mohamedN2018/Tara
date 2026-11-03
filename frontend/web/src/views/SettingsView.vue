@@ -4,14 +4,14 @@ import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import LocaleToggle from "@/components/common/LocaleToggle.vue";
-import PushSettings from "@/components/common/PushSettings.vue";
+import NotificationPreferences from "@/components/notifications/NotificationPreferences.vue";
+import SecuritySettings from "@/components/settings/SecuritySettings.vue";
 import ThemeToggle from "@/components/common/ThemeToggle.vue";
 import AppShell from "@/components/layout/AppShell.vue";
 import { errorMessage } from "@/lib/errors";
 import { relativeTime } from "@/lib/format";
 import { canInstall, installApp } from "@/lib/pwa";
 import { identityService, type UserSession } from "@/services/identity";
-import { notificationService, type NotificationPreferences, type NotificationPrefs } from "@/services/notification";
 import { profileService } from "@/services/profile";
 import { useAuthStore } from "@/stores/auth";
 import { useToastStore } from "@/stores/toasts";
@@ -47,78 +47,7 @@ async function save() {
   }
 }
 
-// --- Notification preferences ---
-const NOTIF_KINDS = [
-  "post.reaction",
-  "post.comment",
-  "comment.reply",
-  "post.share",
-  "mention",
-  "friend.request",
-  "friend.accepted",
-  "follow",
-  "message",
-  "listing.status",
-];
-const CHANNEL = "in_app";
-const prefs = ref<NotificationPrefs>({});
-const quiet = ref<NotificationPreferences["quiet_hours"]>({});
-const prefsLoading = ref(true);
-const prefsError = ref(false);
-
-const isEnabled = (kind: string) => prefs.value[kind]?.[CHANNEL] !== false; // default on
-
-async function loadPrefs() {
-  prefsLoading.value = true;
-  prefsError.value = false;
-  try {
-    const p = await notificationService.getPreferences();
-    // PATCH replaces `prefs` whole, so other channels must be kept and sent back.
-    prefs.value = Object.fromEntries(
-      Object.entries(p.prefs).filter(([, channels]) => channels && typeof channels === "object"),
-    );
-    quiet.value = p.quiet_hours ?? {};
-  } catch {
-    // Never show (or save) guessed defaults over the user's real choices.
-    prefsError.value = true;
-  } finally {
-    prefsLoading.value = false;
-  }
-}
-
-async function togglePref(kind: string, enabled: boolean) {
-  const previous = prefs.value;
-  prefs.value = { ...previous, [kind]: { ...previous[kind], [CHANNEL]: enabled } };
-  try {
-    await notificationService.updatePreferences({ prefs: prefs.value });
-  } catch (e) {
-    prefs.value = previous;
-    toasts.error(e);
-  }
-}
-
-async function saveQuietHours() {
-  const { start, end } = quiet.value;
-  if (!start !== !end) return; // Half a window: wait for the other end.
-  if (start && start === end) {
-    toasts.push({ text: t("settings.quietSameTime"), icon: "error" });
-    return;
-  }
-  try {
-    await notificationService.updatePreferences({
-      quiet_hours: start
-        ? { start, end, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }
-        : {},
-    });
-  } catch (e) {
-    toasts.error(e);
-  }
-}
-
-function clearQuietHours() {
-  quiet.value = {};
-  void saveQuietHours();
-}
+// --- Notification preferences: components/notifications/NotificationPreferences.vue ---
 
 // --- Active sessions ---
 const sessions = ref<UserSession[]>([]);
@@ -146,7 +75,6 @@ async function revoke(id: string) {
 }
 
 onMounted(() => {
-  loadPrefs();
   loadSessions();
 });
 </script>
@@ -192,42 +120,13 @@ onMounted(() => {
         </div>
       </section>
 
+      <!-- Security: password, email, linked accounts, phone -->
+      <SecuritySettings />
+
       <!-- Notification preferences -->
-      <section class="card mb-4 p-4">
+      <section id="notifications" class="card mb-4 scroll-mt-20 p-4">
         <h2 class="mb-3 font-semibold">{{ t("settings.notifications") }}</h2>
-        <PushSettings />
-        <p v-if="prefsLoading" class="text-sm text-gray-500 dark:text-gray-400">{{ t("states.loading") }}</p>
-        <p v-else-if="prefsError" class="flex items-center justify-between gap-2 text-sm text-gray-500 dark:text-gray-400">
-          {{ t("settings.prefsUnavailable") }}
-          <button class="btn-ghost text-sm" @click="loadPrefs">{{ t("states.retry") }}</button>
-        </p>
-        <div v-else class="divide-y divide-gray-100 dark:divide-gray-800">
-          <label v-for="k in NOTIF_KINDS" :key="k" class="flex cursor-pointer items-center justify-between py-2.5">
-            <span class="text-sm">{{ t(`settings.notif.${k.replace(".", "_")}`) }}</span>
-            <input
-              type="checkbox"
-              class="h-5 w-5 rounded accent-brand-600"
-              :checked="isEnabled(k)"
-              @change="togglePref(k, ($event.target as HTMLInputElement).checked)"
-            />
-          </label>
-          <div class="pt-3">
-            <p class="mb-2 text-sm font-medium">{{ t("settings.quietHours") }}</p>
-            <div class="flex items-center gap-3 text-sm">
-              <label class="flex items-center gap-1.5">
-                <span class="text-gray-500 dark:text-gray-400">{{ t("settings.quietFrom") }}</span>
-                <input v-model="quiet.start" type="time" class="input w-auto" @change="saveQuietHours" />
-              </label>
-              <label class="flex items-center gap-1.5">
-                <span class="text-gray-500 dark:text-gray-400">{{ t("settings.quietTo") }}</span>
-                <input v-model="quiet.end" type="time" class="input w-auto" @change="saveQuietHours" />
-              </label>
-              <button v-if="quiet.start || quiet.end" class="btn-ghost text-sm" @click="clearQuietHours">
-                {{ t("settings.quietClear") }}
-              </button>
-            </div>
-          </div>
-        </div>
+        <NotificationPreferences />
       </section>
 
       <!-- Active sessions -->

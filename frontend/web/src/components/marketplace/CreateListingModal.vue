@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { X } from "lucide-vue-next";
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { errorMessage } from "@/lib/errors";
@@ -8,6 +8,8 @@ import { useEscapeKey } from "@/lib/useEscapeKey";
 import { useFocusTrap } from "@/lib/useFocusTrap";
 import { type CreateListingPayload, marketplaceService } from "@/services/marketplace";
 import type { Listing, ListingCategory } from "@/types";
+
+import { CURRENCIES, PRICE_TYPES, type PriceType, pricingError } from "./money";
 
 const props = defineProps<{ categories: ListingCategory[] }>();
 const emit = defineEmits<{ close: []; created: [listing: Listing] }>();
@@ -23,7 +25,9 @@ const CONDITIONS = ["new", "like_new", "good", "fair"];
 const form = ref({
   title: "",
   category_id: props.categories[0]?.id ?? "",
+  price_type: "fixed" as PriceType,
   price: "" as string,
+  sale_price: "" as string,
   currency: "EGP",
   condition: "good",
   location: "",
@@ -32,11 +36,17 @@ const form = ref({
 const submitting = ref(false);
 const errorMsg = ref("");
 
+const priceProblem = computed(() =>
+  pricingError({
+    price_type: form.value.price_type,
+    price: String(form.value.price ?? ""),
+    sale_price: String(form.value.sale_price ?? ""),
+    currency: form.value.currency,
+  }),
+);
 const valid = () =>
-  form.value.title.trim().length > 0 &&
-  !!form.value.category_id &&
-  form.value.price !== "" &&
-  Number(form.value.price) >= 0;
+  form.value.title.trim().length > 0 && !!form.value.category_id && !priceProblem.value;
+const amountOrNull = (v: string | number) => (String(v ?? "").trim() === "" ? null : String(v));
 
 async function submit() {
   if (submitting.value || !valid()) return;
@@ -46,15 +56,17 @@ async function submit() {
     category_id: form.value.category_id,
     title: form.value.title.trim(),
     description: form.value.description.trim(),
-    price: Number(form.value.price),
-    currency: form.value.currency.trim().toUpperCase() || "EGP",
+    price_type: form.value.price_type,
+    price: form.value.price_type === "free" ? null : amountOrNull(form.value.price),
+    sale_price: form.value.price_type === "free" ? null : amountOrNull(form.value.sale_price),
+    currency: form.value.currency,
     condition: form.value.condition,
     location: form.value.location.trim(),
     media_ids: [],
   };
   try {
     const created = await marketplaceService.create(payload);
-    // New listings start as draft — publish so they go live (auto-approve).
+    // New listings start as draft; publishing makes them live (or sends them to review).
     const live = await marketplaceService.publish(created.id);
     emit("created", live);
   } catch (e) {
@@ -104,16 +116,48 @@ async function submit() {
           </div>
         </div>
 
-        <div class="grid grid-cols-3 gap-3">
-          <div class="col-span-2">
-            <label for="listing-price" class="mb-1 block text-sm font-medium">{{ t("market.price") }}</label>
-            <input id="listing-price" v-model="form.price" type="number" min="0" step="any" class="input" required />
+        <fieldset>
+          <legend class="mb-1 block text-sm font-medium">{{ t("market.priceType") }}</legend>
+          <div class="flex gap-1 rounded-xl bg-gray-100 p-1 text-sm dark:bg-gray-800">
+            <label
+              v-for="p in PRICE_TYPES"
+              :key="p"
+              class="flex-1 cursor-pointer rounded-lg py-1.5 text-center font-medium transition has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-brand-400"
+              :class="form.price_type === p ? 'bg-white text-brand-600 shadow-sm dark:bg-gray-900 dark:text-brand-300' : 'text-gray-500 dark:text-gray-400'"
+            >
+              <input v-model="form.price_type" type="radio" name="price-type" :value="p" class="sr-only" />
+              {{ t(`market.priceTypes.${p}`) }}
+            </label>
+          </div>
+        </fieldset>
+
+        <div v-if="form.price_type !== 'free'" class="grid grid-cols-3 gap-3">
+          <div>
+            <label for="listing-price" class="mb-1 block text-sm font-medium">
+              {{ t("market.price") }}
+              <span v-if="form.price_type === 'negotiable'" class="text-xs text-gray-500 dark:text-gray-400">({{ t("market.optional") }})</span>
+            </label>
+            <input id="listing-price" v-model="form.price" type="number" min="0" step="any" inputmode="decimal" dir="ltr" class="input" :required="form.price_type === 'fixed'" />
+          </div>
+          <div>
+            <label for="listing-sale" class="mb-1 block text-sm font-medium">
+              {{ t("market.salePrice") }} <span class="text-xs text-gray-500 dark:text-gray-400">({{ t("market.optional") }})</span>
+            </label>
+            <input id="listing-sale" v-model="form.sale_price" type="number" min="0" step="any" inputmode="decimal" dir="ltr" class="input" />
           </div>
           <div>
             <label for="listing-currency" class="mb-1 block text-sm font-medium">{{ t("market.currency") }}</label>
-            <input id="listing-currency" v-model="form.currency" maxlength="3" class="input uppercase" />
+            <select id="listing-currency" v-model="form.currency" class="input">
+              <option v-for="c in CURRENCIES" :key="c" :value="c">{{ c }}</option>
+            </select>
           </div>
         </div>
+        <p v-if="priceProblem && (form.price !== '' || form.sale_price !== '')" class="text-xs text-red-600 dark:text-red-400" role="alert">
+          {{ t(`market.priceErrors.${priceProblem}`) }}
+        </p>
+        <p v-else-if="form.price_type === 'negotiable' && form.price === ''" class="text-xs text-gray-500 dark:text-gray-400">
+          {{ t("market.offerHint") }}
+        </p>
 
         <div>
           <label for="listing-location" class="mb-1 block text-sm font-medium">

@@ -7,6 +7,18 @@ import { API, apiAs, pageAs, sharedAccounts, unique } from "./helpers";
 const promote = (email: string) =>
   execSync(`docker exec tara-identity-1 python manage.py create_admin ${email}`, { stdio: "pipe" });
 
+// The campaign test grants Bob `ad_reviewer`; take it back even when a test
+// failed half way, so the next test (and the next run) starts without it.
+async function revokeReviewer() {
+  const { b, c } = await sharedAccounts();
+  promote(c.email);
+  const admin = await apiAs(c);
+  await admin.delete(`${API}/admin/roles/`, { data: { account_id: b.id, role: "ad_reviewer" } });
+  await admin.dispose();
+}
+test.beforeEach(revokeReviewer);
+test.afterEach(revokeReviewer);
+
 test("campaign to feed: review, serve token, stats, and forged events are refused", async ({ browser }) => {
   const { a, b, c } = await sharedAccounts();
   const tag = unique();

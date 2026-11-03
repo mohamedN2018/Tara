@@ -3,12 +3,14 @@ import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 
+import GoogleSignInButton from "@/components/auth/GoogleSignInButton.vue";
 import AuthLayout from "@/components/brand/AuthLayout.vue";
 import { errorMessage } from "@/lib/errors";
+import { securityErrorKey } from "@/lib/securityErrors";
 import { safeRedirect } from "@/lib/redirect";
 import { useAuthStore } from "@/stores/auth";
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const auth = useAuthStore();
 const router = useRouter();
 const route = useRoute();
@@ -30,6 +32,25 @@ async function submit() {
       authentication_failed: "auth.invalidCredentials",
       permission_denied: "auth.accountNotActive",
     });
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function googleSignIn(credential: string) {
+  if (loading.value) return;
+  loading.value = true;
+  error.value = "";
+  try {
+    await auth.loginWithGoogle(credential, locale.value);
+    router.push(safeRedirect(route.query.redirect));
+  } catch (e) {
+    error.value = t(
+      securityErrorKey(e, {
+        authentication_failed: "accountSecurity.google.failed",
+        permission_denied: "auth.accountNotActive",
+      }),
+    );
   } finally {
     loading.value = false;
   }
@@ -78,6 +99,8 @@ async function retrySession() {
           {{ loading ? t("auth.loggingIn") : t("auth.loginCta") }}
         </button>
       </form>
+
+      <GoogleSignInButton text="signin_with" divider @credential="googleSignIn" />
 
       <p class="mt-3 text-center text-sm">
         <RouterLink to="/forgot-password" class="font-medium text-brand-600 dark:text-brand-300">

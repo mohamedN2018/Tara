@@ -28,7 +28,7 @@ test("two users chat live, in order, with read receipts", async ({ browser }) =>
 
   await send(alice, `first ${tag}`);
   await expect(bubbles(bob).last()).toHaveText(`first ${tag}`);
-  await expect(alice.getByText("تمت القراءة")).toBeVisible();
+  await expect(alice.locator('[data-testid="message-status"][data-status="read"]').last()).toBeVisible();
 
   await send(bob, `second ${tag}`);
   await expect(bubbles(alice).last()).toHaveText(`second ${tag}`);

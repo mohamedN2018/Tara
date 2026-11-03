@@ -21,6 +21,11 @@ def _isolated_settings(settings):
     settings.CELERY_TASK_ALWAYS_EAGER = True
     settings.CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
     settings.EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+    # Every LocMemCache shares one process-wide store: without this, throttle
+    # history and login lockouts would leak from one test into the next.
+    from django.core.cache import cache
+
+    cache.clear()
     return settings
 
 

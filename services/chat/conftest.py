@@ -60,3 +60,67 @@ def client_for():
         return c
 
     return _make
+
+
+class FakeMedia:
+    """Stands in for media's internal API: only registered uploads exist."""
+
+    def __init__(self) -> None:
+        import uuid
+
+        self._uuid = uuid
+        self.assets: dict[str, dict] = {}
+        self.down = False
+
+    def add(
+        self,
+        owner_id: str,
+        kind: str = "image",
+        *,
+        status: str = "ready",
+        visibility: str = "private",
+        size: int = 1000,
+        mime: str = "",
+    ) -> str:
+        media_id = str(self._uuid.uuid4())
+        self.assets[media_id] = {
+            "id": media_id,
+            "owner_id": str(owner_id),
+            "kind": kind,
+            "status": status,
+            "mime": mime or {"image": "image/jpeg", "video": "video/mp4"}.get(kind, "audio/ogg"),
+            "bytes": size,
+            "visibility": visibility,
+        }
+        return media_id
+
+    def lookup(self, media_ids):
+        from chat.media_client import MediaInfo
+
+        if self.down:
+            from chat.media_client import _unavailable
+
+            raise _unavailable()
+        return {m: MediaInfo(**self.assets[m]) for m in map(str, media_ids) if m in self.assets}
+
+    def signed(self, media_id):
+        from chat.media_client import MediaNotFound, _unavailable
+
+        if self.down:
+            raise _unavailable()
+        asset = self.assets.get(str(media_id))
+        if asset is None:
+            raise MediaNotFound(media_id)
+        return {
+            **asset,
+            "url": f"https://storage.test/{media_id}?signed=1",
+            "variants": [{"kind": "thumb", "url": f"https://storage.test/{media_id}/thumb"}],
+        }
+
+
+@pytest.fixture(autouse=True)
+def media(monkeypatch):
+    fake = FakeMedia()
+    monkeypatch.setattr("chat.media_client.lookup", fake.lookup)
+    monkeypatch.setattr("chat.media_client.signed", fake.signed)
+    return fake

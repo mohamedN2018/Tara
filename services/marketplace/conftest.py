@@ -31,6 +31,9 @@ def _isolated_settings(settings):
     settings.CELERY_TASK_ALWAYS_EAGER = True
     settings.MARKETPLACE_AUTO_APPROVE = True
     settings.CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+    # View counters use the real test Redis under a prefix of their own per test,
+    # so parallel suites sharing the database never see each other's keys.
+    settings.MARKETPLACE_VIEW_KEY_PREFIX = f"mkt:test:{uuid.uuid4().hex}:"
     return settings
 
 

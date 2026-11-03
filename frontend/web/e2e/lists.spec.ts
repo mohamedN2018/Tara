@@ -17,9 +17,9 @@ test("Seen survives a reload, and the inbox follows the latest message", async (
 
   const page = await pageAs(browser, a);
   await page.goto(`/messages/${withBob}`);
-  await expect(page.getByText("تمت القراءة")).toBeVisible();
+  await expect(page.locator('[data-testid="message-status"][data-status="read"]').last()).toBeVisible();
   await page.reload();
-  await expect(page.getByText("تمت القراءة")).toBeVisible();
+  await expect(page.locator('[data-testid="message-status"][data-status="read"]').last()).toBeVisible();
 
   const rows = page.locator("ul li button");
   await expect(rows.first()).toContainText(c.name);

@@ -7,6 +7,8 @@ import LeftSidebar from "@/components/layout/LeftSidebar.vue";
 import MobileBottomNavigation from "@/components/layout/MobileBottomNavigation.vue";
 import RightSidebar from "@/components/layout/RightSidebar.vue";
 import { useFocusTrap } from "@/lib/useFocusTrap";
+import { useAuthStore } from "@/stores/auth";
+import { useChatUnreadStore } from "@/stores/chatUnread";
 import { useNotificationStore } from "@/stores/notifications";
 import { usePresenceStore } from "@/stores/presence";
 import { useUiStore } from "@/stores/ui";
@@ -20,11 +22,14 @@ const drawer = ref<HTMLElement | null>(null);
 useFocusTrap(drawer);
 const notifications = useNotificationStore();
 const presence = usePresenceStore();
+const auth = useAuthStore();
+const chatUnread = useChatUnreadStore();
 
 onMounted(() => {
   notifications.bind();
   notifications.refresh();
   presence.bind();
+  chatUnread.bind(() => auth.account?.id ?? "");
 });
 </script>
 

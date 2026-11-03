@@ -2,8 +2,10 @@ import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 
 import { api, apiError, isAuthFailure } from "@/lib/api";
+import { releasePush, resumePush } from "@/lib/pwa";
 import { jwtClaims, tokenStore } from "@/lib/tokens";
 import { realtime } from "@/lib/ws";
+import { identityService } from "@/services/identity";
 import { useDirectoryStore } from "@/stores/directory";
 import type { Account, Profile, Tokens } from "@/types";
 
@@ -49,9 +51,21 @@ export const useAuthStore = defineStore("auth", () => {
     realtime.connect();
   }
 
+  /** Sign in (or sign up) with a Google ID token. Returns true for a new account. */
+  async function loginWithGoogle(credential: string, language: string): Promise<boolean> {
+    const result = await identityService.googleSignIn(credential, language);
+    applyTokens(result);
+    await loadAccount();
+    await loadProfile();
+    realtime.connect();
+    return result.created;
+  }
+
   async function loadAccount() {
     const { data } = await api.get<{ data: Account }>("/me/");
     account.value = data.data;
+    // Login and boot: drop another account's push subscription, re-bind ours.
+    void resumePush(data.data.id);
   }
 
   /** Register a new account. Returns it in "pending" state — the caller should
@@ -99,9 +113,13 @@ export const useAuthStore = defineStore("auth", () => {
         account.value = null;
         // Only a real 401 ends the session. Network errors and 5xx keep the
         // tokens so the next attempt can still restore it.
-        if (isAuthFailure(e)) tokenStore.clear();
-        else sessionUnavailable.value = true;
+        if (isAuthFailure(e)) {
+          tokenStore.clear();
+          void releasePush(); // the session expired while the app was closed
+        } else sessionUnavailable.value = true;
       }
+    } else {
+      void releasePush(); // signed out elsewhere: no subscription may outlive the session
     }
     ready.value = true;
   }
@@ -112,6 +130,9 @@ export const useAuthStore = defineStore("auth", () => {
    * `remote: false` skips revoking a session the server already rejected.
    */
   async function logout({ remote = true }: { remote?: boolean } = {}) {
+    // Every logout path: unsubscribe this browser locally first (works without a
+    // session), so the next account here never gets this account's pushes.
+    await releasePush({ remote }).catch(() => {});
     if (remote) {
       try {
         await api.post("/auth/logout/", { refresh_token: tokenStore.refresh });
@@ -139,6 +160,7 @@ export const useAuthStore = defineStore("auth", () => {
     roles,
     isStaff,
     login,
+    loginWithGoogle,
     register,
     loadProfile,
     bootstrap,

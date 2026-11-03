@@ -13,9 +13,19 @@ def on_post_reported(e: EventEnvelope) -> None:
     services.ingest_report_event("post.reported", e.payload)
 
 
+@on_event("comment.reported")
+def on_comment_reported(e: EventEnvelope) -> None:
+    services.ingest_report_event("comment.reported", e.payload)
+
+
 @on_event("listing.reported")
 def on_listing_reported(e: EventEnvelope) -> None:
     services.ingest_report_event("listing.reported", e.payload)
+
+
+@on_event("marketplace.review.reported")
+def on_listing_review_reported(e: EventEnvelope) -> None:
+    services.ingest_report_event("marketplace.review.reported", e.payload)
 
 
 @on_event("message.reported")

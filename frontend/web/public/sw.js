@@ -87,6 +87,9 @@ self.addEventListener("fetch", (event) => {
 });
 
 // ---- Web Push ----------------------------------------------------------------
+//
+// The payload (services/notification/notifications/push.py) carries ids, a
+// count, the deep link and, for messages, the text unless previews are off.
 
 const TEXT = {
   ar: {
@@ -102,6 +105,9 @@ const TEXT = {
     follow: "لديك متابع جديد",
     message: "لديك رسالة جديدة",
     "listing.status": "تغيّرت حالة إعلانك",
+    "listing.inquiry": "لديك استفسار جديد عن إعلانك",
+    "page.follow": "لصفحتك متابع جديد",
+    "ad.review": "تمت مراجعة إعلانك",
   },
   en: {
     title: "Tara",
@@ -116,6 +122,32 @@ const TEXT = {
     follow: "You have a new follower",
     message: "You have a new message",
     "listing.status": "Your listing's status changed",
+    "listing.inquiry": "Someone asked about your listing",
+    "page.follow": "Your page has a new follower",
+    "ad.review": "Your ad was reviewed",
+  },
+};
+
+// Arabic counted nouns: 2 is dual, 3-10 plural, 11+ singular accusative.
+function arCount(n, dual, plural, single) {
+  if (n === 2) return dual;
+  const lastTwo = n % 100;
+  return lastTwo >= 3 && lastTwo <= 10 ? `${n} ${plural}` : `${n} ${single}`;
+}
+
+// Grouped rows: "{n}" is the number of people (Arabic: "{people}" / "{followers}").
+const GROUPED = {
+  ar: {
+    "post.reaction": "تفاعل {people} مع منشورك",
+    "post.comment": "علّق {people} على منشورك",
+    "post.share": "شارك {people} منشورك",
+    follow: "لديك {followers}",
+  },
+  en: {
+    "post.reaction": "{n} people reacted to your post",
+    "post.comment": "{n} people commented on your post",
+    "post.share": "{n} people shared your post",
+    follow: "You have {n} new followers",
   },
 };
 
@@ -130,6 +162,31 @@ async function language() {
   return self.navigator.language?.startsWith("ar") ? "ar" : "en";
 }
 
+function bodyFor(data, lang) {
+  const text = TEXT[lang];
+  if (data.kind === "message" && data.body) return data.body;
+  const grouped = GROUPED[lang][data.kind];
+  const n = Number(data.count);
+  if (grouped && n > 1) {
+    return grouped
+      .replace("{n}", String(n))
+      .replace("{people}", arCount(n, "شخصان", "أشخاص", "شخصًا"))
+      .replace("{followers}", arCount(n, "متابعان جديدان", "متابعين جدد", "متابعًا جديدًا"));
+  }
+  return text[data.kind] ?? text.fallback;
+}
+
+// A same-origin path with its query and hash ("/posts/1?comment=2"), or the list.
+function safePath(url) {
+  try {
+    const target = new URL(url ?? "/notifications", self.location.origin);
+    if (target.origin !== self.location.origin) return "/notifications";
+    return target.pathname + target.search + target.hash;
+  } catch {
+    return "/notifications";
+  }
+}
+
 self.addEventListener("push", (event) => {
   let data = {};
   try {
@@ -139,14 +196,24 @@ self.addEventListener("push", (event) => {
   }
   event.waitUntil(
     (async () => {
-      const text = TEXT[await language()];
-      const body = data.kind === "message" && data.body ? data.body : (text[data.kind] ?? text.fallback);
-      await self.registration.showNotification(text.title, {
-        body,
+      // A focused Tara window already shows it live (list, badge, toast): tell
+      // that window instead of raising an OS notification on top of it.
+      const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      const focused = windows.find((client) => client.focused && client.visibilityState === "visible");
+      if (focused) {
+        focused.postMessage({ type: "tara.push", kind: data.kind, notification_id: data.notification_id });
+        return;
+      }
+      const lang = await language();
+      await self.registration.showNotification(TEXT[lang].title, {
+        body: bodyFor(data, lang),
         icon: "/icons/icon-192.png",
         badge: "/icons/badge-96.png",
         tag: data.tag,
-        data: { url: data.url ?? "/notifications" },
+        renotify: Boolean(data.tag) && data.kind === "message",
+        lang,
+        dir: lang === "ar" ? "rtl" : "ltr",
+        data: { url: safePath(data.url) },
       });
     })(),
   );
@@ -154,9 +221,8 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const target = new URL(event.notification.data?.url ?? "/notifications", self.location.origin);
-  // Only ever open this app.
-  const path = target.origin === self.location.origin ? target.pathname : "/notifications";
+  // Only ever open this app, and keep "?comment=" and "#..." so the link lands exactly.
+  const path = safePath(event.notification.data?.url);
   event.waitUntil(
     (async () => {
       const open = await self.clients.matchAll({ type: "window", includeUncontrolled: true });

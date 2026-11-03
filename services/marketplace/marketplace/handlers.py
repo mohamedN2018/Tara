@@ -14,6 +14,8 @@ def on_moderation_actioned(event: EventEnvelope) -> None:
     p = event.payload
     if p.get("target_type") == "listing" and p.get("target_id"):
         services.apply_moderation(p["target_id"], p.get("action", ""))
+    elif p.get("target_type") == "listing_review" and p.get("target_id"):
+        services.apply_review_moderation(p["target_id"], p.get("action", ""))
 
 
 @on_event("user.blocked")

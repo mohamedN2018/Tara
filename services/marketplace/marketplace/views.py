@@ -1,8 +1,9 @@
-"""Marketplace HTTP API: listings, search, saves, report, contact, categories."""
+"""Marketplace HTTP API: listings, search and facets, saves, compare, inquiries,
+views, sellers and reviews, report, categories."""
 
 from __future__ import annotations
 
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
@@ -13,16 +14,52 @@ from tara_common.pagination import CursorPagination
 from tara_common.responses import data_response
 from tara_resilience.idempotency import idempotent
 
-from . import services
+from . import pagination, services, view_counter
 from .models import IdempotencyRecord, MarketplaceCategory
 from .serializers import (
     CategorySerializer,
+    CompareQuerySerializer,
+    FacetsSerializer,
+    InquiryResultSerializer,
+    InquirySerializer,
     ListingCreateSerializer,
+    ListingDetailSerializer,
+    ListingFilterSerializer,
     ListingSerializer,
     ListingUpdateSerializer,
     ReportSerializer,
+    ReviewCreateSerializer,
+    SellerReviewSerializer,
+    SellerSummarySerializer,
     TransitionSerializer,
 )
+
+SORTS = {
+    "newest": pagination.Sort("newest", "created_at", True, "datetime"),
+    # What the buyer pays (sale price first); listings with no price last either way.
+    "price_asc": pagination.Sort("price_asc", "effective_price", False, "decimal"),
+    "price_desc": pagination.Sort("price_desc", "effective_price", True, "decimal"),
+}
+SAVED_SORT = pagination.Sort("saved", "saved_at", True, "datetime")
+REVIEWS_SORT = pagination.Sort("reviews", "created_at", True, "datetime")
+
+_FILTER_PARAMS = [
+    OpenApiParameter(name, str, required=False)
+    for name in (
+        "q",
+        "category",
+        "condition",
+        "price_type",
+        "availability",
+        "location",
+        "currency",
+        "min_price",
+        "max_price",
+        "sort",
+        "cursor",
+        "limit",
+    )
+]
 
 
 def _me(request: Request) -> str:
@@ -33,6 +70,15 @@ def _paginate(request, queryset, serializer_cls):
     paginator = CursorPagination()
     page = paginator.paginate_queryset(queryset, request)
     return paginator.get_paginated_response(serializer_cls(page, many=True).data)
+
+
+def _listings(rows) -> list:
+    return ListingSerializer(rows, many=True).data
+
+
+def _detail(request: Request, listing) -> dict:
+    viewer = services.viewer_state(_me(request), listing)
+    return ListingDetailSerializer(listing, context={"viewer": viewer}).data
 
 
 class CategoriesView(APIView):
@@ -46,18 +92,15 @@ class CategoriesView(APIView):
 class ListingsView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(responses={200: ListingSerializer(many=True)}, tags=["marketplace"])
+    @extend_schema(
+        parameters=_FILTER_PARAMS,
+        responses={200: ListingSerializer(many=True)},
+        tags=["marketplace"],
+    )
     def get(self, request: Request) -> Response:
-        qp = request.query_params
-        filters = {
-            "category": qp.get("category"),
-            "condition": qp.get("condition"),
-            "location": qp.get("location"),
-            "min_price": qp.get("min_price"),
-            "max_price": qp.get("max_price"),
-            "q": qp.get("q"),
-        }
-        return _paginate(request, services.search(_me(request), filters), ListingSerializer)
+        filters = ListingFilterSerializer.from_query(request.query_params)
+        qs = services.search(_me(request), filters)
+        return pagination.paginate(request, qs, SORTS[filters["sort"]], _listings)
 
     @extend_schema(
         request=ListingCreateSerializer, responses={201: ListingSerializer}, tags=["marketplace"]
@@ -74,7 +117,9 @@ class ListingsView(APIView):
                     "category_id": str(v["category_id"]),
                     "title": v["title"],
                     "description": v["description"],
-                    "price": v["price"],
+                    "price_type": v.get("price_type"),
+                    "price": v.get("price"),
+                    "sale_price": v.get("sale_price"),
                     "currency": v["currency"],
                     "condition": v["condition"],
                     "location": v["location"],
@@ -84,6 +129,32 @@ class ListingsView(APIView):
             return data_response(ListingSerializer(listing).data, status=status.HTTP_201_CREATED)
 
         return idempotent(IdempotencyRecord, request, handler)
+
+
+class FacetsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        parameters=_FILTER_PARAMS, responses={200: FacetsSerializer}, tags=["marketplace"]
+    )
+    def get(self, request: Request) -> Response:
+        filters = ListingFilterSerializer.from_query(request.query_params)
+        return data_response(services.facets(_me(request), filters))
+
+
+class CompareView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        parameters=[OpenApiParameter("ids", str, required=True)],
+        responses={200: ListingSerializer(many=True)},
+        tags=["marketplace"],
+    )
+    def get(self, request: Request) -> Response:
+        query = CompareQuerySerializer(data={"ids": request.query_params.get("ids", "")})
+        query.is_valid(raise_exception=True)
+        rows = services.compare(_me(request), query.validated_data["ids"])
+        return data_response(_listings(rows))
 
 
 class MyListingsView(APIView):
@@ -97,9 +168,9 @@ class MyListingsView(APIView):
 class ListingDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(responses={200: ListingSerializer}, tags=["marketplace"])
+    @extend_schema(responses={200: ListingDetailSerializer}, tags=["marketplace"])
     def get(self, request: Request, listing_id: str) -> Response:
-        return data_response(ListingSerializer(services.get_listing(_me(request), listing_id)).data)
+        return data_response(_detail(request, services.get_listing(_me(request), listing_id)))
 
     @extend_schema(
         request=ListingUpdateSerializer, responses={200: ListingSerializer}, tags=["marketplace"]
@@ -107,8 +178,22 @@ class ListingDetailView(APIView):
     def patch(self, request: Request, listing_id: str) -> Response:
         serializer = ListingUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        listing = services.update_listing(_me(request), listing_id, serializer.validated_data)
-        return data_response(ListingSerializer(listing).data)
+        services.update_listing(_me(request), listing_id, serializer.validated_data)
+        return data_response(_detail(request, services.get_listing(_me(request), listing_id)))
+
+
+class ListingViewBeacon(APIView):
+    """The detail page reports one view; counted per viewer per cooldown window."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=None, responses={202: None}, tags=["marketplace"])
+    def post(self, request: Request, listing_id: str) -> Response:
+        listing = services.get_listing(_me(request), listing_id)
+        counted = False
+        if str(listing.seller_id) != str(_me(request)):
+            counted = view_counter.record_view(str(listing.id), _me(request))
+        return data_response({"counted": counted}, status=status.HTTP_202_ACCEPTED)
 
 
 class PublishView(APIView):
@@ -153,7 +238,8 @@ class SavedListView(APIView):
 
     @extend_schema(responses={200: ListingSerializer(many=True)}, tags=["marketplace"])
     def get(self, request: Request) -> Response:
-        return _paginate(request, services.list_saved(_me(request)), ListingSerializer)
+        qs = services.list_saved(_me(request))
+        return pagination.paginate(request, qs, SAVED_SORT, _listings)
 
 
 class ReportView(APIView):
@@ -168,12 +254,88 @@ class ReportView(APIView):
 
 
 class ContactView(APIView):
+    """Legacy: chat opens a listing thread from the event. New clients use inquiries/."""
+
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(responses={202: None}, tags=["marketplace"])
+    @extend_schema(request=InquirySerializer, responses={202: None}, tags=["marketplace"])
     def post(self, request: Request, listing_id: str) -> Response:
-        services.contact_seller(_me(request), listing_id)
+        serializer = InquirySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        services.contact_seller(_me(request), listing_id, serializer.validated_data["message"])
         return data_response(
             {"detail": "Conversation requested; it will appear in your chats."},
             status=status.HTTP_202_ACCEPTED,
         )
+
+
+class InquiryView(APIView):
+    """Record that the buyer is messaging the seller; the client then opens the DM
+    through chat's own API (``POST /conversations/``)."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        request=InquirySerializer, responses={201: InquiryResultSerializer}, tags=["marketplace"]
+    )
+    def post(self, request: Request, listing_id: str) -> Response:
+        serializer = InquirySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        inquiry = services.record_inquiry(
+            _me(request), listing_id, serializer.validated_data["message"]
+        )
+        return data_response(
+            {
+                "inquiry_id": str(inquiry.id),
+                "listing_id": str(inquiry.listing_id),
+                "seller_id": str(inquiry.seller_id),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ListingReviewsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        request=ReviewCreateSerializer,
+        responses={201: SellerReviewSerializer},
+        tags=["marketplace"],
+    )
+    def post(self, request: Request, listing_id: str) -> Response:
+        serializer = ReviewCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        v = serializer.validated_data
+        review = services.create_review(_me(request), listing_id, v["rating"], v["body"])
+        return data_response(SellerReviewSerializer(review).data, status=status.HTTP_201_CREATED)
+
+
+class SellerView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: SellerSummarySerializer}, tags=["marketplace"])
+    def get(self, request: Request, seller_id: str) -> Response:
+        summary = services.seller_summary(_me(request), str(seller_id))
+        return data_response(SellerSummarySerializer(summary).data)
+
+
+class SellerReviewsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: SellerReviewSerializer(many=True)}, tags=["marketplace"])
+    def get(self, request: Request, seller_id: str) -> Response:
+        qs = services.seller_reviews(_me(request), str(seller_id))
+        return pagination.paginate(
+            request, qs, REVIEWS_SORT, lambda rows: SellerReviewSerializer(rows, many=True).data
+        )
+
+
+class ReviewReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=ReportSerializer, responses={202: None}, tags=["marketplace"])
+    def post(self, request: Request, review_id: str) -> Response:
+        serializer = ReportSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        services.report_review(_me(request), str(review_id), serializer.validated_data["reason"])
+        return data_response({"detail": "reported"}, status=status.HTTP_202_ACCEPTED)

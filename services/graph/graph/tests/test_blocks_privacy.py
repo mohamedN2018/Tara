@@ -12,6 +12,7 @@ from rest_framework.test import APIClient
 
 from graph import services
 from graph.models import BlockRelation, FollowRelation, Friendship, OutboxEvent
+from tara_common.exceptions import TaraAPIError
 
 pytestmark = pytest.mark.django_db
 
@@ -423,3 +424,28 @@ def test_fanout_audience_excludes_accounts_blocked_with_author():
     assert data["followers"] == [follower]
     assert data["friends"] == [friend]
     assert data["recipients"] == sorted([follower, friend])
+
+
+# ---- roadmap 2.18: a withdrawn request resolves the recipient's notification ----
+
+
+def test_requester_cancel_emits_withdrawn_once():
+    a, b = _acct(), _acct()
+    friendship = services.send_friend_request(a, b)
+    OutboxEvent.objects.all().delete()
+    services.reject_or_cancel_request(a, str(friendship.id))
+    assert [e["payload"] for e in _envelopes("friendship.request.withdrawn")] == [
+        {"from": a, "to": b}
+    ]
+    assert not Friendship.objects.filter(id=friendship.id).exists()
+    with pytest.raises(TaraAPIError):  # already gone: 404, and no second event
+        services.reject_or_cancel_request(a, str(friendship.id))
+    assert len(_envelopes("friendship.request.withdrawn")) == 1
+
+
+def test_recipient_reject_emits_nothing():
+    a, b = _acct(), _acct()
+    friendship = services.send_friend_request(a, b)
+    OutboxEvent.objects.all().delete()
+    services.reject_or_cancel_request(b, str(friendship.id))
+    assert not OutboxEvent.objects.exists()

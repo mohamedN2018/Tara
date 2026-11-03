@@ -56,7 +56,9 @@ def test_member_read_state_survives_reload(client_for):
     data = client_for(me).get(reverse("chat:conversations")).json()["data"][0]
     states = {s["account_id"]: s for s in data["member_states"]}
     assert states[other]["last_read_message_id"] == str(message.id)
-    assert states[me]["last_read_message_id"] is None
+    # Sending reads up to your own message.
+    assert states[me]["last_read_message_id"] == str(message.id)
+    assert states[other]["last_read_seq"] == states[me]["last_read_seq"] == 1
     assert sorted(data["members"]) == sorted([me, other])
 
 
@@ -81,11 +83,11 @@ def test_inbox_queries_do_not_grow_with_conversations(client_for):
     assert len(many) == len(few)
 
 
-def test_message_queries_do_not_grow_with_messages(client_for):
+def test_message_queries_do_not_grow_with_messages(client_for, media):
     me, other = _acct(), _acct()
     conv = services.create_or_get_dm(me, other)
     client = client_for(me)
-    media = [{"media_id": str(uuid.uuid4()), "kind": "image"}]
+    media = [{"media_id": media.add(me), "kind": "image"}]
     services.send_message(me, str(conv.id), attachments=media, message_type="image")
     url = reverse("chat:messages", args=[conv.id])
     with CaptureQueriesContext(connection) as few:
@@ -289,17 +291,17 @@ def test_dm_has_no_member_management(client_for):
     assert resp.status_code == 400
 
 
-def test_voice_message_keeps_duration_and_rejects_absurd_length(client_for):
+def test_voice_message_keeps_duration_and_rejects_absurd_length(client_for, media):
     me, other = _acct(), _acct()
     conv = services.create_or_get_dm(me, other)
     url = reverse("chat:voice-messages", args=[conv.id])
     resp = client_for(me).post(
-        url, {"media_id": str(uuid.uuid4()), "duration_ms": 4200}, format="json"
+        url, {"media_id": media.add(me, "voice"), "duration_ms": 4200}, format="json"
     )
     assert resp.status_code == 201
     assert resp.json()["data"]["type"] == "voice"
     assert resp.json()["data"]["attachments"][0]["duration_ms"] == 4200
     resp = client_for(me).post(
-        url, {"media_id": str(uuid.uuid4()), "duration_ms": 10**9}, format="json"
+        url, {"media_id": media.add(me, "voice"), "duration_ms": 10**9}, format="json"
     )
     assert resp.status_code == 400

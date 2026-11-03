@@ -15,6 +15,8 @@ class IdentityConfig(AppConfig):
         except Exception:  # noqa: S110,BLE001 - observability must never block boot
             pass
 
+        from . import checks  # noqa: F401 - registers identity's deploy checks
+
         # Enforce production-safety on `manage.py check --deploy` (blocks dev
         # secrets / wildcard hosts when DEBUG=False). Every service registers
         # this the same way; see libs/tara_common/tara_common/checks.py.

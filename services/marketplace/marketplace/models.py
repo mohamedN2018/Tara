@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from django.contrib.postgres.indexes import GinIndex
 from django.db import models
+from django.db.models import F, Q
+from django.db.models.functions import Coalesce
 
 from tara_events.envelope import uuid7
 from tara_events.models import AbstractOutboxEvent, AbstractProcessedEvent
 from tara_resilience.idempotency import AbstractIdempotencyRecord
+
+from .money import ALLOWED_CURRENCIES, DEFAULT_CURRENCY
 
 
 class MarketplaceCategory(models.Model):
@@ -61,12 +66,36 @@ class Listing(models.Model):
     )
     title = models.CharField(max_length=160)
     description = models.TextField(blank=True, default="")
-    price = models.DecimalField(max_digits=19, decimal_places=4, default=0)
-    currency = models.CharField(max_length=3, default="USD")
+
+    class PriceType(models.TextChoices):
+        FIXED = "fixed", "Fixed price"
+        NEGOTIABLE = "negotiable", "Negotiable"
+        FREE = "free", "Free"
+
+    # Null means "no price" (negotiable: make an offer); 0 only for free listings.
+    price = models.DecimalField(max_digits=19, decimal_places=4, null=True, blank=True)
+    price_type = models.CharField(max_length=12, choices=PriceType.choices, default=PriceType.FIXED)
+    sale_price = models.DecimalField(max_digits=19, decimal_places=4, null=True, blank=True)
+    # What a buyer pays, kept by Postgres so price sort and range filters run in SQL.
+    effective_price = models.GeneratedField(
+        expression=Coalesce("sale_price", "price"),
+        output_field=models.DecimalField(max_digits=19, decimal_places=4, null=True),
+        db_persist=True,
+    )
+    currency = models.CharField(max_length=3, default=DEFAULT_CURRENCY)
+    # Set by the 4.3 data migration: the old schema stored 0 for both "free" and
+    # "price on request", and free-text currencies; sellers confirm by editing.
+    price_unconfirmed = models.BooleanField(default=False)
+    currency_unconfirmed = models.BooleanField(default=False)
     condition = models.CharField(max_length=10, choices=Condition.choices, default=Condition.GOOD)
     location = models.CharField(max_length=160, blank=True, default="")
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT)
     save_count = models.PositiveIntegerField(default=0)
+    # Flushed from the Redis view buffer by a beat job, never written per hit.
+    view_count = models.PositiveIntegerField(default=0)
+    inquiry_count = models.PositiveIntegerField(default=0)
+    # Normalised title + description; queried with `contains` so the trigram index is used.
+    search_text = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
@@ -76,6 +105,30 @@ class Listing(models.Model):
         indexes = [
             models.Index(fields=["status", "category", "-created_at"], name="listing_browse_idx"),
             models.Index(fields=["seller_id"], name="listing_seller_idx"),
+            models.Index(fields=["status", "created_at", "id"], name="listing_newest_idx"),
+            models.Index(fields=["status", "effective_price", "id"], name="listing_price_idx"),
+            GinIndex(
+                fields=["search_text"], name="listing_search_trgm", opclasses=["gin_trgm_ops"]
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(price__isnull=True) | Q(price__gte=0), name="listing_price_nonneg"
+            ),
+            models.CheckConstraint(
+                condition=Q(sale_price__isnull=True)
+                | Q(price__isnull=False, sale_price__gte=0, sale_price__lt=F("price")),
+                name="listing_sale_below_price",
+            ),
+            models.CheckConstraint(
+                condition=Q(price_type="free", price=0, sale_price__isnull=True)
+                | Q(price_type="fixed", price__gt=0)
+                | (Q(price_type="negotiable") & (Q(price__isnull=True) | Q(price__gt=0))),
+                name="listing_price_type_valid",
+            ),
+            models.CheckConstraint(
+                condition=Q(currency__in=ALLOWED_CURRENCIES), name="listing_currency_allowed"
+            ),
         ]
 
 
@@ -101,6 +154,9 @@ class ListingSave(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["account_id", "listing"], name="listing_save_uniq"),
         ]
+        indexes = [
+            models.Index(fields=["account_id", "-created_at"], name="listing_save_recent_idx"),
+        ]
 
 
 class ListingReport(models.Model):
@@ -112,6 +168,74 @@ class ListingReport(models.Model):
 
     class Meta:
         db_table = "listing_report"
+
+
+class ListingInquiry(models.Model):
+    """A buyer messaged the seller about a listing (one row per buyer per listing).
+
+    The conversation itself lives in chat; this read model is what makes a buyer
+    eligible to review the seller, and later feeds response-time metrics (4.7).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    listing = models.ForeignKey(Listing, on_delete=models.CASCADE, related_name="inquiries")
+    seller_id = models.UUIDField()
+    buyer_id = models.UUIDField()
+    first_message = models.CharField(max_length=1000, blank=True, default="")
+    message_count = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_activity_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "listing_inquiry"
+        constraints = [
+            models.UniqueConstraint(fields=["listing", "buyer_id"], name="listing_inquiry_uniq"),
+        ]
+        indexes = [
+            models.Index(fields=["seller_id", "-last_activity_at"], name="inquiry_seller_idx"),
+        ]
+
+
+class SellerReview(models.Model):
+    class Status(models.TextChoices):
+        PUBLISHED = "published", "Published"
+        REMOVED = "removed", "Removed by moderators"
+
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    listing = models.ForeignKey(Listing, on_delete=models.CASCADE, related_name="reviews")
+    seller_id = models.UUIDField()
+    buyer_id = models.UUIDField()
+    rating = models.PositiveSmallIntegerField()
+    body = models.TextField(max_length=2000, blank=True, default="")
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.PUBLISHED)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "seller_review"
+        constraints = [
+            models.UniqueConstraint(fields=["listing", "buyer_id"], name="review_one_per_listing"),
+            models.CheckConstraint(
+                condition=Q(rating__gte=1, rating__lte=5), name="review_rating_range"
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["seller_id", "status", "-created_at"], name="review_seller_idx"),
+        ]
+
+
+class ReviewReport(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    review = models.ForeignKey(SellerReview, on_delete=models.CASCADE, related_name="reports")
+    reporter_id = models.UUIDField()
+    reason = models.CharField(max_length=200)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "review_report"
+        constraints = [
+            models.UniqueConstraint(fields=["review", "reporter_id"], name="review_report_uniq"),
+        ]
 
 
 class BlockedPair(models.Model):

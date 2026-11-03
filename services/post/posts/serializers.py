@@ -3,7 +3,15 @@ from __future__ import annotations
 from django.utils import timezone
 from rest_framework import serializers
 
-from .models import REACTION_TYPES, Audience, Comment, Post, SavedItem
+from .models import (
+    REACTION_TYPES,
+    Audience,
+    Comment,
+    CommentPolicy,
+    Post,
+    PostReaction,
+    SavedItem,
+)
 
 
 class PollCreateSerializer(serializers.Serializer):
@@ -29,6 +37,9 @@ class PostCreateSerializer(serializers.Serializer):
         choices=[Post.Type.TEXT, Post.Type.IMAGE, Post.Type.VIDEO], default=Post.Type.TEXT
     )
     audience = serializers.ChoiceField(choices=Audience.values, default=Audience.PUBLIC)
+    comment_policy = serializers.ChoiceField(
+        choices=CommentPolicy.values, default=CommentPolicy.EVERYONE
+    )
     # The service caps the count (MAX_MEDIA_PER_POST); this only bounds the payload.
     media_ids = serializers.ListField(
         child=serializers.UUIDField(), required=False, default=list, max_length=50
@@ -70,6 +81,7 @@ class PostSerializer(serializers.ModelSerializer):
     is_saved = serializers.SerializerMethodField()
     poll = serializers.SerializerMethodField()
     shared_post = serializers.SerializerMethodField()
+    reaction_counts = serializers.SerializerMethodField()
 
     class Meta:
         model = Post
@@ -84,8 +96,10 @@ class PostSerializer(serializers.ModelSerializer):
             "link_preview",
             "media_ids",
             "reaction_count",
+            "reaction_counts",
             "comment_count",
             "share_count",
+            "comment_policy",
             "my_reaction",
             "is_saved",
             "poll",
@@ -96,6 +110,11 @@ class PostSerializer(serializers.ModelSerializer):
 
     def get_media_ids(self, obj: Post) -> list[str]:
         return [str(m.media_id) for m in obj.media.all()]
+
+    def get_reaction_counts(self, obj: Post) -> dict[str, int]:
+        """``{type: count}`` for the types this post has, most used first."""
+        counts = [(c.type, c.count) for c in obj.reaction_counts.all() if c.count > 0]
+        return dict(sorted(counts, key=lambda tc: (-tc[1], REACTION_TYPES.index(tc[0]))))
 
     def get_my_reaction(self, obj: Post) -> str | None:
         state = self.context.get("viewer_state")
@@ -142,10 +161,11 @@ class PostBatchSerializer(serializers.Serializer):
 class PostEditSerializer(serializers.Serializer):
     body = serializers.CharField(required=False, allow_blank=True, max_length=20000)
     audience = serializers.ChoiceField(choices=Audience.values, required=False)
+    comment_policy = serializers.ChoiceField(choices=CommentPolicy.values, required=False)
 
     def validate(self, attrs):
-        if "body" not in attrs and "audience" not in attrs:
-            raise serializers.ValidationError("Send body, audience or both.")
+        if not {"body", "audience", "comment_policy"} & set(attrs):
+            raise serializers.ValidationError("Send body, audience or comment_policy.")
         return attrs
 
 
@@ -154,14 +174,68 @@ class ReactionSerializer(serializers.Serializer):
 
 
 class CommentCreateSerializer(serializers.Serializer):
+    """``reply_to_id`` is the comment answered; the server finds the thread root.
+    ``parent_id`` is the older name for the same field."""
+
     body = serializers.CharField(max_length=8000)
+    reply_to_id = serializers.UUIDField(required=False, allow_null=True)
     parent_id = serializers.UUIDField(required=False, allow_null=True)
+
+    def validate(self, attrs):
+        target = attrs.get("reply_to_id") or attrs.get("parent_id")
+        attrs["target"] = str(target) if target else None
+        return attrs
+
+
+class CommentEditSerializer(serializers.Serializer):
+    body = serializers.CharField(max_length=8000)
 
 
 class CommentSerializer(serializers.ModelSerializer):
+    """``parent_id`` is the thread root (null on a root); ``reply_to_id`` is the
+    comment answered. Pass ``context={"my_reactions": {...}}`` for ``my_reaction``."""
+
+    reply_to_author_id = serializers.SerializerMethodField()
+    my_reaction = serializers.SerializerMethodField()
+
     class Meta:
         model = Comment
-        fields = ["id", "post_id", "author_id", "parent_id", "body", "created_at"]
+        fields = [
+            "id",
+            "post_id",
+            "author_id",
+            "parent_id",
+            "reply_to_id",
+            "reply_to_author_id",
+            "body",
+            "reply_count",
+            "reaction_count",
+            "my_reaction",
+            "created_at",
+            "edited_at",
+        ]
+
+    def get_reply_to_author_id(self, obj: Comment) -> str | None:
+        return str(obj.reply_to.author_id) if obj.reply_to_id and obj.reply_to else None
+
+    def get_my_reaction(self, obj: Comment) -> str | None:
+        return (self.context.get("my_reactions") or {}).get(obj.id)
+
+
+class ReactorSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PostReaction
+        fields = ["account_id", "type", "created_at"]
+
+
+class SharerSerializer(serializers.Serializer):
+    """A share, shown as its sharer and the share post they wrote."""
+
+    account_id = serializers.UUIDField(source="author_id")
+    share_post_id = serializers.UUIDField(source="id")
+    body = serializers.CharField()
+    audience = serializers.CharField()
+    created_at = serializers.DateTimeField()
 
 
 class SaveSerializer(serializers.Serializer):

@@ -18,6 +18,14 @@ class Audience(models.TextChoices):
     ONLY_ME = "only_me", "Only me"
 
 
+class CommentPolicy(models.TextChoices):
+    """Who may comment on a post. Enforced by the service, never only by the UI."""
+
+    EVERYONE = "everyone", "Everyone who can see the post"
+    FRIENDS = "friends", "The author's friends"
+    OFF = "off", "Nobody"
+
+
 class Post(models.Model):
     class Type(models.TextChoices):
         TEXT = "text", "Text"
@@ -42,6 +50,9 @@ class Post(models.Model):
     link_preview = models.JSONField(null=True, blank=True)
     moderation_status = models.CharField(
         max_length=10, choices=ModerationStatus.choices, default=ModerationStatus.OK
+    )
+    comment_policy = models.CharField(
+        max_length=8, choices=CommentPolicy.choices, default=CommentPolicy.EVERYONE
     )
     reaction_count = models.PositiveIntegerField(default=0)
     comment_count = models.PositiveIntegerField(default=0)
@@ -123,20 +134,81 @@ class PostReaction(models.Model):
         ]
 
 
+class PostReactionCount(models.Model):
+    """How many reactions of each type a post has, kept with each reaction write."""
+
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="reaction_counts")
+    type = models.CharField(max_length=8)
+    count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "post_reaction_count"
+        constraints = [
+            models.UniqueConstraint(fields=["post", "type"], name="post_reaction_count_uniq"),
+        ]
+
+
 class Comment(models.Model):
+    """Two levels only: ``parent`` is always the thread root (null for a root), and
+    ``reply_to`` is the comment that was answered, which may itself be a reply."""
+
+    class ModerationStatus(models.TextChoices):
+        OK = "ok", "OK"
+        REMOVED = "removed", "Removed"
+
     id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
     post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="comments")
     author_id = models.UUIDField()
     parent = models.ForeignKey(
         "self", on_delete=models.CASCADE, null=True, blank=True, related_name="replies"
     )
+    reply_to = models.ForeignKey(
+        "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
     body = models.TextField()
+    reply_count = models.PositiveIntegerField(default=0)  # live replies, on roots only
+    reaction_count = models.PositiveIntegerField(default=0)
+    moderation_status = models.CharField(
+        max_length=10, choices=ModerationStatus.choices, default=ModerationStatus.OK
+    )
     created_at = models.DateTimeField(auto_now_add=True)
+    edited_at = models.DateTimeField(null=True, blank=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "comment"
-        indexes = [models.Index(fields=["post", "created_at"], name="comment_post_idx")]
+        indexes = [
+            models.Index(fields=["post", "created_at"], name="comment_post_idx"),
+            models.Index(fields=["parent", "created_at"], name="comment_parent_idx"),
+        ]
+
+
+class CommentReaction(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    comment = models.ForeignKey(Comment, on_delete=models.CASCADE, related_name="reactions")
+    account_id = models.UUIDField()
+    type = models.CharField(max_length=8)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "comment_reaction"
+        constraints = [
+            models.UniqueConstraint(fields=["comment", "account_id"], name="comment_reaction_uniq"),
+        ]
+
+
+class CommentReport(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    comment = models.ForeignKey(Comment, on_delete=models.CASCADE, related_name="reports")
+    reporter_id = models.UUIDField()
+    reason = models.CharField(max_length=200)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "comment_report"
+        constraints = [
+            models.UniqueConstraint(fields=["comment", "reporter_id"], name="comment_report_uniq"),
+        ]
 
 
 class Share(models.Model):

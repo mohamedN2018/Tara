@@ -6,8 +6,9 @@ import { useI18n } from "vue-i18n";
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import MentionField from "@/components/post/MentionField.vue";
 import { errorMessage } from "@/lib/errors";
+import { IMAGE_ACCEPT, isHeic, toUploadable } from "@/lib/heic";
 import { mediaService } from "@/services/media";
-import { postService } from "@/services/post";
+import { COMMENT_POLICIES, type CommentPolicy, postService } from "@/services/post";
 import { useAuthStore } from "@/stores/auth";
 import { useUiStore } from "@/stores/ui";
 import type { Post } from "@/types";
@@ -23,7 +24,16 @@ const mediaIds = ref<string[]>([]);
 const previews = ref<string[]>([]);
 const submitting = ref(false);
 const uploading = ref(false);
+const converting = ref(false);
 const error = ref("");
+// The post service accepts at most 10 media per post (MAX_MEDIA_PER_POST).
+const MAX_PHOTOS = 10;
+const commentPolicy = ref<CommentPolicy>("everyone");
+const POLICY_LABEL: Record<CommentPolicy, string> = {
+  everyone: "post.commentPolicyEveryone",
+  friends: "post.commentPolicyFriends",
+  off: "post.commentPolicyOff",
+};
 
 const AUDIENCES = [
   { v: "public", icon: Globe, label: "feed.audiencePublic" },
@@ -68,12 +78,28 @@ watch(
 const authorName = () => auth.profile?.display_name || auth.account?.email?.split("@")[0] || "?";
 
 async function onFiles(e: Event) {
-  const files = (e.target as HTMLInputElement).files;
-  if (!files?.length) return;
+  const input = e.target as HTMLInputElement;
+  const files = Array.from(input.files ?? []);
+  input.value = ""; // picking the same file again still fires `change`
+  if (!files.length) return;
+  const room = MAX_PHOTOS - mediaIds.value.length;
   uploading.value = true;
-  error.value = "";
+  error.value = room < files.length ? t("feed.tooManyPhotos", { max: MAX_PHOTOS }) : "";
   try {
-    for (const file of Array.from(files).slice(0, 4)) {
+    for (const picked of files.slice(0, Math.max(0, room))) {
+      let file = picked;
+      if (isHeic(picked)) {
+        // iPhone photos: converted to JPEG in a lazily loaded chunk.
+        converting.value = true;
+        try {
+          file = await toUploadable(picked);
+        } catch {
+          error.value = t("feed.heicFailed");
+          continue;
+        } finally {
+          converting.value = false;
+        }
+      }
       const asset = await mediaService.upload(file, "image");
       mediaIds.value.push(asset.id);
       previews.value.push(URL.createObjectURL(file));
@@ -86,15 +112,18 @@ async function onFiles(e: Event) {
 }
 
 function removeMedia(i: number) {
+  URL.revokeObjectURL(previews.value[i]);
   mediaIds.value.splice(i, 1);
   previews.value.splice(i, 1);
 }
 
 function reset() {
   body.value = "";
+  previews.value.forEach((url) => URL.revokeObjectURL(url));
   mediaIds.value = [];
   previews.value = [];
   audience.value = "public";
+  commentPolicy.value = "everyone";
   expanded.value = false;
   pollOpen.value = false;
   pollOptions.value = ["", ""];
@@ -115,6 +144,7 @@ async function submit() {
       body: text,
       media_ids: mediaIds.value,
       audience: audience.value,
+      comment_policy: commentPolicy.value,
       ...(pollOpen.value
         ? { poll: { options: filledOptions.value, duration_hours: pollHours.value } }
         : {}),
@@ -176,8 +206,8 @@ async function submit() {
     <div v-if="!expanded" class="mt-3 grid grid-cols-2 gap-1 border-t border-gray-100 pt-2 dark:border-gray-800">
       <label class="btn-ghost cursor-pointer focus-within:ring-2 focus-within:ring-brand-400" :class="uploading ? 'opacity-50' : ''">
         <ImagePlus class="h-5 w-5 text-emerald-500" />
-        <span>{{ uploading ? t("states.loading") : t("feed.photo") }}</span>
-        <input type="file" accept="image/*" multiple class="sr-only" :aria-label="t('feed.addPhotos')" @change="onFiles($event); expanded = true" />
+        <span>{{ converting ? t("feed.heicConverting") : uploading ? t("states.loading") : t("feed.photo") }}</span>
+        <input type="file" :accept="IMAGE_ACCEPT" multiple class="sr-only" :aria-label="t('feed.addPhotos')" @change="onFiles($event); expanded = true" />
       </label>
       <button type="button" class="btn-ghost" @click="expanded = true; pollOpen = true">
         <BarChart3 class="h-5 w-5 text-accent-500" />
@@ -219,7 +249,7 @@ async function submit() {
         </div>
       </div>
 
-      <div v-if="previews.length" class="mt-2 grid grid-cols-4 gap-2">
+      <div v-if="previews.length" class="mt-2 grid grid-cols-4 gap-2 sm:grid-cols-5">
         <div v-for="(src, i) in previews" :key="i" class="relative">
           <img :src="src" class="h-20 w-full rounded-lg object-cover" :alt="t('post.imageAlt', { n: i + 1, name: authorName() })" />
           <button
@@ -237,13 +267,16 @@ async function submit() {
       <div class="mt-3 flex flex-wrap items-center gap-1 border-t border-gray-100 pt-3 dark:border-gray-800">
         <label class="btn-ghost cursor-pointer focus-within:ring-2 focus-within:ring-brand-400" :class="uploading ? 'opacity-50' : ''" :title="t('feed.addPhotos')">
           <ImagePlus class="h-5 w-5 text-green-600" />
-          <span class="text-sm">{{ uploading ? t("states.loading") : t("feed.photo") }}</span>
-          <input type="file" accept="image/*" multiple class="sr-only" :aria-label="t('feed.addPhotos')" @change="onFiles" />
+          <span class="text-sm">{{ converting ? t("feed.heicConverting") : uploading ? t("states.loading") : t("feed.photo") }}</span>
+          <input type="file" :accept="IMAGE_ACCEPT" multiple class="sr-only" :aria-label="t('feed.addPhotos')" @change="onFiles" />
         </label>
         <button type="button" class="btn-ghost" :aria-pressed="pollOpen" :class="pollOpen ? 'text-brand-600 dark:text-brand-300' : ''" @click="pollOpen = !pollOpen">
           <BarChart3 class="h-5 w-5" />
           <span class="text-sm">{{ t("feed.poll") }}</span>
         </button>
+        <select v-model="commentPolicy" class="input h-9 w-auto py-1 text-xs" :aria-label="t('post.commentPolicy')" data-testid="comment-policy">
+          <option v-for="p in COMMENT_POLICIES" :key="p" :value="p">{{ t(POLICY_LABEL[p]) }}</option>
+        </select>
         <div class="ms-auto flex gap-2">
           <button class="btn-ghost" @click="reset">{{ t("feed.cancel") }}</button>
           <button class="btn-primary" :disabled="submitting || uploading" @click="submit">
