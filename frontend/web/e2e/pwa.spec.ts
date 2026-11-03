@@ -56,10 +56,14 @@ test("a delivered push shows a localised notification that opens the app", async
   // Deliver a push the way a push service would, through the browser itself.
   const cdp = await context.newCDPSession(page);
   await cdp.send("ServiceWorker.enable");
+  // The registration whose worker is activated and running, not one mid-update.
   const registrationId = await new Promise<string>((resolve) => {
-    cdp.on("ServiceWorker.workerRegistrationUpdated", ({ registrations }) => {
-      const mine = registrations.find((r: { scopeURL: string }) => r.scopeURL.startsWith(PREVIEW));
-      if (mine) resolve(mine.registrationId);
+    cdp.on("ServiceWorker.workerVersionUpdated", ({ versions }) => {
+      const live = versions.find(
+        (v: { scriptURL: string; status: string; runningStatus: string }) =>
+          v.scriptURL.startsWith(PREVIEW) && v.status === "activated" && v.runningStatus === "running",
+      );
+      if (live) resolve(live.registrationId);
     });
   });
   const payload = { kind: "follow", url: "/notifications", tag: "probe-follow", body: "started following you" };
@@ -131,6 +135,8 @@ test("settings subscribe this browser, and the server delivers to it", async ({ 
       `docker exec tara-notification-1 python manage.py shell -c "from notifications.models import PushDeviceToken as T, NotificationDeliveryLog as L; print(T.objects.filter(account_id='${a.id}', platform='web').count(), list(L.objects.filter(notification__recipient_id='${a.id}', channel='push').order_by('-created_at').values_list('status', flat=True)[:1]))"`,
     ).toString().trim().split(/\r?\n/).pop();
   expect(tokens()).toMatch(/^1 /);
+  // Other tests flip Alice's follow notifications; start from the defaults (on).
+  await (await apiAs(a)).patch(`${API}/notifications/preferences/`, { data: { prefs: {} } });
   const bob = await apiAs(b);
   await bob.delete(`${API}/follows/${a.id}/`);
   await bob.post(`${API}/follows/${a.id}/`);
