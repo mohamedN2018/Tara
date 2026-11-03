@@ -93,6 +93,7 @@ export default {
     addPhotos: "إضافة صور",
   },
   post: {
+    moreComments: "عرض مزيد من التعليقات",
     like: "إعجاب",
     comment: "تعليق",
     share: "مشاركة",
@@ -349,6 +350,8 @@ export default {
     actionDone: "تم تحديث الحالة.",
   },
   settings: {
+    quietClear: "إيقاف",
+    quietSameTime: "يجب أن تختلف البداية عن النهاية.",
     title: "الإعدادات",
     appearance: "المظهر",
     language: "اللغة",
@@ -407,6 +410,7 @@ export default {
     copyFailed: "تعذّر نسخ الرابط.",
   },
   states: {
+    loadMore: "تحميل المزيد",
     loading: "جارٍ التحميل…",
     error: "حدث خطأ ما.",
     retry: "إعادة المحاولة",

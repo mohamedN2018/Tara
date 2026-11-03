@@ -10,34 +10,57 @@ import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
 import { marketplaceService } from "@/services/marketplace";
 import { postService } from "@/services/post";
+import { useToastStore } from "@/stores/toasts";
 import type { Listing, Post } from "@/types";
 
 const { t } = useI18n();
+const toasts = useToastStore();
 
 type Tab = "posts" | "listings";
 const tab = ref<Tab>("posts");
 const posts = ref<Post[]>([]);
 const listings = ref<Listing[]>([]);
 const loaded = ref<Record<Tab, boolean>>({ posts: false, listings: false });
+const cursors = ref<Record<Tab, string | null>>({ posts: null, listings: null });
 const loading = ref(true);
+const loadingMore = ref(false);
 const error = ref(false);
+
+async function fetchPage(tb: Tab, cursor?: string) {
+  if (tb === "posts") {
+    const page = await postService.savedPage(cursor);
+    posts.value = cursor ? [...posts.value, ...page.posts] : page.posts;
+    cursors.value.posts = page.nextCursor;
+  } else {
+    const page = await marketplaceService.savedList(cursor);
+    listings.value = cursor ? [...listings.value, ...page.data] : page.data;
+    cursors.value.listings = page.page.next_cursor;
+  }
+}
 
 async function load(tb: Tab) {
   loading.value = true;
   error.value = false;
   try {
-    if (tb === "posts") {
-      const ids = await postService.listSavedPostIds();
-      const resolved = await Promise.all(ids.map((id) => postService.get(id).catch(() => null)));
-      posts.value = resolved.filter((p): p is Post => !!p);
-    } else {
-      listings.value = (await marketplaceService.savedList()).data;
-    }
+    await fetchPage(tb);
     loaded.value[tb] = true;
   } catch {
     error.value = true;
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadMore() {
+  const cursor = cursors.value[tab.value];
+  if (!cursor || loadingMore.value) return;
+  loadingMore.value = true;
+  try {
+    await fetchPage(tab.value, cursor);
+  } catch (e) {
+    toasts.error(e);
+  } finally {
+    loadingMore.value = false;
   }
 }
 
@@ -79,6 +102,9 @@ onMounted(() => load("posts"));
           <MarketplaceCard v-for="l in listings" :key="l.id" :listing="l" />
         </div>
       </template>
+      <button v-if="!loading && !error && cursors[tab]" class="btn-ghost mx-auto block" :disabled="loadingMore" @click="loadMore">
+        {{ loadingMore ? t("states.loading") : t("states.loadMore") }}
+      </button>
     </div>
   </AppShell>
 </template>

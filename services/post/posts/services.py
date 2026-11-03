@@ -50,13 +50,29 @@ def _is_locally_blocked(a: str, b: str) -> bool:
     ).exists()
 
 
-def visible_to_viewer(viewer_id: str, post: Post, rel_cache: dict | None = None) -> bool:
-    """``rel_cache`` keeps one Graph call per author when checking many posts."""
+def blocked_ids(viewer_id: str) -> set[str]:
+    """Accounts blocked by, or blocking, the viewer."""
+    pairs = BlockedPair.objects.filter(
+        Q(blocker_id=viewer_id) | Q(blocked_id=viewer_id)
+    ).values_list("blocker_id", "blocked_id")
+    return {str(account) for pair in pairs for account in pair} - {str(viewer_id)}
+
+
+def visible_to_viewer(
+    viewer_id: str,
+    post: Post,
+    rel_cache: dict | None = None,
+    blocked: set[str] | None = None,
+) -> bool:
+    """``rel_cache`` and ``blocked`` avoid per-post lookups when checking many posts."""
     if not post.is_visible:
         return False
     if str(post.author_id) == str(viewer_id):
         return True
-    if _is_locally_blocked(viewer_id, post.author_id):
+    if blocked is None:
+        if _is_locally_blocked(viewer_id, post.author_id):
+            return False
+    elif str(post.author_id) in blocked:
         return False
     if post.audience == Audience.ONLY_ME:
         return False
@@ -203,7 +219,8 @@ def author_posts_queryset(author_id: str | None):
 
 def only_visible(viewer_id: str, posts) -> list[Post]:
     rel_cache: dict = {}
-    return [p for p in posts if visible_to_viewer(viewer_id, p, rel_cache)]
+    blocked = blocked_ids(viewer_id)
+    return [p for p in posts if visible_to_viewer(viewer_id, p, rel_cache, blocked)]
 
 
 def posts_by_ids(viewer_id: str, post_ids: list) -> list[Post]:
@@ -261,19 +278,19 @@ def react(viewer_id: str, post_id: str, reaction_type: str) -> PostReaction:
         reaction, created = PostReaction.objects.update_or_create(
             post=post, account_id=viewer_id, defaults={"type": reaction_type}
         )
-        if created:
+        if created:  # Changing an existing reaction notifies nobody.
             Post.objects.filter(id=post.id).update(reaction_count=F("reaction_count") + 1)
-        events.emit(
-            "post.reacted",
-            subject_id=str(post.id),
-            payload={
-                "post_id": str(post.id),
-                "reactor": str(viewer_id),
-                "reaction_type": reaction_type,
-                "author_id": str(post.author_id),
-            },
-            actor_id=str(viewer_id),
-        )
+            events.emit(
+                "post.reacted",
+                subject_id=str(post.id),
+                payload={
+                    "post_id": str(post.id),
+                    "reactor": str(viewer_id),
+                    "reaction_type": reaction_type,
+                    "author_id": str(post.author_id),
+                },
+                actor_id=str(viewer_id),
+            )
     return reaction
 
 
@@ -293,6 +310,8 @@ def add_comment(viewer_id: str, post_id: str, body: str, parent_id: str | None =
         parent = Comment.objects.filter(id=parent_id, post=post, deleted_at__isnull=True).first()
         if parent is None:
             raise TaraAPIError("Parent comment not found.", code="not_found", http_status_code=404)
+        if _is_locally_blocked(viewer_id, parent.author_id):
+            raise TaraAPIError("Parent comment not found.", code="not_found", http_status_code=404)
     with transaction.atomic():
         comment = Comment.objects.create(post=post, author_id=viewer_id, parent=parent, body=body)
         for handle in extract_mentions(body):
@@ -307,6 +326,7 @@ def add_comment(viewer_id: str, post_id: str, body: str, parent_id: str | None =
                 "comment_id": str(comment.id),
                 "author": str(viewer_id),
                 "parent_id": str(parent_id) if parent_id else None,
+                "parent_author_id": str(parent.author_id) if parent else None,
                 "post_author_id": str(post.author_id),
             },
             actor_id=str(viewer_id),
@@ -316,7 +336,11 @@ def add_comment(viewer_id: str, post_id: str, body: str, parent_id: str | None =
 
 def list_comments(viewer_id: str, post_id: str):
     post = _require_visible(viewer_id, post_id)
-    return post.comments.filter(deleted_at__isnull=True).order_by("created_at")
+    return (
+        post.comments.filter(deleted_at__isnull=True)
+        .exclude(author_id__in=blocked_ids(viewer_id))
+        .order_by("created_at")
+    )
 
 
 # ---- shares -----------------------------------------------------------------

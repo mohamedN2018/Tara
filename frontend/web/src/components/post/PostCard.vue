@@ -128,7 +128,9 @@ const commentCount = ref(props.post.comment_count);
 const shareCount = ref(props.post.share_count);
 const showComments = ref(false);
 const comments = ref<Comment[]>([]);
+const commentsCursor = ref<string | null>(null);
 const loadingComments = ref(false);
+const loadingMoreComments = ref(false);
 const submitting = ref(false);
 
 const images = useMediaUrls(() => props.post.media_ids);
@@ -181,12 +183,29 @@ async function toggleComments() {
     try {
       const page = await postService.comments(props.post.id);
       comments.value = page.data;
+      commentsCursor.value = page.page.next_cursor;
     } catch (e) {
       comments.value = [];
       toasts.error(e);
     } finally {
       loadingComments.value = false;
     }
+  }
+}
+
+async function loadMoreComments() {
+  if (!commentsCursor.value || loadingMoreComments.value) return;
+  loadingMoreComments.value = true;
+  try {
+    const page = await postService.comments(props.post.id, commentsCursor.value);
+    // A comment posted here while paging can come back from the server too.
+    const known = new Set(comments.value.map((c) => c.id));
+    comments.value.push(...page.data.filter((c) => !known.has(c.id)));
+    commentsCursor.value = page.page.next_cursor;
+  } catch (e) {
+    toasts.error(e);
+  } finally {
+    loadingMoreComments.value = false;
   }
 }
 
@@ -372,6 +391,14 @@ async function toggleSave() {
         :known-names="knownNames"
         @reply="submitReply"
       />
+      <button
+        v-if="commentsCursor"
+        class="text-xs font-semibold text-brand-600 hover:underline"
+        :disabled="loadingMoreComments"
+        @click="loadMoreComments"
+      >
+        {{ loadingMoreComments ? t("states.loading") : t("post.moreComments") }}
+      </button>
     </section>
   </article>
 </template>

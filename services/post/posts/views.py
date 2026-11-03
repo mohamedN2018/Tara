@@ -136,8 +136,9 @@ class CommentsView(APIView):
 
     @extend_schema(responses={200: CommentSerializer(many=True)}, tags=["posts"])
     def get(self, request: Request, post_id: str) -> Response:
-        comments = services.list_comments(_me(request), post_id)
-        return data_response(CommentSerializer(comments, many=True).data)
+        paginator = CursorPagination()
+        page = paginator.paginate_queryset(services.list_comments(_me(request), post_id), request)
+        return paginator.get_paginated_response(CommentSerializer(page, many=True).data)
 
     @extend_schema(
         request=CommentCreateSerializer, responses={201: CommentSerializer}, tags=["posts"]
@@ -209,8 +210,9 @@ class SavedListView(APIView):
     )
     def get(self, request: Request) -> Response:
         item_type = request.query_params.get("item_type")
-        items = services.list_saved(_me(request), item_type)
-        return data_response(SavedItemSerializer(items, many=True).data)
+        paginator = CursorPagination()
+        page = paginator.paginate_queryset(services.list_saved(_me(request), item_type), request)
+        return paginator.get_paginated_response(SavedItemSerializer(page, many=True).data)
 
     def post(self, request: Request) -> Response:
         serializer = SaveSerializer(data=request.data)

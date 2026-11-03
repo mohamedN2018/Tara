@@ -65,17 +65,16 @@ async function createAccount(api: APIRequestContext, slot: string): Promise<Acco
 }
 
 /**
- * Two long-lived accounts. Registration is limited to 10 an hour per IP, so
+ * Three long-lived accounts. Registration is limited to 10 an hour per IP, so
  * they are kept in e2e/.accounts.json between runs and only recreated when gone.
  */
-export async function sharedAccounts(): Promise<{ a: Account; b: Account }> {
+export async function sharedAccounts(): Promise<{ a: Account; b: Account; c: Account }> {
   const api = await request.newContext();
   try {
-    if (existsSync(ACCOUNTS_FILE)) {
-      const saved = JSON.parse(readFileSync(ACCOUNTS_FILE, "utf8"));
-      if ((await apiLogin(api, saved.a.email)) && (await apiLogin(api, saved.b.email))) return saved;
-    }
-    const accounts = { a: await createAccount(api, "a"), b: await createAccount(api, "b") };
+    const saved = existsSync(ACCOUNTS_FILE) ? JSON.parse(readFileSync(ACCOUNTS_FILE, "utf8")) : {};
+    const usable = async (slot: string): Promise<Account> =>
+      saved[slot] && (await apiLogin(api, saved[slot].email)) ? saved[slot] : createAccount(api, slot);
+    const accounts = { a: await usable("a"), b: await usable("b"), c: await usable("c") };
     writeFileSync(ACCOUNTS_FILE, JSON.stringify(accounts, null, 2));
     return accounts;
   } finally {

@@ -119,11 +119,14 @@ export const postService = {
     await api.delete(`/posts/${id}/save/`);
   },
 
-  // Saved items (refs); resolve each post via get(). item_type filter on the server.
-  async listSavedPostIds(): Promise<string[]> {
-    const { data } = await api.get<{ data: { item_id: string; item_type: string }[] }>("/saved/", {
-      params: { item_type: "post" },
+  /** One page of saved posts, newest save first. Posts no longer visible are left out. */
+  async savedPage(cursor?: string): Promise<{ posts: Post[]; nextCursor: string | null }> {
+    const { data } = await api.get<CursorPage<{ item_id: string }>>("/saved/", {
+      params: { item_type: "post", cursor },
     });
-    return data.data.filter((s) => s.item_type === "post").map((s) => s.item_id);
+    return {
+      posts: await this.batch(data.data.map((s) => s.item_id)),
+      nextCursor: data.page.next_cursor,
+    };
   },
 };

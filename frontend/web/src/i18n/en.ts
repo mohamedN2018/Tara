@@ -93,6 +93,7 @@ export default {
     addPhotos: "Add photos",
   },
   post: {
+    moreComments: "View more comments",
     like: "Like",
     comment: "Comment",
     share: "Share",
@@ -349,6 +350,8 @@ export default {
     actionDone: "Case updated.",
   },
   settings: {
+    quietClear: "Turn off",
+    quietSameTime: "Start and end must differ.",
     title: "Settings",
     appearance: "Appearance",
     language: "Language",
@@ -407,6 +410,7 @@ export default {
     copyFailed: "Couldn't copy the link.",
   },
   states: {
+    loadMore: "Load more",
     loading: "Loading…",
     error: "Something went wrong.",
     retry: "Retry",
