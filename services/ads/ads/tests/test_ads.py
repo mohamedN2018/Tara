@@ -187,11 +187,7 @@ def test_forged_and_foreign_tokens_are_refused(client_for):
     theirs = services.pick_for_viewer(victim, "feed")["token"]
     assert _event(client, creative, theirs, "click").status_code == 403
     # A token for another creative.
-    mine = next(
-        s["token"]
-        for s in [services.pick_for_viewer(attacker, "feed")]
-        if s["creative_id"] != str(other_creative.id)
-    )
+    mine = serve_tokens.issue(attacker, creative.id, "feed")
     assert _event(client, other_creative, mine, "click").status_code == 403
     # Signed with the internal secret itself, not the derived key.
     now = int(time.time())
