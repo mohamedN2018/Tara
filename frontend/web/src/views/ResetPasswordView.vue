@@ -9,7 +9,7 @@ import { identityService } from "@/services/identity";
 
 const { t } = useI18n();
 const route = useRoute();
-const token = computed(() => (route.query.token as string) || "");
+const token = computed(() => (typeof route.query.token === "string" ? route.query.token : ""));
 const password = ref("");
 const loading = ref(false);
 const done = ref(false);
@@ -48,7 +48,7 @@ async function submit() {
           <label for="reset-password" class="label">{{ t("auth.newPassword") }}</label>
           <input id="reset-password" v-model="password" type="password" class="input" required minlength="10" autocomplete="new-password" />
         </div>
-        <p v-if="error" class="text-sm text-red-500">{{ error }}</p>
+        <p v-if="error" class="text-sm text-red-500" role="alert">{{ error }}</p>
         <button type="submit" class="btn-gradient w-full py-3 text-base" :disabled="loading">{{ t("auth.resetCta") }}</button>
       </form>
 

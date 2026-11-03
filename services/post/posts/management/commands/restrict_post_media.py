@@ -52,9 +52,10 @@ class Command(BaseCommand):
                     done += 1
                     continue
                 try:
-                    skipped += len(
-                        media_client.bind(str(post.author_id), str(post.id), ids, restricted=True)
+                    result = media_client.bind(
+                        str(post.author_id), str(post.id), ids, restricted=True
                     )
+                    skipped += len(result.skipped)
                     done += 1
                 except TaraAPIError:
                     failed += 1

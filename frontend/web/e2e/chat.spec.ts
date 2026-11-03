@@ -142,11 +142,13 @@ test("a dropped socket reconnects, re-subscribes and catches up", async ({ brows
   await expect.poll(() => sent.filter((f) => f.includes(conversation)).length).toBeGreaterThan(0);
   sent.length = 0;
 
-  await sockets[0].close();
+  await sockets[sockets.length - 1].close();
   await api.post(`${API}/conversations/${conversation}/messages/`, { data: { body: `missed ${tag}` } });
 
   await expect(bubbles(page).last()).toHaveText(`missed ${tag}`, { timeout: 30_000 });
   expect(sockets.length).toBeGreaterThan(1);
+  // The token travels as a subprotocol, never in the URL.
+  expect(sockets.every((ws) => !ws.url().includes("token="))).toBe(true);
   expect(sent.some((f) => f.includes('"subscribe"') && f.includes(conversation))).toBe(true);
   await api.dispose();
 });

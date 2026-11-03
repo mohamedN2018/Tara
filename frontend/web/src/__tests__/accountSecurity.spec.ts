@@ -136,7 +136,24 @@ describe("identity security calls", () => {
     await identityService.unlinkGoogle();
     await identityService.startPhoneVerification();
     expect(post).toHaveBeenCalledWith("/me/google/", { credential: "cred" });
-    expect(del).toHaveBeenCalledWith("/me/google/");
+    expect(del).toHaveBeenCalledWith("/me/google/", undefined);
+    expect(post).toHaveBeenCalledWith("/me/phone/telegram/");
+  });
+
+  it("re-authenticates Google changes with the current password", async () => {
+    const post = vi.spyOn(api, "post").mockResolvedValue({ data: { data: {} } });
+    const del = vi.spyOn(api, "delete").mockResolvedValue({ data: { data: {} } });
+    await identityService.linkGoogle("cred", "pw");
+    await identityService.unlinkGoogle("pw");
+    expect(post).toHaveBeenCalledWith("/me/google/", { credential: "cred", password: "pw" });
+    expect(del).toHaveBeenCalledWith("/me/google/", { data: { password: "pw" } });
+    expect(securityErrorKey(envelope(400, "password_required"))).toBe("accountSecurity.errors.passwordRequired");
+    expect(securityErrorKey(envelope(403, "invalid_password"))).toBe("accountSecurity.errors.wrongPassword");
+  });
+
+  it("starts phone verification", async () => {
+    const post = vi.spyOn(api, "post").mockResolvedValue({ data: { data: {} } });
+    await identityService.startPhoneVerification();
     expect(post).toHaveBeenCalledWith("/me/phone/telegram/");
   });
 
@@ -173,6 +190,34 @@ describe("Google sign-in in the auth store", () => {
     expect(tokenStore.refresh).toBe("r1");
     expect(auth.account?.email).toBe("g@gmail.com");
     expect(connect).toHaveBeenCalled();
+  });
+
+  it("a different account signing in does not inherit the last one's local data", async () => {
+    localStorage.setItem("tara.dataOwner", "someone-else");
+    localStorage.setItem("tara.recentSearches", JSON.stringify(["private term"]));
+    localStorage.setItem("tara.market.compare", JSON.stringify(["l1"]));
+    vi.spyOn(identityService, "googleSignIn").mockResolvedValue({
+      access_token: "h.e30.s",
+      refresh_token: "r1",
+      token_type: "Bearer",
+      expires_in: 900,
+      created: false,
+    });
+    vi.spyOn(api, "get").mockImplementation(async (url: string) =>
+      url === "/me/"
+        ? { data: { data: { id: "a1", email: "g@gmail.com", email_verified: true, status: "active", language: "en", theme: "system" } } }
+        : { data: { data: { account_id: "a1" } } },
+    );
+    vi.spyOn(realtime, "connect").mockImplementation(() => {});
+    await useAuthStore().loginWithGoogle("cred", "ar");
+    expect(localStorage.getItem("tara.recentSearches")).toBeNull();
+    expect(localStorage.getItem("tara.market.compare")).toBeNull();
+    expect(localStorage.getItem("tara.dataOwner")).toBe("a1");
+
+    // The same account again keeps its own conveniences.
+    localStorage.setItem("tara.recentSearches", JSON.stringify(["mine"]));
+    await useAuthStore().loginWithGoogle("cred", "ar");
+    expect(localStorage.getItem("tara.recentSearches")).toBe(JSON.stringify(["mine"]));
   });
 });
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from django.conf import settings
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import status
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -35,6 +36,9 @@ from .tokens import build_jwks
 
 REFRESH_COOKIE = "refresh_token"
 REFRESH_COOKIE_PATH = "/api/v1/auth"
+# Public auth endpoints never read the caller's access token, so a stale,
+# expired or signed-out one sent along by a client must not turn them into 401s.
+NO_AUTH: list = []
 
 
 # ---- helpers ----------------------------------------------------------------
@@ -85,6 +89,7 @@ def _get_account(request: Request) -> Account:
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = NO_AUTH
     throttle_scope = "auth_register"
 
     @extend_schema(
@@ -120,6 +125,7 @@ class RegisterView(APIView):
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = NO_AUTH
     throttle_scope = "auth_login"
     # Per IP (auth_login) AND per targeted email (auth_login_target).
     throttle_classes = [ScopedRateThrottle, LoginTargetThrottle]
@@ -143,6 +149,7 @@ class LoginView(APIView):
 
 class RefreshView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = NO_AUTH
     throttle_scope = "auth_refresh"
 
     @extend_schema(
@@ -165,6 +172,14 @@ class RefreshView(APIView):
 class LogoutView(APIView):
     permission_classes = [AllowAny]
 
+    def perform_authentication(self, request: Request) -> None:
+        # Signing out must work with an expired or already signed-out access
+        # token too: the refresh token (body or cookie) is what gets revoked.
+        try:
+            request.user  # noqa: B018 - evaluates authentication
+        except AuthenticationFailed:
+            pass
+
     @extend_schema(request=RefreshSerializer, responses={204: None}, tags=["auth"])
     def post(self, request: Request) -> Response:
         raw = request.data.get("refresh_token") if hasattr(request, "data") else None
@@ -182,6 +197,7 @@ class LogoutView(APIView):
 
 class VerifyEmailView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = NO_AUTH
 
     @extend_schema(request=VerifyEmailSerializer, responses={200: AccountSerializer}, tags=["auth"])
     def post(self, request: Request) -> Response:
@@ -193,6 +209,7 @@ class VerifyEmailView(APIView):
 
 class ResendVerificationView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = NO_AUTH
     throttle_scope = "auth_password"
 
     @extend_schema(
@@ -209,6 +226,7 @@ class ResendVerificationView(APIView):
 
 class PasswordForgotView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = NO_AUTH
     throttle_scope = "auth_password"
 
     @extend_schema(request=PasswordForgotSerializer, responses={202: None}, tags=["auth"])
@@ -225,6 +243,7 @@ class PasswordForgotView(APIView):
 
 class PasswordResetView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = NO_AUTH
     throttle_scope = "auth_password"
 
     @extend_schema(request=PasswordResetSerializer, responses={200: None}, tags=["auth"])

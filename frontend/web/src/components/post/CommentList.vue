@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import CommentInput from "@/components/post/CommentInput.vue";
 import CommentItem from "@/components/post/CommentItem.vue";
 import {
   addReply,
+  type CommentLocator,
   emptyThread,
+  locateComment,
   mergeById,
   removeComment,
   replaceComment,
@@ -14,7 +16,7 @@ import {
   type Thread,
   threadRootId,
 } from "@/lib/commentThreads";
-import { type Comment, type CommentPolicy, postService } from "@/services/post";
+import { type Comment, type CommentPolicy, postService, REPORT_ERRORS } from "@/services/post";
 import { useAuthStore } from "@/stores/auth";
 import { useDirectoryStore } from "@/stores/directory";
 import { useToastStore } from "@/stores/toasts";
@@ -28,8 +30,12 @@ const props = withDefaults(
     postAuthorId: string;
     policy?: CommentPolicy;
     knownNames?: Record<string, string>;
+    /** A comment to scroll to and highlight (a notification's `?comment=`). */
+    focusId?: string | null;
+    /** Its thread root, when the link knows it (`?thread=`). */
+    focusRootId?: string | null;
   }>(),
-  { policy: "everyone", knownNames: () => ({}) },
+  { policy: "everyone", knownNames: () => ({}), focusId: null, focusRootId: null },
 );
 const emit = defineEmits<{ added: []; total: [count: number] }>();
 
@@ -73,26 +79,30 @@ async function load() {
   }
 }
 
-async function loadMore() {
-  if (!cursor.value || loadingMore.value) return;
+/** False when nothing was loaded (already loading, at the end, or failed). */
+async function loadMore(): Promise<boolean> {
+  if (!cursor.value || loadingMore.value) return false;
   loadingMore.value = true;
   try {
     const page = await postService.comments(props.postId, cursor.value);
     // A comment written here while paging can come back from the server too.
     roots.value = mergeById(roots.value, page.data);
     cursor.value = page.page.next_cursor;
+    return true;
   } catch (e) {
     toasts.error(e);
+    return false;
   } finally {
     loadingMore.value = false;
   }
 }
 
-async function loadReplies(rootId: string) {
+/** Open a thread, loading its next page of replies. False when that failed. */
+async function loadReplies(rootId: string): Promise<boolean> {
   const thread = threadOf(rootId);
   if (thread.loaded && !thread.cursor) {
     setThread(rootId, { open: true });
-    return;
+    return true;
   }
   busyId.value = rootId;
   try {
@@ -101,14 +111,55 @@ async function loadReplies(rootId: string) {
       open: true,
       loaded: true,
       cursor: page.page.next_cursor,
-      replies: mergeById(thread.replies, page.data),
+      replies: mergeById(threadOf(rootId).replies, page.data),
     });
+    return true;
   } catch (e) {
     toasts.error(e);
+    return false;
   } finally {
     busyId.value = null;
   }
 }
+
+// Deep link to one comment: find it (paging roots, then its thread's replies),
+// scroll it into view and highlight it briefly.
+const highlightId = ref<string | null>(null);
+let highlightTimer: number | undefined;
+const HIGHLIGHT_MS = 2500;
+
+const locator: CommentLocator = {
+  hasRoot: (id: string) => roots.value.some((r) => r.id === id),
+  moreRoots: () => (cursor.value ? loadMore() : Promise.resolve(false)),
+  roots: () => roots.value,
+  thread: (rootId: string) => threadOf(rootId),
+  loadReplies,
+  setOpen: (rootId: string, open: boolean) => setThread(rootId, { open }),
+};
+
+async function reveal(id: string) {
+  await nextTick();
+  const el = listEl.value?.querySelector<HTMLElement>(`[data-comment-id="${CSS.escape(id)}"]`);
+  if (!el) return;
+  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  el.scrollIntoView({ block: "center", behavior: reduced ? "auto" : "smooth" });
+  el.focus({ preventScroll: true });
+  highlightId.value = id;
+  window.clearTimeout(highlightTimer);
+  highlightTimer = window.setTimeout(() => (highlightId.value = null), HIGHLIGHT_MS);
+}
+
+let focusRun = 0;
+async function focusComment() {
+  const id = props.focusId;
+  if (!id) return;
+  const run = ++focusRun;
+  const found = await locateComment(locator, id, props.focusRootId);
+  if (run !== focusRun) return; // a newer link took over
+  if (found) await reveal(id);
+  else toasts.push({ text: t("post.commentUnavailable"), icon: "error" });
+}
+onBeforeUnmount(() => window.clearTimeout(highlightTimer));
 
 // Reply composer: one open box at a time, under the thread being answered.
 const replyTarget = ref<Comment | null>(null);
@@ -203,11 +254,14 @@ async function react(c: Comment, type: string | null) {
   }
 }
 
+// Marked reported only once the server took it (a throttled report was not sent).
+const reportedIds = ref(new Set<string>());
 async function report(c: Comment, reason: string) {
   try {
     await postService.reportComment(c.id, reason);
+    reportedIds.value = new Set(reportedIds.value).add(c.id);
   } catch (e) {
-    toasts.error(e);
+    toasts.error(e, REPORT_ERRORS);
   }
 }
 
@@ -216,11 +270,22 @@ function replyToName(c: Comment): string | null {
   return author ? nameFor(author) : null;
 }
 
-onMounted(load);
+const listEl = ref<HTMLElement | null>(null);
+
+onMounted(async () => {
+  await load();
+  await focusComment();
+});
+watch(
+  () => [props.focusId, props.focusRootId],
+  () => {
+    if (!loading.value) void focusComment();
+  },
+);
 </script>
 
 <template>
-  <div class="space-y-3">
+  <div ref="listEl" class="space-y-3">
     <p v-if="commentsOff" class="rounded-xl bg-gray-50 px-3 py-2 text-xs text-gray-500 dark:bg-gray-800/60 dark:text-gray-400" data-testid="comments-off">
       {{ t("post.commentsOff") }}
     </p>
@@ -242,6 +307,8 @@ onMounted(load);
         :can-delete="root.author_id === me || isPostAuthor"
         :can-reply="!commentsOff"
         :busy="busyId === root.id"
+        :highlighted="highlightId === root.id"
+        :reported="reportedIds.has(root.id)"
         @reply="openReply(root)"
         @edit="edit(root, $event)"
         @remove="remove(root)"
@@ -271,6 +338,8 @@ onMounted(load);
             :can-delete="r.author_id === me || isPostAuthor"
             :can-reply="!commentsOff"
             :busy="busyId === r.id"
+            :highlighted="highlightId === r.id"
+            :reported="reportedIds.has(r.id)"
             @reply="openReply(r)"
             @edit="edit(r, $event)"
             @remove="remove(r)"

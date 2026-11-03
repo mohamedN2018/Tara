@@ -64,9 +64,9 @@ def tags_from_excerpt(excerpt: str) -> set[str]:
 
 
 def tags_for(payload: dict) -> set[str]:
-    # `post.created` carries the full list. `post.updated` does not (yet), so the
-    # tags are re-derived from its excerpt: an edit that drops a tag then drops it
-    # here too, instead of leaving a stale link behind.
+    # `post.created` and `post.updated` carry the full list. Older `post.updated`
+    # events do not, so their tags are re-derived from the excerpt: an edit that
+    # drops a tag then drops it here too, instead of leaving a stale link behind.
     if isinstance(payload.get("hashtags"), list):
         return clean_tags(payload["hashtags"])
     return tags_from_excerpt(payload.get("excerpt", ""))

@@ -55,7 +55,10 @@ async function navigation(request) {
   const shell = await caches.open(SHELL_CACHE);
   try {
     const response = await fetch(request);
-    if (response.ok) await shell.put("/index.html", response.clone());
+    // Only the app page itself may become the offline shell, not a JSON or
+    // text document opened in a tab (/.well-known/..., /healthz.txt).
+    const html = (response.headers.get("content-type") ?? "").includes("text/html");
+    if (response.ok && html) await shell.put("/index.html", response.clone());
     return response;
   } catch {
     return (await shell.match("/index.html")) ?? Response.error();
@@ -225,14 +228,22 @@ self.addEventListener("notificationclick", (event) => {
   const path = safePath(event.notification.data?.url);
   event.waitUntil(
     (async () => {
-      const open = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-      for (const client of open) {
-        if ("navigate" in client) {
-          await client.focus();
-          return client.navigate(path);
+      // navigate() rejects on a window this worker does not control: try the
+      // controlled ones first, and open a new window if none will go.
+      const controlled = await self.clients.matchAll({ type: "window" });
+      const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      const ordered = [...controlled, ...all.filter((c) => !controlled.some((x) => x.id === c.id))];
+      for (const client of ordered) {
+        if (!("navigate" in client)) continue;
+        try {
+          const moved = await client.navigate(path);
+          await (moved ?? client).focus();
+          return;
+        } catch {
+          // Try the next window.
         }
       }
-      return self.clients.openWindow(path);
+      await self.clients.openWindow(path);
     })(),
   );
 });

@@ -2,13 +2,13 @@
 
 Services expose ``/metrics`` via django-prometheus (added to each service's
 requirements + middleware). This module holds shared custom metrics so every
-service reports the same names (RED-style + outbox lag).
+service reports the same names (events published + outbox backlog).
 """
 
 from __future__ import annotations
 
 try:
-    from prometheus_client import Counter, Gauge, Histogram
+    from prometheus_client import Counter, Gauge
 
     EVENTS_PUBLISHED = Counter(
         "tara_events_published_total",
@@ -20,14 +20,9 @@ try:
         "Outbox rows awaiting publication.",
         ["service"],
     )
-    DEPENDENCY_LATENCY = Histogram(
-        "tara_dependency_latency_seconds",
-        "Latency of synchronous calls to other services.",
-        ["dependency", "service"],
-    )
     _AVAILABLE = True
 except ImportError:  # pragma: no cover - metrics optional at import time
-    EVENTS_PUBLISHED = OUTBOX_PENDING = DEPENDENCY_LATENCY = None
+    EVENTS_PUBLISHED = OUTBOX_PENDING = None
     _AVAILABLE = False
 
 

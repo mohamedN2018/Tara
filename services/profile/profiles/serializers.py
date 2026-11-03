@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.validators import EmailValidator, URLValidator
 from rest_framework import serializers
 
 from .models import (
@@ -69,7 +71,14 @@ class MyProfileSerializer(serializers.ModelSerializer):
         ]
 
 
+# Text fields, unbounded in the database (the web app allows 160 for intro).
+MAX_INTRO = 500
+MAX_PAGE_DESCRIPTION = 2000
+
+
 class ProfileUpdateSerializer(serializers.ModelSerializer):
+    intro = serializers.CharField(max_length=MAX_INTRO, required=False, allow_blank=True)
+
     class Meta:
         model = UserProfile
         fields = [
@@ -95,11 +104,61 @@ class FieldPrivacyBulkSerializer(serializers.Serializer):
     items = FieldPrivacyItemSerializer(many=True)
 
 
+# Page contact details: known keys only, short strings, links over http(s) only.
+CONTACT_LINK_KEYS = frozenset(
+    {"website", "facebook", "instagram", "x", "linkedin", "youtube", "tiktok"}
+)
+CONTACT_PHONE_KEYS = frozenset({"phone", "whatsapp"})
+CONTACT_KEYS = CONTACT_LINK_KEYS | CONTACT_PHONE_KEYS | {"email"}
+MAX_CONTACT_VALUE = 200
+_PHONE_CHARS = frozenset("+0123456789 -()")
+_validate_link = URLValidator(schemes=["http", "https"])
+_validate_email = EmailValidator()
+
+
+class ContactField(serializers.DictField):
+    """``{"website": "https://...", "phone": "+20 ...", "email": "..."}``.
+
+    Blank values are dropped. A link must be http(s): ``javascript:`` and
+    ``data:`` never reach a page that renders it as ``href``.
+    """
+
+    child = serializers.CharField(max_length=MAX_CONTACT_VALUE, allow_blank=True)
+
+    def to_internal_value(self, data):
+        value = super().to_internal_value(data)
+        unknown = sorted(set(value) - CONTACT_KEYS)
+        if unknown:
+            raise serializers.ValidationError(f"Unknown contact keys: {', '.join(unknown)}.")
+        clean = {}
+        errors = {}
+        for key, text in value.items():
+            text = text.strip()
+            if not text:
+                continue
+            try:
+                if key in CONTACT_LINK_KEYS:
+                    _validate_link(text)
+                elif key == "email":
+                    _validate_email(text)
+                elif not set(text) <= _PHONE_CHARS or not any(c.isdigit() for c in text):
+                    raise DjangoValidationError("Enter a phone number.")
+            except DjangoValidationError as exc:
+                errors[key] = exc.messages
+                continue
+            clean[key] = text
+        if errors:
+            raise serializers.ValidationError(errors)
+        return clean
+
+
 class PageUpdateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=120, required=False)
     category = serializers.CharField(max_length=80, required=False, allow_blank=True)
-    description = serializers.CharField(required=False, allow_blank=True)
-    contact = serializers.DictField(required=False)
+    description = serializers.CharField(
+        max_length=MAX_PAGE_DESCRIPTION, required=False, allow_blank=True
+    )
+    contact = ContactField(required=False)
     location = serializers.CharField(max_length=160, required=False, allow_blank=True)
     # `suspended` belongs to moderation, so it can be neither set nor lifted here.
     status = serializers.ChoiceField(
@@ -111,8 +170,10 @@ class PageCreateSerializer(serializers.Serializer):
     handle = serializers.RegexField(r"^[a-zA-Z0-9_]{3,30}$")
     name = serializers.CharField(max_length=120)
     category = serializers.CharField(max_length=80, required=False, allow_blank=True)
-    description = serializers.CharField(required=False, allow_blank=True)
-    contact = serializers.DictField(required=False)
+    description = serializers.CharField(
+        max_length=MAX_PAGE_DESCRIPTION, required=False, allow_blank=True
+    )
+    contact = ContactField(required=False)
     location = serializers.CharField(max_length=160, required=False, allow_blank=True)
 
 

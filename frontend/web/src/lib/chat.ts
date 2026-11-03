@@ -1,5 +1,6 @@
 // Pure message-list helpers. The API pages newest first; the UI keeps a single
 // list oldest first, so "last" is always the true newest message.
+import { isHeic } from "@/lib/heic";
 import type { ConversationMemberState, Message, MessageReaction } from "@/types";
 
 function compare(a: Message, b: Message): number {
@@ -34,31 +35,6 @@ export function reactionSummary(reactions: MessageReaction[]): { type: string; c
   const counts = new Map<string, number>();
   for (const r of reactions) counts.set(r.type, (counts.get(r.type) ?? 0) + 1);
   return [...counts].map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count);
-}
-
-/** Has any other member read my latest message? */
-export function isSeenByOthers(
-  messages: Message[],
-  states: ConversationMemberState[],
-  myId: string,
-): boolean {
-  return states.some(
-    (s) => s.account_id !== myId && isSeen(messages, s.last_read_message_id, myId),
-  );
-}
-
-/**
- * Has the peer read my latest message? The receipt must be in the loaded list;
- * a receipt for a message at or after mine means mine was read too.
- */
-export function isSeen(messages: Message[], readUpToId: string | null, myId: string): boolean {
-  if (!readUpToId) return false;
-  const readIndex = messages.findIndex((m) => m.id === readUpToId);
-  if (readIndex < 0) return false;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].sender_id === myId) return readIndex >= i;
-  }
-  return false;
 }
 
 // ---- delivery ticks -------------------------------------------------------------
@@ -132,12 +108,13 @@ export type AttachmentKind = "image" | "video" | "file";
 
 export const MAX_VIDEO_BYTES = 64 * 1024 * 1024;
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
-export const ATTACH_ACCEPT = "image/*,video/mp4,video/webm,application/pdf";
+export const ATTACH_ACCEPT = "image/*,.heic,.heif,video/mp4,video/webm,application/pdf";
 
 /** What a picked file becomes in chat, or null when chat does not take it. */
-export function attachmentKind(file: { type: string }): AttachmentKind | null {
+export function attachmentKind(file: { type: string; name?: string }): AttachmentKind | null {
   const type = file.type.toLowerCase();
-  if (type.startsWith("image/")) return "image";
+  // An iPhone photo can come with no type at all; media converts HEIC to JPEG.
+  if (type.startsWith("image/") || isHeic(file)) return "image";
   if (type === "video/mp4" || type === "video/webm") return "video";
   if (type === "application/pdf") return "file";
   return null;
@@ -165,4 +142,32 @@ export function formatBytes(bytes: number | null | undefined, locale = "en"): st
 /** Badge text for an unread count. */
 export function badgeText(count: number): string {
   return count > 99 ? "99+" : String(count);
+}
+
+/** What to show for a message without text: its type, with an icon. */
+export function typePreview(type: string, t: (key: string) => string): string {
+  if (type === "image") return `📷 ${t("messages.photo")}`;
+  if (type === "voice" || type === "audio") return `🎤 ${t("messages.voiceNote")}`;
+  if (type === "video") return `🎬 ${t("messages.video")}`;
+  if (type === "file") return `📄 ${t("messages.file")}`;
+  return "…";
+}
+
+/** A conversation's title: its own, or the other members' names in the UI's list style. */
+export function conversationTitle(
+  c: { title?: string | null; members: string[] },
+  selfId: string | undefined,
+  label: (id: string) => string,
+  locale: string,
+  fallback: string,
+): string {
+  if (c.title) return c.title;
+  const names = c.members.filter((m) => m !== selfId).map(label);
+  if (!names.length) return fallback;
+  try {
+    // "a وb" in Arabic, "a, b" in English.
+    return new Intl.ListFormat(locale, { style: "short", type: "unit" }).format(names);
+  } catch {
+    return names.join(", ");
+  }
 }

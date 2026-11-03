@@ -55,12 +55,13 @@ def _unavailable() -> TaraAPIError:
     )
 
 
-def _request(method: str, path: str, body: dict | None = None):
+def _request(method: str, path: str, body: dict | None = None, params: dict | None = None):
     def _call():
         resp = requests.request(
             method,
             f"{settings.MEDIA_INTERNAL_URL}/internal/v1/{path}",
             json=body,
+            params=params,
             headers={"Authorization": f"Bearer {_internal_token()}"},
             timeout=settings.MEDIA_CALL_TIMEOUT,
         )
@@ -93,12 +94,16 @@ def lookup(media_ids: list[str]) -> dict[str, MediaInfo]:
     }
 
 
-def signed(media_id: str) -> dict:
+def signed(media_id: str, filename: str | None = None) -> dict:
     """The asset with presigned URLs (``url`` is null until it is ready).
 
+    ``filename`` is the name a downloaded file, audio or voice note is saved
+    under (media sanitises it into ``Content-Disposition: attachment``).
     Raises ``MediaNotFound`` when media has no such asset.
     """
-    data = _request("GET", f"media/{media_id}/")
+    data = _request(
+        "GET", f"media/{media_id}/", params={"filename": filename} if filename else None
+    )
     if data is None:
         raise MediaNotFound(media_id)
     return data

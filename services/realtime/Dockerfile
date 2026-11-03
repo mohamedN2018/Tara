@@ -34,4 +34,8 @@ USER appuser
 EXPOSE 8000
 ENTRYPOINT ["/app/entrypoint.sh"]
 # Serve HTTP (health/metrics) + WebSocket via Daphne (ASGI).
-CMD ["daphne", "-b", "0.0.0.0", "-p", "8000", "config.asgi:application"]
+# Oversized WebSocket frames are refused from the header, before buffering
+# (the consumer's own 16 KiB check only runs on a complete message).
+CMD ["daphne", "-b", "0.0.0.0", "-p", "8000", \
+     "--websocket-max-message-size", "65536", "--websocket-max-frame-size", "65536", \
+     "config.asgi:application"]

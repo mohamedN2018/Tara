@@ -132,6 +132,7 @@ CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", not bool(RABBITM
 CELERY_BEAT_SCHEDULE = {
     "drain-outbox": {"task": "tara_events.publish_outbox", "schedule": 2.0},
     "purge-events": {"task": "tara_events.purge_events", "schedule": 3600.0},
+    "expire-stale-uploads": {"task": "media.expire_stale_uploads", "schedule": 900.0},
 }
 
 CORS_ALLOWED_ORIGINS = env_list("MEDIA_CORS_ORIGINS", "http://localhost:5173")

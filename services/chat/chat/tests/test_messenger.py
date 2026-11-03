@@ -13,6 +13,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from chat import services
+from chat.media_client import signed as real_signed  # before the fake replaces it
 from chat.models import (
     BlockedPair,
     Conversation,
@@ -571,3 +572,234 @@ def test_presence_peers_are_dm_peers_without_blocks():
     assert _internal(APIClient(), "media-internal").get(url).status_code == 401
     peers = _internal(APIClient()).get(url).json()["data"]["peers"]
     assert peers == [friend]
+
+
+# ---- hardening (review) --------------------------------------------------------
+
+
+def _envelope(event_type, payload):
+    from tara_events.envelope import EventEnvelope
+
+    return EventEnvelope(
+        event_type=event_type, subject_id="s", producer="test-service", payload=payload
+    )
+
+
+def test_added_group_member_sees_no_earlier_history_and_nothing_unread(client_for):
+    admin, early, late = _acct(), _acct(), _acct()
+    group = services.create_group(admin, [early], "g")
+    _send(admin, group, "before you joined")
+    services.add_members(admin, str(group.id), [late])
+    client = client_for(late)
+
+    assert client.get(reverse("chat:messages", args=[group.id])).json()["data"] == []
+    assert _conv(client, group)["unread_count"] == 0
+    assert client.get(reverse("chat:unread")).json()["data"] == {"messages": 0, "conversations": 0}
+    search = client.get(reverse("chat:message-search"), {"q": "joined"}).json()["data"]
+    assert search == []
+    after = _send(admin, group, "welcome")
+    bodies = [
+        m["body"] for m in client.get(reverse("chat:messages", args=[group.id])).json()["data"]
+    ]
+    assert bodies == ["welcome"]
+
+    # Leaving and coming back does not reveal what was said in between.
+    services.remove_member(late, str(group.id), late)
+    _send(admin, group, "while you were away")
+    services.add_members(admin, str(group.id), [late])
+    assert client.get(reverse("chat:messages", args=[group.id])).json()["data"] == []
+    assert _conv(client, group)["unread_count"] == 0
+    assert client.get(reverse("chat:message", args=[after.id])).status_code == 404
+
+
+def test_removed_member_loses_live_subscriptions():
+    admin, member = _acct(), _acct()
+    group = services.create_group(admin, [member], "g")
+    services.remove_member(admin, str(group.id), member)
+    event = _events("conversation.member.changed")[-1]
+    assert (event["action"], event["revoked"]) == ("removed", [member])
+    assert member in event["recipients"]
+
+
+def test_block_revokes_shared_thread_subscriptions_silently():
+    from chat import handlers
+
+    a, b, dm = _dm()
+    group = services.create_group(a, [b], "g")
+    handlers.on_user_blocked(_envelope("user.blocked", {"blocker_id": a, "blocked_id": b}))
+    revocations = [e for e in _events("conversation.member.changed") if e["action"] == "blocked"]
+    assert [(e["conversation_id"], e["recipients"]) for e in revocations] == [(str(dm.id), [])]
+    assert revocations[0]["revoked"] == sorted([a, b])
+    # Re-delivery of the same block revokes nothing twice.
+    handlers.on_user_blocked(_envelope("user.blocked", {"blocker_id": a, "blocked_id": b}))
+    assert len([e for e in _events("conversation.member.changed") if e["action"] == "blocked"]) == 1
+    # Realtime's subscribe check now refuses the DM, not the shared group.
+    assert services.may_subscribe(b, str(dm.id)) is False
+    assert services.may_subscribe(b, str(group.id)) is True
+
+
+def test_internal_membership_refuses_blocked_pairs_and_is_not_throttled(monkeypatch):
+    from rest_framework.test import APIClient
+
+    from tara_common.throttling import ReadThrottle
+
+    a, b, dm = _dm()
+    url = reverse("chat_internal:membership", args=[dm.id, b])
+    monkeypatch.setattr(ReadThrottle, "rate", "1/min", raising=False)
+    client = _internal(APIClient())
+    for _ in range(3):  # one service calls for every socket: no per-IP limit
+        resp = client.get(url)
+        assert resp.status_code == 200 and resp.json()["data"]["is_member"] is True
+    BlockedPair.objects.create(blocker_id=a, blocked_id=b)
+    assert client.get(url).json()["data"]["is_member"] is False
+
+
+def test_overturned_moderation_removal_restores_the_message(client_for):
+    from chat import handlers
+
+    a, b, conv = _dm()
+    msg = _send(a, conv, "appealed")
+    payload = {"target_type": "message", "target_id": str(msg.id), "action": "remove"}
+    handlers.on_moderation_actioned(_envelope("moderation.actioned", payload))
+    handlers.on_moderation_actioned(_envelope("moderation.actioned", payload))
+    assert len([e for e in _events("message.deleted") if e["scope"] == "moderation"]) == 1
+    assert client_for(b).get(reverse("chat:message", args=[msg.id])).status_code == 404
+    handlers.on_moderation_actioned(
+        _envelope("moderation.actioned", {**payload, "action": "approve"})
+    )
+    assert client_for(b).get(reverse("chat:message", args=[msg.id])).status_code == 200
+
+
+def test_dm_creation_survives_losing_the_race(monkeypatch):
+    a, b, first = _dm()
+    monkeypatch.setattr(services, "_find_pair", lambda key: None)  # the other request won
+    again = services.create_or_get_dm(b, a)
+    assert again.id == first.id
+    assert ConversationMember.objects.filter(conversation=first).count() == 2
+
+
+def test_edit_cannot_write_back_a_body_deleted_meanwhile(client_for, monkeypatch):
+    a, _, conv = _dm()
+    msg = _send(a, conv, "secret")
+    real = services.get_visible_message
+
+    def deleted_after_the_check(actor_id, message_id):
+        found = real(actor_id, message_id)
+        # A delete for everyone lands between the check and the write.
+        services._wipe(Message.objects.get(id=msg.id), deleted_by=a)
+        return found
+
+    monkeypatch.setattr(services, "get_visible_message", deleted_after_the_check)
+    resp = client_for(a).patch(
+        reverse("chat:message", args=[msg.id]), {"body": "new"}, format="json"
+    )
+    assert resp.status_code == 409
+    msg.refresh_from_db()
+    assert (msg.body, msg.body_norm) == ("", "")
+    assert not msg.edits.exists()
+
+
+def test_group_creation_respects_the_member_cap(client_for):
+    me = _acct()
+    resp = client_for(me).post(
+        reverse("chat:conversations"),
+        {"type": "group", "member_ids": [_acct() for _ in range(services.MAX_GROUP_MEMBERS)]},
+        format="json",
+    )
+    assert resp.status_code == 400
+    assert not Conversation.objects.filter(type="group").exists()
+
+
+def test_new_group_member_sees_no_quote_or_pin_from_before_joining(client_for):
+    admin, early, late = _acct(), _acct(), _acct()
+    group = services.create_group(admin, [early], "g")
+    old = _send(admin, group, "old secret")
+    services.pin_message(admin, str(group.id), str(old.id))
+    services.add_members(admin, str(group.id), [late])
+    reply = _send(early, group, "agreed", reply_to_id=str(old.id))
+    client = client_for(late)
+
+    [listed] = client.get(reverse("chat:messages", args=[group.id])).json()["data"]
+    assert listed["id"] == str(reply.id)
+    assert listed["reply_preview"]["body"] == "" and listed["reply_preview"]["deleted"] is True
+    detail = client.get(reverse("chat:message", args=[reply.id])).json()["data"]
+    assert detail["reply_preview"]["body"] == ""
+    assert _conv(client, group)["pinned_messages"] == []
+    # Members who were there still see both.
+    early_view = client_for(early).get(reverse("chat:message", args=[reply.id])).json()["data"]
+    assert early_view["reply_preview"]["body"] == "old secret"
+    assert [p["id"] for p in _conv(client_for(early), group)["pinned_messages"]] == [str(old.id)]
+
+
+def test_member_removed_mid_send_cannot_post(monkeypatch):
+    admin, member = _acct(), _acct()
+    group = services.create_group(admin, [member], "g")
+
+    def removed_meanwhile(sender_id, items):
+        services.remove_member(admin, str(group.id), member)
+        return []
+
+    monkeypatch.setattr(services, "_validate_attachments", removed_meanwhile)
+    with pytest.raises(services.TaraAPIError) as exc:
+        _send(member, group, "sneaky")
+    assert exc.value.http_status == 404
+    assert not Message.objects.filter(conversation=group).exists()
+
+
+def test_attachment_url_asks_media_for_the_download_name(client_for, media):
+    a, b, conv = _dm()
+    named = media.add(a, "file", mime="application/pdf")
+    unnamed = media.add(a, "image")
+    msg = _send(
+        a,
+        conv,
+        "",
+        attachments=[
+            {"media_id": named, "kind": "file", "file_name": "uploads/report.pdf"},
+            {"media_id": unnamed, "kind": "image"},
+        ],
+    )
+    client = client_for(b)
+    assert client.get(reverse("chat:message-attachment", args=[msg.id, named])).status_code == 200
+    assert client.get(reverse("chat:message-attachment", args=[msg.id, unnamed])).status_code == 200
+    assert media.signed_names == ["report.pdf", None]
+
+
+def test_media_client_sends_filename_only_when_there_is_one(monkeypatch, settings):
+    from chat import media_client
+
+    settings.MEDIA_INTERNAL_URL = "http://media.test"
+    calls = []
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": {"id": "m", "url": "u"}}
+
+    def fake_request(method, url, **kwargs):
+        calls.append((method, url, kwargs["params"]))
+        return Response()
+
+    monkeypatch.setattr(media_client.requests, "request", fake_request)
+    real_signed(str(uuid.UUID(int=1)), filename="a b.pdf")
+    real_signed(str(uuid.UUID(int=1)))
+    path = f"http://media.test/internal/v1/media/{uuid.UUID(int=1)}/"
+    assert calls == [("GET", path, {"filename": "a b.pdf"}), ("GET", path, None)]
+
+
+def test_pins_leave_out_messages_the_viewer_hid(client_for):
+    a, b, conv = _dm()
+    kept, hidden = _send(a, conv, "kept"), _send(a, conv, "hidden")
+    for msg in (kept, hidden):
+        services.pin_message(a, str(conv.id), str(msg.id))
+    services.hide_for_me(b, str(hidden.id))
+
+    assert [p["id"] for p in _conv(client_for(b), conv)["pinned_messages"]] == [str(kept.id)]
+    inbox = client_for(b).get(reverse("chat:conversations")).json()["data"]
+    assert [p["id"] for p in inbox[0]["pinned_messages"]] == [str(kept.id)]
+    # Only for the member who hid it.
+    assert len(_conv(client_for(a), conv)["pinned_messages"]) == 2

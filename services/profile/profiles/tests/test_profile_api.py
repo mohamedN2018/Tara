@@ -44,7 +44,7 @@ def test_account_registered_provisions_profile_idempotently():
 
 def test_get_and_patch_my_profile_emits_event(auth_client):
     account_id = _acct()
-    services.ensure_profile(account_id, email="me@tara.local")
+    services.ensure_profile(account_id)
     client = auth_client(account_id)
 
     resp = client.get(reverse("profiles:me"))
@@ -63,7 +63,7 @@ def test_get_and_patch_my_profile_emits_event(auth_client):
 
 def test_friends_only_profile_hidden_then_visible(auth_client, monkeypatch):
     owner = _acct()
-    profile = services.ensure_profile(owner, email="owner@tara.local")
+    profile = services.ensure_profile(owner)
     profile.visibility = "friends_only"
     profile.bio = "secret bio"
     profile.save()
@@ -92,7 +92,7 @@ def test_friends_only_profile_hidden_then_visible(auth_client, monkeypatch):
 
 def test_blocked_profile_returns_404(auth_client, monkeypatch):
     owner = _acct()
-    profile = services.ensure_profile(owner, email="owner2@tara.local")
+    profile = services.ensure_profile(owner)
     viewer = _acct()
     BlockedPair.objects.create(blocker_id=owner, blocked_id=viewer)  # owner blocked viewer
     monkeypatch.setattr("profiles.privacy.get_relationship", lambda a, b: Relationship())
@@ -103,7 +103,7 @@ def test_blocked_profile_returns_404(auth_client, monkeypatch):
 
 def test_field_privacy_hides_bio_from_public(auth_client, monkeypatch):
     owner = _acct()
-    profile = services.ensure_profile(owner, email="owner3@tara.local")
+    profile = services.ensure_profile(owner)
     profile.bio = "private bio"
     profile.save()
     services.set_field_privacy(profile, "bio", "private")
@@ -155,7 +155,7 @@ def test_create_page_and_member_permissions(auth_client):
 
 def test_internal_snapshot_requires_internal_token(api_client):
     owner = _acct()
-    services.ensure_profile(owner, email="snap@tara.local")
+    services.ensure_profile(owner)
     url = reverse("profile-snapshot", args=[owner])
 
     assert api_client.get(url).status_code == 401

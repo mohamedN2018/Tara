@@ -628,6 +628,11 @@ services:
       dockerfile: services/realtime/Dockerfile
     image: tara/realtime:dev
     profiles: ["core"]
+    # Daphne drops oversized WebSocket frames/messages before buffering them
+    # (the consumer itself closes above 16 KiB); Traefik cannot limit WS frames.
+    command: ["daphne", "-b", "0.0.0.0", "-p", "8000",
+              "--websocket-max-message-size", "65536", "--websocket-max-frame-size", "65536",
+              "config.asgi:application"]
     env_file:
       - ../../.env
     environment:

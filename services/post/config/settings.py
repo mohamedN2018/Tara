@@ -79,6 +79,8 @@ REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "tara_common.exceptions.tara_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
+# Post and comment reports per account (each can open a moderation case).
+POST_REPORT_RATE = os.getenv("POST_REPORT_RATE", "20/hour")
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Tara Post API",

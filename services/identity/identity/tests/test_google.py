@@ -119,6 +119,7 @@ def test_first_sign_in_creates_verified_active_account(api_client, google_on):
     registered = OutboxEvent.objects.get(event_type="account.registered")
     assert registered.payload["payload"]["email_verified"] is True
     assert registered.payload["payload"]["display_name"] == "Google Person"
+    assert "email" not in registered.payload["payload"]  # addresses stay in identity
     assert OutboxEvent.objects.filter(event_type="account.verified").exists()
     assert SecurityEvent.objects.filter(
         account=account, type="login_succeeded", metadata__method="google"
@@ -232,7 +233,7 @@ def test_link_then_sign_in_with_google_reaches_the_password_account(
     _login(api_client, active_account.email)
     resp = api_client.post(
         reverse("identity:me-google"),
-        {"credential": id_token(email="other.address@gmail.com")},
+        {"password": PASSWORD, "credential": id_token(email="other.address@gmail.com")},
         format="json",
     )
     assert resp.status_code == 200, resp.content
@@ -253,8 +254,18 @@ def test_link_then_sign_in_with_google_reaches_the_password_account(
 def test_link_is_idempotent_for_the_same_identity(api_client, google_on, active_account):
     _login(api_client, active_account.email)
     url = reverse("identity:me-google")
-    assert api_client.post(url, {"credential": id_token()}, format="json").status_code == 200
-    assert api_client.post(url, {"credential": id_token()}, format="json").status_code == 200
+    assert (
+        api_client.post(
+            url, {"password": PASSWORD, "credential": id_token()}, format="json"
+        ).status_code
+        == 200
+    )
+    assert (
+        api_client.post(
+            url, {"password": PASSWORD, "credential": id_token()}, format="json"
+        ).status_code
+        == 200
+    )
     assert SocialIdentity.objects.count() == 1
 
 
@@ -263,7 +274,11 @@ def test_cannot_link_google_identity_owned_by_another_account(
 ):
     _sign_in(api_client, id_token())  # person@gmail.com owns google-sub-1
     _login(api_client, active_account.email)
-    resp = api_client.post(reverse("identity:me-google"), {"credential": id_token()}, format="json")
+    resp = api_client.post(
+        reverse("identity:me-google"),
+        {"password": PASSWORD, "credential": id_token()},
+        format="json",
+    )
     assert resp.status_code == 409
     assert not SocialIdentity.objects.filter(account=active_account).exists()
 
@@ -277,7 +292,7 @@ def test_cannot_link_google_address_that_is_another_accounts_email(
     _login(api_client, active_account.email)
     resp = api_client.post(
         reverse("identity:me-google"),
-        {"credential": id_token(email="taken@gmail.com", sub="sub-taken")},
+        {"password": PASSWORD, "credential": id_token(email="taken@gmail.com", sub="sub-taken")},
         format="json",
     )
     assert resp.status_code == 409
@@ -286,9 +301,11 @@ def test_cannot_link_google_address_that_is_another_accounts_email(
 def test_second_google_account_needs_unlink_first(api_client, google_on, active_account):
     _login(api_client, active_account.email)
     url = reverse("identity:me-google")
-    api_client.post(url, {"credential": id_token()}, format="json")
+    api_client.post(url, {"password": PASSWORD, "credential": id_token()}, format="json")
     resp = api_client.post(
-        url, {"credential": id_token(sub="sub-2", email="second@gmail.com")}, format="json"
+        url,
+        {"password": PASSWORD, "credential": id_token(sub="sub-2", email="second@gmail.com")},
+        format="json",
     )
     assert resp.status_code == 409
     assert resp.json()["error"]["code"] == "already_linked"
@@ -297,7 +314,9 @@ def test_second_google_account_needs_unlink_first(api_client, google_on, active_
 def test_link_with_invalid_credential_is_400(api_client, google_on, active_account):
     _login(api_client, active_account.email)
     resp = api_client.post(
-        reverse("identity:me-google"), {"credential": id_token(key=_OTHER_KEY)}, format="json"
+        reverse("identity:me-google"),
+        {"password": PASSWORD, "credential": id_token(key=_OTHER_KEY)},
+        format="json",
     )
     # 400, not 401: the session itself is valid.
     assert resp.status_code == 400
@@ -308,8 +327,8 @@ def test_link_with_invalid_credential_is_400(api_client, google_on, active_accou
 def test_unlink_keeps_password_login(api_client, google_on, active_account):
     _login(api_client, active_account.email)
     url = reverse("identity:me-google")
-    api_client.post(url, {"credential": id_token()}, format="json")
-    resp = api_client.delete(url)
+    api_client.post(url, {"password": PASSWORD, "credential": id_token()}, format="json")
+    resp = api_client.delete(url, {"password": PASSWORD}, format="json")
     assert resp.status_code == 200
     assert resp.json()["data"]["google"]["linked"] is False
     assert SecurityEvent.objects.filter(account=active_account, type="google_unlinked").exists()
@@ -335,3 +354,38 @@ def test_google_only_account_has_no_password_login(api_client, google_on):
         reverse("identity:login"), {"email": "person@gmail.com", "password": ""}, format="json"
     )
     assert resp.status_code in (400, 401)
+
+
+# ---- re-authentication for adding or removing a sign-in method --------------
+
+
+def test_link_requires_the_current_password(api_client, google_on, active_account):
+    _login(api_client, active_account.email)
+    url = reverse("identity:me-google")
+    missing = api_client.post(url, {"credential": id_token()}, format="json")
+    assert missing.status_code == 400
+    assert missing.json()["error"]["details"][0] == {
+        "field": "password",
+        "code": "password_required",
+        "message": "Enter your current password to continue.",
+    }
+    wrong = api_client.post(
+        url, {"credential": id_token(), "password": "NotMyPassw0rd!"}, format="json"
+    )
+    assert wrong.status_code == 400
+    detail = wrong.json()["error"]["details"][0]
+    assert (detail["field"], detail["code"]) == ("password", "invalid_password")
+    assert SecurityEvent.objects.filter(account=active_account, type="reauth_failed").exists()
+    assert not SocialIdentity.objects.exists()
+
+
+def test_unlink_requires_the_current_password(api_client, google_on, active_account):
+    _login(api_client, active_account.email)
+    url = reverse("identity:me-google")
+    api_client.post(url, {"credential": id_token(), "password": PASSWORD}, format="json")
+    missing = api_client.delete(url)
+    assert missing.status_code == 400
+    assert missing.json()["error"]["details"][0]["code"] == "password_required"
+    wrong = api_client.delete(url, {"password": "NotMyPassw0rd!"}, format="json")
+    assert wrong.json()["error"]["details"][0]["code"] == "invalid_password"
+    assert SocialIdentity.objects.filter(account=active_account).exists()

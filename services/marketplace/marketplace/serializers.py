@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import uuid
+
 from rest_framework import serializers
 
 from .models import Listing, ListingMedia, MarketplaceCategory, SellerReview
-from .money import ALLOWED_CURRENCIES, PRICE_TYPES, effective_price
-from .services import AVAILABILITY, PUBLIC_STATUSES, availability_of
+from .money import ALLOWED_CURRENCIES, DEFAULT_CURRENCY, PRICE_TYPES, effective_price
+from .services import AVAILABILITY, MAX_COMPARE, PUBLIC_STATUSES, availability_of
 
 _MONEY = serializers.DecimalField(max_digits=19, decimal_places=4, read_only=True)
 
@@ -37,7 +39,7 @@ class ListingCreateSerializer(serializers.Serializer):
     # Omitted or null: no price (negotiable). Checked as a whole in money.resolve_pricing.
     price = _money_field(required=False, default=None)
     sale_price = _money_field(required=False, default=None)
-    currency = serializers.CharField(max_length=8, default="USD")
+    currency = serializers.CharField(max_length=8, default=DEFAULT_CURRENCY)
     condition = serializers.ChoiceField(
         choices=Listing.Condition.values, default=Listing.Condition.GOOD
     )
@@ -238,8 +240,6 @@ class CompareQuerySerializer(serializers.Serializer):
     ids = serializers.CharField()
 
     def validate_ids(self, value):
-        import uuid
-
         out = []
         for raw in value.split(","):
             item = raw.strip()
@@ -251,8 +251,8 @@ class CompareQuerySerializer(serializers.Serializer):
                 raise serializers.ValidationError("Each id must be a UUID.") from exc
             if item not in out:
                 out.append(item)
-        if not 1 <= len(out) <= 4:
-            raise serializers.ValidationError("Compare between 1 and 4 listings.")
+        if not 1 <= len(out) <= MAX_COMPARE:
+            raise serializers.ValidationError(f"Compare between 1 and {MAX_COMPARE} listings.")
         return out
 
 

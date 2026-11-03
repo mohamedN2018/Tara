@@ -16,6 +16,9 @@ const playing = ref(false);
 const loading = ref(false);
 const failed = ref(false);
 const position = ref(0);
+// Presigned URLs live ~15 minutes: a note not started yet gets a fresh one after this.
+const SRC_TTL_MS = 10 * 60 * 1000;
+let resolvedAt = 0;
 
 function clock(seconds: number): string {
   const whole = Math.max(0, Math.round(seconds));
@@ -36,7 +39,8 @@ async function toggle() {
   failed.value = false;
   loading.value = true;
   try {
-    if (!src.value) {
+    if (!src.value || (el.currentTime === 0 && Date.now() - resolvedAt > SRC_TTL_MS)) {
+      resolvedAt = Date.now();
       src.value = props.messageId
         ? ((await chatService.attachmentUrl(props.messageId, props.mediaId))?.url ?? null)
         : await mediaService.resolveUrl(props.mediaId);

@@ -23,7 +23,6 @@ def on_account_registered(event: EventEnvelope) -> None:
     p = event.payload
     ensure_profile(
         event.subject_id,
-        email=p.get("email", ""),
         display_name=p.get("display_name", ""),
         requested_handle=p.get("handle", ""),
     )

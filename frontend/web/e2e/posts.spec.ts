@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { expect, test } from "@playwright/test";
 
 import { API, apiAs, expectNoUuid, pageAs, sharedAccounts, unique } from "./helpers";
@@ -123,4 +126,81 @@ test("a failed action shows a toast, not a browser alert", async ({ browser }) =
   await card.getByRole("button", { name: "حذف" }).click();
   await expect(page.getByRole("status").filter({ hasText: "غير مسموح لك بهذا الإجراء" })).toBeVisible();
   expect(dialogs).toBe(0);
+});
+
+test("a comment link opens the reply's thread, scrolls to it and highlights it", async ({ browser }) => {
+  const { a, b } = await sharedAccounts();
+  const marker = unique();
+  const api = await apiAs(a);
+  const { data: post } = await (
+    await api.post(`${API}/posts/`, { data: { body: `deep link ${marker}`, audience: "public", type: "text" } })
+  ).json();
+  const comment = async (path: string, body: string) =>
+    (await (await api.post(`${API}${path}`, { data: { body } })).json()).data as { id: string };
+  // Past the first page of roots (20), so the root itself has to be paged in.
+  const roots: { id: string }[] = [];
+  for (let i = 0; i < 22; i++) roots.push(await comment(`/posts/${post.id}/comments/`, `root ${i} ${marker}`));
+  const root = roots[21];
+  await comment(`/comments/${root.id}/replies/`, `first reply ${marker}`);
+  const reply = await comment(`/comments/${root.id}/replies/`, `target reply ${marker}`);
+  await api.dispose();
+
+  const page = await pageAs(browser, b);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  // No thread hint (a push link): the page has to search the threads.
+  await page.goto(`/posts/${post.id}?comment=${reply.id}`);
+  const target = page.locator(`[data-comment-id="${reply.id}"]`);
+  await expect(target).toContainText(`target reply ${marker}`);
+  await expect(target).toHaveAttribute("data-highlighted", "true");
+  await expect(target).toBeInViewport();
+  await expect(target).toBeFocused();
+  // The highlight is brief.
+  await expect(target).not.toHaveAttribute("data-highlighted", "true", { timeout: 5_000 });
+
+  // With the hint an in-app notification adds, and for a root.
+  await page.goto(`/posts/${post.id}?comment=${reply.id}&thread=${root.id}`);
+  await expect(page.locator(`[data-comment-id="${reply.id}"]`)).toHaveAttribute("data-highlighted", "true");
+  await page.goto(`/posts/${post.id}?comment=${roots[20].id}`);
+  await expect(page.locator(`[data-comment-id="${roots[20].id}"]`)).toBeInViewport();
+  await expectNoUuid(page);
+});
+
+test("an iPhone photo uploads as HEIC and shows a placeholder in the composer", async ({ browser }) => {
+  const { a } = await sharedAccounts();
+  const page = await pageAs(browser, a);
+  await page.goto("/home");
+  const signed: string[] = [];
+  page.on("request", (req) => {
+    if (req.url().includes("/media/uploads/sign/")) signed.push(String(req.postDataJSON()?.mime));
+  });
+
+  await page.getByRole("button", { name: "بماذا تفكر؟" }).click();
+  // An empty type, as Chrome on Windows reports for .heic: the app names it.
+  await page.getByLabel("إضافة صور").last().setInputFiles({
+    name: "IMG_0001.HEIC",
+    mimeType: "",
+    buffer: readFileSync(fileURLToPath(new URL("./fixtures/photo.heic", import.meta.url))),
+  });
+  await expect(page.getByTestId("heic-placeholder")).toBeVisible();
+  expect(signed).toEqual(["image/heic"]);
+
+  const text = `heic ${unique()}`;
+  await page.getByRole("textbox", { name: "بماذا تفكر؟" }).fill(text);
+  const created = page.waitForResponse((r) => r.url().endsWith("/posts/") && r.request().method() === "POST");
+  await page.getByRole("button", { name: "نشر", exact: true }).click();
+  const { data: post } = await (await created).json();
+
+  // The server stores a JPEG copy, which any browser can draw once processed.
+  const photo = page.getByTestId("media-grid").locator("img");
+  await expect
+    .poll(
+      async () => {
+        await page.goto(`/posts/${post.id}`);
+        // The URL resolves after the first render; give the tile a moment to appear.
+        if (!(await photo.first().waitFor({ timeout: 5_000 }).then(() => true, () => false))) return 0;
+        return photo.evaluate((img: HTMLImageElement) => img.decode().then(() => img.naturalWidth, () => 0));
+      },
+      { timeout: 45_000 },
+    )
+    .toBeGreaterThan(0);
 });

@@ -5,6 +5,9 @@ from rest_framework import serializers
 
 from .models import AdCreative, AdSet, Campaign
 
+# Budget currencies ads accepts (ISO 4217); billing in others is not supported.
+CAMPAIGN_CURRENCIES = ("AED", "BHD", "EGP", "EUR", "GBP", "JOD", "KWD", "OMR", "QAR", "SAR", "USD")
+
 
 class CampaignCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=160)
@@ -13,6 +16,20 @@ class CampaignCreateSerializer(serializers.Serializer):
     currency = serializers.CharField(max_length=3, required=False, default="USD")
     schedule_start = serializers.DateTimeField(required=False, allow_null=True)
     schedule_end = serializers.DateTimeField(required=False, allow_null=True)
+
+    def validate_currency(self, value: str) -> str:
+        code = value.strip().upper()
+        if code not in CAMPAIGN_CURRENCIES:
+            raise serializers.ValidationError("This currency is not supported.")
+        return code
+
+    def validate(self, attrs):
+        start, end = attrs.get("schedule_start"), attrs.get("schedule_end")
+        if start is not None and end is not None and end <= start:
+            raise serializers.ValidationError(
+                {"schedule_end": "schedule_end must be after schedule_start."}
+            )
+        return attrs
 
 
 class CampaignSerializer(serializers.ModelSerializer):

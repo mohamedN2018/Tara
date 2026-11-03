@@ -7,6 +7,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from tara_common.pagination import CursorPagination
@@ -14,7 +15,7 @@ from tara_common.responses import data_response
 from tara_resilience.idempotency import idempotent
 
 from . import serve_tokens, services
-from .models import IdempotencyRecord
+from .models import Campaign, IdempotencyRecord
 from .permissions import IsAdReviewer
 from .serializers import (
     AdSetCreateSerializer,
@@ -40,10 +41,9 @@ class CampaignsView(APIView):
 
     @extend_schema(responses={200: CampaignSerializer(many=True)}, tags=["ads"])
     def get(self, request: Request) -> Response:
-        advertiser = services.ensure_advertiser(_me(request))
-        return data_response(
-            CampaignSerializer(advertiser.campaigns.order_by("-created_at"), many=True).data
-        )
+        # A read never creates the advertiser account; the first campaign does.
+        campaigns = Campaign.objects.filter(advertiser__owner_account_id=_me(request))
+        return data_response(CampaignSerializer(campaigns.order_by("-created_at"), many=True).data)
 
     @extend_schema(
         request=CampaignCreateSerializer, responses={201: CampaignSerializer}, tags=["ads"]
@@ -116,7 +116,7 @@ class ReviewQueueView(APIView):
     @extend_schema(responses={200: ReviewQueueSerializer(many=True)}, tags=["ads"])
     def get(self, request: Request) -> Response:
         paginator = CursorPagination()
-        page = paginator.paginate_queryset(services.review_queue(), request)
+        page = paginator.paginate_queryset(services.review_queue(_me(request)), request)
         return paginator.get_paginated_response(ReviewQueueSerializer(page, many=True).data)
 
 
@@ -140,6 +140,7 @@ class EventsView(APIView):
     """Impression/click ingest. Deduplicated via Idempotency-Key; rate-limited."""
 
     permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
     throttle_scope = "ad_events"
 
     @extend_schema(request=EventSerializer, responses={202: None}, tags=["ads"])

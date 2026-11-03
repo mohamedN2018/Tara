@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Activity, ShieldAlert } from "lucide-vue-next";
+import { Activity, Scale, ShieldAlert } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -9,7 +9,8 @@ import AppShell from "@/components/layout/AppShell.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
-import { adminService, type HealthOverview, type ModerationCase } from "@/services/admin";
+import { relativeTime } from "@/lib/format";
+import { adminService, type Appeal, type HealthOverview, type ModerationCase } from "@/services/admin";
 import { useAuthStore } from "@/stores/auth";
 import { useToastStore } from "@/stores/toasts";
 
@@ -23,6 +24,10 @@ const cases = ref<ModerationCase[]>([]);
 const loading = ref(true);
 const casesError = ref(false);
 const acting = ref("");
+const appeals = ref<Appeal[]>([]);
+const appealsCursor = ref<string | null>(null);
+const appealsError = ref(false);
+const loadingMoreAppeals = ref(false);
 
 /** Translate a backend enum value, showing it raw if a new one appears. */
 function enumLabel(group: string, value: string): string {
@@ -34,15 +39,22 @@ async function load() {
   loading.value = true;
   casesError.value = false;
   try {
-    const [overview, queue] = await Promise.all([
+    appealsError.value = false;
+    const [overview, queue, appealPage] = await Promise.all([
       adminService.health().catch(() => null),
       adminService.cases().catch(() => {
         casesError.value = true;
         return [];
       }),
+      adminService.appeals("open").catch(() => {
+        appealsError.value = true;
+        return null;
+      }),
     ]);
     health.value = overview;
     cases.value = queue;
+    appeals.value = appealPage?.data ?? [];
+    appealsCursor.value = appealPage?.page.next_cursor ?? null;
   } finally {
     loading.value = false;
   }
@@ -57,6 +69,35 @@ async function act(id: string, action: string) {
     toasts.success(t("admin.actionDone"));
   } catch (e) {
     toasts.error(e); // The case stays in the queue: nothing happened to it.
+  } finally {
+    acting.value = "";
+  }
+}
+
+async function moreAppeals() {
+  if (!appealsCursor.value || loadingMoreAppeals.value) return;
+  loadingMoreAppeals.value = true;
+  try {
+    const page = await adminService.appeals("open", appealsCursor.value);
+    const known = new Set(appeals.value.map((a) => a.id));
+    appeals.value = [...appeals.value, ...page.data.filter((a) => !known.has(a.id))];
+    appealsCursor.value = page.page.next_cursor;
+  } catch (e) {
+    toasts.error(e);
+  } finally {
+    loadingMoreAppeals.value = false;
+  }
+}
+
+async function resolveAppeal(id: string, status: "upheld" | "overturned") {
+  if (acting.value) return;
+  acting.value = id;
+  try {
+    await adminService.resolveAppeal(id, status);
+    appeals.value = appeals.value.filter((a) => a.id !== id);
+    toasts.success(t("admin.appeals.done"));
+  } catch (e) {
+    toasts.error(e); // The appeal stays open: nothing was decided.
   } finally {
     acting.value = "";
   }
@@ -129,6 +170,36 @@ onMounted(load);
           <button class="btn-primary text-sm" :disabled="acting === c.id" @click="act(c.id, 'remove')">{{ t("admin.remove") }}</button>
         </li>
       </ul>
+
+      <!-- Appeals against moderation decisions -->
+      <h2 class="mb-2 mt-6 flex items-center gap-2 font-semibold">
+        <Scale class="h-5 w-5 text-brand-600 dark:text-brand-300" aria-hidden="true" /> {{ t("admin.appeals.title") }}
+      </h2>
+      <ErrorState v-if="appealsError" @retry="load" />
+      <EmptyState v-else-if="appeals.length === 0">{{ t("admin.appeals.empty") }}</EmptyState>
+      <ul v-else class="space-y-2" data-testid="appeals">
+        <li v-for="a in appeals" :key="a.id" class="card space-y-2 p-3">
+          <p class="text-sm font-medium">
+            {{ enumLabel("targets", a.target_type) }} ·
+            <time :datetime="a.created_at">{{ relativeTime(a.created_at) }}</time>
+          </p>
+          <p class="truncate text-xs text-gray-500 dark:text-gray-400" dir="ltr">{{ a.target_id }}</p>
+          <p class="whitespace-pre-wrap break-words text-sm" dir="auto">{{ a.text }}</p>
+          <div class="flex justify-end gap-2">
+            <button class="btn-ghost text-sm" :disabled="acting === a.id" @click="resolveAppeal(a.id, 'upheld')">
+              {{ t("admin.appeals.uphold") }}
+            </button>
+            <button class="btn-primary text-sm" :disabled="acting === a.id" @click="resolveAppeal(a.id, 'overturned')">
+              {{ t("admin.appeals.overturn") }}
+            </button>
+          </div>
+        </li>
+      </ul>
+      <div v-if="appealsCursor && !appealsError" class="mt-2 flex justify-center">
+        <button class="btn-ghost text-sm" :disabled="loadingMoreAppeals" @click="moreAppeals">
+          {{ loadingMoreAppeals ? t("states.loading") : t("feed.loadMore") }}
+        </button>
+      </div>
     </template>
   </AppShell>
 </template>

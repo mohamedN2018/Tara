@@ -28,6 +28,7 @@ from tara_common.exceptions import TaraAPIError
 
 DEFAULT_LIMIT = 20
 MAX_LIMIT = 50
+_MAX_KEY = Decimal(10) ** 15  # the bound of the numeric(19,4) sort columns
 
 
 @dataclass(frozen=True)
@@ -66,8 +67,13 @@ def _decode(sort: Sort, token: str):
             key = None
         elif sort.kind == "decimal":
             key = Decimal(raw_key)
+            # Outside numeric(19,4), Postgres raises instead of comparing.
+            if not key.is_finite() or abs(key) >= _MAX_KEY:
+                raise ValueError("decimal key out of range")
         else:
             key = datetime.fromisoformat(raw_key)
+            if key.tzinfo is None:
+                raise ValueError("naive datetime key")
         uuid.UUID(row_id)
     except (ValueError, KeyError, TypeError, InvalidOperation, binascii.Error, AttributeError):
         raise _bad_cursor() from None

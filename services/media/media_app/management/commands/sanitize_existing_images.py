@@ -85,6 +85,6 @@ class Command(BaseCommand):
         # Saved per image, so an interrupted run keeps what it did. The etag=""
         # guard keeps a concurrent run from writing over a newer result.
         MediaAsset.objects.filter(id=asset.id, etag="").update(
-            bytes=asset.bytes, etag=asset.etag, updated_at=timezone.now()
+            bytes=asset.bytes, etag=asset.etag, mime=asset.mime, updated_at=timezone.now()
         )
         return True

@@ -170,7 +170,3 @@ def state(account_id: str) -> dict:
 
 def is_online(account_id: str) -> bool:
     return store().state(str(account_id), time.time())[0]
-
-
-def last_seen_now() -> str:
-    return _iso(time.time()) or ""

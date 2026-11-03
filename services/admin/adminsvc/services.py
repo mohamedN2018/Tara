@@ -77,6 +77,19 @@ def _check_one(service: str, url: str) -> dict:
     return {"service": service, "status": status, "latency_ms": latency}
 
 
+def _prune_snapshots(service: str) -> None:
+    """Keep the newest HEALTH_SNAPSHOTS_KEPT rows per service (admin has no beat)."""
+    stale = (
+        ServiceHealthSnapshot.objects.filter(service=service)
+        .order_by("-checked_at")
+        .values_list("id", flat=True)[settings.HEALTH_SNAPSHOTS_KEPT :]
+    )
+    ServiceHealthSnapshot.objects.filter(id__in=list(stale)).delete()
+
+
 def service_health() -> list[dict]:
     """Poll every service's /readyz (circuit-broken). One slow service can't block the rest."""
-    return [_check_one(svc, url) for svc, url in settings.HEALTH_TARGETS.items()]
+    results = [_check_one(svc, url) for svc, url in settings.HEALTH_TARGETS.items()]
+    for svc in settings.HEALTH_TARGETS:
+        _prune_snapshots(svc)
+    return results

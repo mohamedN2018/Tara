@@ -98,6 +98,9 @@ TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-s
 # Social Graph internal API (for friends_only privacy resolution).
 GRAPH_INTERNAL_URL = os.getenv("GRAPH_INTERNAL_URL", "http://graph:8000")
 GRAPH_CALL_TIMEOUT = float(os.getenv("GRAPH_CALL_TIMEOUT", "2.0"))
+# Avatars and covers are checked with media (the owner's own image); fails closed.
+MEDIA_INTERNAL_URL = os.getenv("MEDIA_INTERNAL_URL", "http://media:8000")
+MEDIA_CALL_TIMEOUT = float(os.getenv("MEDIA_CALL_TIMEOUT", "2.0"))
 
 # Events / outbox
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")

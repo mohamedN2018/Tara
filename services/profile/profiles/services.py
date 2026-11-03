@@ -5,12 +5,12 @@ from __future__ import annotations
 import re
 import secrets
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Prefetch, Q
 
 from tara_common.exceptions import Conflict, TaraAPIError
 
-from . import events
+from . import events, media_client
 from .models import (
     BlockedPair,
     Page,
@@ -28,12 +28,30 @@ def _slug(value: str) -> str:
     return re.sub(r"[^a-z0-9_]", "", value.lower())
 
 
+# Path segments of the API (``users/lookup/``) and names people would take for staff.
+RESERVED_HANDLES = frozenset({"lookup", "id", "me", "admin", "tara"})
+
+
+def _handle_taken(handle: str) -> bool:
+    return handle in RESERVED_HANDLES or UserProfile.objects.filter(handle=handle).exists()
+
+
 def generate_handle(seed: str) -> str:
-    base = _slug(seed.split("@")[0])[:20] or "user"
-    handle = base
-    while UserProfile.objects.filter(handle=handle).exists():
-        handle = f"{base}{secrets.randbelow(9000) + 1000}"[:30]
-    return handle
+    """``seed`` as a free handle, or with digits after it.
+
+    Names in other scripts (Arabic) slug to nothing and share the base
+    ``user``, so after a few 4-digit tries the suffix grows: the loop always ends.
+    """
+    base = _slug(seed)[:20]
+    if len(base) < 3:
+        base = "user"
+    if not _handle_taken(base):
+        return base
+    for digits in (4, 4, 4, 8, 8, 8):
+        handle = f"{base}{secrets.randbelow(9 * 10 ** (digits - 1)) + 10 ** (digits - 1)}"
+        if not _handle_taken(handle):
+            return handle
+    return f"{base}{secrets.token_hex(5)}"
 
 
 def _completion(profile: UserProfile) -> int:
@@ -45,14 +63,18 @@ def _completion(profile: UserProfile) -> int:
 
 
 def ensure_profile(
-    account_id: str, *, email: str = "", display_name: str = "", requested_handle: str = ""
+    account_id: str, *, display_name: str = "", requested_handle: str = ""
 ) -> UserProfile:
-    """Idempotently create a profile for an account (called on account.registered)."""
+    """Idempotently create a profile for an account (called on account.registered).
+
+    The handle is the requested one, else made from the display name; a taken
+    one gets digits. Never from the email: a handle is public, and the part of
+    an address before the @ is often the whole of what makes it guessable.
+    """
     existing = UserProfile.objects.filter(account_id=account_id).first()
     if existing:
         return existing
-    # A taken requested handle falls back to a numbered variant of it.
-    handle = generate_handle(requested_handle or email or f"user{secrets.randbelow(99999)}")
+    handle = generate_handle(requested_handle or display_name)
     with transaction.atomic():
         profile = UserProfile.objects.create(
             account_id=account_id,
@@ -101,6 +123,37 @@ def profile_cards(viewer_id: str, account_ids: list) -> list[dict]:
 # ---- profile editing --------------------------------------------------------
 
 
+_IMAGE_FIELDS = ("avatar_media_id", "cover_media_id")
+
+
+def _bad_media(message: str, code: str) -> TaraAPIError:
+    return TaraAPIError(message, code=code, http_status_code=400)
+
+
+def check_own_images(profile: UserProfile, data: dict) -> None:
+    """A new avatar or cover must be the account's own image upload.
+
+    Unchanged and cleared values are not checked. Someone else's media and an
+    unknown id look the same, so neither leaks. Media down: 503, nothing saved.
+    """
+    wanted = {
+        str(data[f])
+        for f in _IMAGE_FIELDS
+        if data.get(f) and str(data[f]) != str(getattr(profile, f) or "")
+    }
+    if not wanted:
+        return
+    found = media_client.lookup(sorted(wanted))
+    for media_id in wanted:
+        info = found.get(media_id)
+        if info is None or info.owner_id != str(profile.account_id):
+            raise _bad_media("Media not found.", "media_not_owned")
+        if info.kind != "image":
+            raise _bad_media("Only an image can be an avatar or a cover.", "media_kind_not_allowed")
+        if info.status not in media_client.USABLE_STATUSES:
+            raise _bad_media("Media upload is not complete.", "media_not_ready")
+
+
 def update_profile(profile: UserProfile, data: dict) -> UserProfile:
     allowed = {
         "display_name",
@@ -112,6 +165,7 @@ def update_profile(profile: UserProfile, data: dict) -> UserProfile:
         "cover_media_id",
         "visibility",
     }
+    check_own_images(profile, data)
     for key, value in data.items():
         if key in allowed:
             setattr(profile, key, value)
@@ -198,16 +252,19 @@ def create_page(owner_account_id: str, data: dict) -> Page:
     if Page.objects.filter(handle=handle).exists():
         raise Conflict("Page handle already taken.", code="conflict")
     with transaction.atomic():
-        page = Page.objects.create(
-            owner_account_id=owner_account_id,
-            handle=handle,
-            name=data["name"],
-            category=data.get("category", ""),
-            description=data.get("description", ""),
-            contact=data.get("contact", {}),
-            location=data.get("location", ""),
-            created_by=owner_account_id,
-        )
+        try:
+            page = Page.objects.create(
+                owner_account_id=owner_account_id,
+                handle=handle,
+                name=data["name"],
+                category=data.get("category", ""),
+                description=data.get("description", ""),
+                contact=data.get("contact", {}),
+                location=data.get("location", ""),
+                created_by=owner_account_id,
+            )
+        except IntegrityError as exc:  # a concurrent create took the handle first
+            raise Conflict("Page handle already taken.", code="conflict") from exc
         PageMember.objects.create(
             page=page, account_id=owner_account_id, role=PageRole.OWNER, invited_by=owner_account_id
         )

@@ -1,5 +1,28 @@
-import { api } from "@/lib/api";
+import { api, apiError } from "@/lib/api";
+import { errorKey, mediaErrorKey } from "@/lib/errors";
 import type { CursorPage } from "@/types";
+
+/** The currencies the ads service accepts for a campaign (serializers.CAMPAIGN_CURRENCIES). */
+export const CAMPAIGN_CURRENCIES = ["AED", "BHD", "EGP", "EUR", "GBP", "JOD", "KWD", "OMR", "QAR", "SAR", "USD"] as const;
+
+// The field a validation failure is about, to a message.
+const FIELD_KEYS: Record<string, string> = {
+  currency: "ads.errors.currency",
+  schedule_end: "ads.errors.scheduleEnd",
+  budget: "ads.errors.budget",
+};
+
+/** i18n key for a failed ads call: the field's own message when the server names one. */
+export function adErrorKey(error: unknown): string {
+  const media = mediaErrorKey(error);
+  if (media) return media;
+  const { code, details = [] } = apiError(error);
+  const field = details.find((d) => d.field && FIELD_KEYS[d.field])?.field;
+  if (code === "validation_error" && field) return FIELD_KEYS[field];
+  // Media could not be checked (the service fails closed).
+  if (code === "dependency_unavailable" || code === "server_error") return "ads.errors.unavailable";
+  return errorKey(code);
+}
 
 export interface Campaign {
   id: string;

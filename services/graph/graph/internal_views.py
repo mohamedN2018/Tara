@@ -6,6 +6,8 @@ Authenticated with a short-lived internal service token (HS256, aud
 
 from __future__ import annotations
 
+import uuid
+
 from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -37,12 +39,12 @@ class RelationshipView(APIView):
 
     def get(self, request: Request) -> Response:
         _require_internal(request)
-        a = request.query_params.get("a")
-        b = request.query_params.get("b")
-        if not a or not b:
+        try:
+            a, b = (str(uuid.UUID(request.query_params.get(k) or "")) for k in ("a", "b"))
+        except ValueError as exc:
             raise TaraAPIError(
-                "Both 'a' and 'b' are required.", code="validation_error", http_status_code=400
-            )
+                "Both 'a' and 'b' must be UUIDs.", code="validation_error", http_status_code=400
+            ) from exc
         return data_response(services.relationship(a, b))
 
 

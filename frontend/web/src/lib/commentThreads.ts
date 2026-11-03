@@ -95,3 +95,60 @@ export function replaceComment(
     threads: thread ? { ...threads, [updated.parent_id]: { ...thread, replies: swap(thread.replies) } } : threads,
   };
 }
+
+/** What `locateComment` needs from the list that shows the comments. */
+export interface CommentLocator {
+  hasRoot(id: string): boolean;
+  /** Load the next page of roots. False at the end or on failure. */
+  moreRoots(): Promise<boolean>;
+  roots(): Comment[];
+  thread(rootId: string): Thread;
+  /** Open a thread and load its next page of replies. False on failure. */
+  loadReplies(rootId: string): Promise<boolean>;
+  setOpen(rootId: string, open: boolean): void;
+}
+
+// Bounds for a link whose comment is far down, or gone: requests, not items.
+export const LOCATE_ROOT_PAGES = 10;
+export const LOCATE_REPLY_PAGES = 30;
+
+/**
+ * Make one comment present in the list: a root (paging roots until it shows up)
+ * or a reply (its thread opened and paged until it shows up). `rootHint` is the
+ * reply's root when the link knows it; otherwise threads with replies are
+ * searched in order and closed again when the reply is not there. True if found.
+ */
+export async function locateComment(
+  src: CommentLocator,
+  id: string,
+  rootHint?: string | null,
+): Promise<boolean> {
+  const wanted = rootHint && rootHint !== id ? rootHint : id;
+  for (let pages = 0; !src.hasRoot(wanted) && pages < LOCATE_ROOT_PAGES; pages++) {
+    if (!(await src.moreRoots())) break;
+  }
+  if (src.hasRoot(id)) return true;
+
+  let budget = LOCATE_REPLY_PAGES;
+  const inThread = (rootId: string) => src.thread(rootId).replies.some((r) => r.id === id);
+  const scan = async (rootId: string): Promise<boolean> => {
+    const wasOpen = src.thread(rootId).open;
+    while (!inThread(rootId)) {
+      const thread = src.thread(rootId);
+      if (thread.loaded && !thread.cursor) break;
+      if (budget <= 0) break;
+      budget -= 1;
+      if (!(await src.loadReplies(rootId))) break;
+    }
+    const found = inThread(rootId);
+    src.setOpen(rootId, found || wasOpen);
+    return found;
+  };
+
+  if (wanted !== id && src.hasRoot(wanted)) return scan(wanted);
+  for (const root of [...src.roots()]) {
+    if (budget <= 0) break;
+    if ((root.reply_count ?? 0) > 0 && (await scan(root.id))) return true;
+  }
+  return false;
+}

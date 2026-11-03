@@ -19,6 +19,8 @@ const DETAIL_KEYS: Record<string, string> = {
 };
 
 const CODE_KEYS: Record<string, string> = {
+  password_required: "accountSecurity.errors.passwordRequired",
+  invalid_password: "accountSecurity.errors.wrongPassword",
   account_exists: "accountSecurity.google.accountExists",
   already_linked: "accountSecurity.google.alreadyLinked",
   last_login_method: "accountSecurity.google.lastMethod",

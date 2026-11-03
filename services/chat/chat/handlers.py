@@ -24,7 +24,11 @@ def on_marketplace_contact(event: EventEnvelope) -> None:
 @on_event("user.blocked")
 def on_user_blocked(event: EventEnvelope) -> None:
     p = event.payload
-    BlockedPair.objects.get_or_create(blocker_id=p["blocker_id"], blocked_id=p["blocked_id"])
+    _, created = BlockedPair.objects.get_or_create(
+        blocker_id=p["blocker_id"], blocked_id=p["blocked_id"]
+    )
+    if created:
+        services.revoke_pair_subscriptions(p["blocker_id"], p["blocked_id"])
 
 
 @on_event("user.unblocked")
@@ -40,5 +44,6 @@ def on_moderation_actioned(event: EventEnvelope) -> None:
         return
     if p.get("action") == "remove":
         services.remove_message(p["target_id"])
-    elif p.get("action") == "restore":
+    elif p.get("action") in ("approve", "restore"):
+        # An overturned removal arrives as `approve` (doc 04, moderation.actioned).
         services.restore_message(p["target_id"])

@@ -87,6 +87,10 @@ def _merge(row: Notification, *, actor_id, fields: dict, now) -> None:
         recent = [str(actor_id)] + [a for a in row.recent_actor_ids if a != str(actor_id)]
         row.recent_actor_ids = recent[:MAX_RECENT_ACTORS]
         row.actor_id = actor_id
+    if "message_id" in fields.get("data", {}):
+        # How many messages the row stands for, so deleting the latest knows
+        # whether anything is left to show (``forget_message``).
+        fields = {**fields, "data": {**fields["data"], "message_count": _message_count(row) + 1}}
     for name, value in fields.items():
         setattr(row, name, value)
     row.last_event_at = now
@@ -335,6 +339,52 @@ def purge_subject(ref: str) -> int:
     if not ref or ref.endswith(":"):
         return 0
     return _delete_rows(Notification.objects.filter(Q(subject_ref=ref) | Q(target_ref=ref)))
+
+
+@transaction.atomic
+def purge_comments(comment_ids: list[str]) -> int:
+    """Comments are gone: drop the replies and mentions they caused.
+
+    An aggregate (``post.comment``) that points at one of them is dropped when
+    that comment's author was its only actor; one counting other people stays.
+    """
+    refs = [f"comment:{c}" for c in comment_ids if c]
+    if not refs:
+        return 0
+    aggregated = [k.name for k in registry.KINDS.values() if k.aggregate]
+    about = Notification.objects.filter(target_ref__in=refs)
+    return _delete_rows(
+        about.exclude(kind__in=aggregated) | about.filter(kind__in=aggregated, actor_count__lte=1)
+    )
+
+
+def _message_count(row: Notification) -> int:
+    return int((row.data or {}).get("message_count") or 1)
+
+
+@transaction.atomic
+def forget_message(conversation_id: str, message_id: str, *, deleted: bool) -> int:
+    """A message was deleted (for everyone, or by moderation) or edited.
+
+    A row whose latest message it was loses that message's preview; deleted,
+    and the only message the row stood for, the row goes (``notification.deleted``).
+    Rows from before rows recorded their message are blanked, since their
+    source is unknown. Idempotent. Returns the number of rows changed.
+    """
+    rows = Notification.objects.filter(
+        kind="message", subject_ref=f"conversation:{conversation_id}"
+    )
+    latest = rows.filter(data__message_id=str(message_id))
+    removed = 0
+    if deleted:
+        only = [r.id for r in latest.select_for_update() if _message_count(r) <= 1]
+        removed = _delete_rows(Notification.objects.filter(id__in=only))
+    blanked = (
+        rows.exclude(body="")
+        .filter(Q(data__message_id=str(message_id)) | ~Q(data__has_key="message_id"))
+        .update(body="")
+    )
+    return removed + blanked
 
 
 @transaction.atomic

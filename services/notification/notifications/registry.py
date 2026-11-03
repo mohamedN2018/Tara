@@ -93,6 +93,8 @@ DATA_KEYS = frozenset(
         "share_post_id",
         "reaction_type",
         "conversation_id",
+        "message_id",
+        "message_count",
         "message_type",
         "request_id",
         "listing_id",

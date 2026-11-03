@@ -94,6 +94,14 @@ def on_post_deleted(e: EventEnvelope) -> None:
         services.purge_subject(f"post:{post_id}")
 
 
+@on_event("comment.deleted")
+def on_comment_deleted(e: EventEnvelope) -> None:
+    """A deleted comment (a root takes its replies) takes the notifications about it."""
+    p = e.payload
+    ids = p.get("removed_ids") or [p.get("comment_id") or e.subject_id]
+    services.purge_comments([str(i) for i in ids if i])
+
+
 @on_event("friendship.requested")
 def on_friend_requested(e: EventEnvelope) -> None:
     p = e.payload
@@ -126,7 +134,7 @@ def on_friend_accepted(e: EventEnvelope) -> None:
 
 @on_event("friendship.request.withdrawn")
 def on_friend_request_withdrawn(e: EventEnvelope) -> None:
-    """Consumer ships first; graph emits it in a later release (roadmap 2.18)."""
+    """The requester took the request back."""
     services.resolve_friend_request(e.subject_id, "withdrawn")
 
 
@@ -169,8 +177,30 @@ def on_message_created(e: EventEnvelope) -> None:
                 group_key=str(conversation_id),
                 # Attachment-only messages have no text; the client words those.
                 body=p.get("preview") or "",
-                data={"conversation_id": conversation_id, "message_type": p.get("type")},
+                data={
+                    "conversation_id": conversation_id,
+                    "message_id": p.get("message_id") or e.subject_id,
+                    "message_type": p.get("type"),
+                },
             )
+
+
+@on_event("message.deleted")
+def on_message_deleted(e: EventEnvelope) -> None:
+    """Deleted for everyone, or removed by moderation: its preview (or its row) goes."""
+    p = e.payload
+    if p.get("conversation_id"):
+        message_id = p.get("message_id") or e.subject_id
+        services.forget_message(p["conversation_id"], message_id, deleted=True)
+
+
+@on_event("message.edited")
+def on_message_edited(e: EventEnvelope) -> None:
+    """The preview shows text the sender has since changed: it goes (events carry no text)."""
+    p = e.payload
+    if p.get("conversation_id"):
+        message_id = p.get("message_id") or e.subject_id
+        services.forget_message(p["conversation_id"], message_id, deleted=False)
 
 
 @on_event("message.read")

@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 
-import { type Locale, setLocale } from "@/i18n";
+import { type Locale, setLocale, storedLocale } from "@/i18n";
 
 export type Theme = "light" | "dark" | "system";
 
@@ -15,10 +15,20 @@ function applyTheme(theme: Theme) {
   });
 }
 
+const THEMES: Theme[] = ["light", "dark", "system"];
+function storedTheme(): Theme {
+  try {
+    const saved = localStorage.getItem("tara.theme") as Theme | null;
+    return saved && THEMES.includes(saved) ? saved : "dark";
+  } catch {
+    return "dark";
+  }
+}
+
 export const useUiStore = defineStore("ui", () => {
   // Dark is Tara's primary experience; light and system are opt-in.
-  const theme = ref<Theme>((localStorage.getItem("tara.theme") as Theme | null) ?? "dark");
-  const locale = ref<Locale>((localStorage.getItem("tara.locale") as Locale | null) ?? "ar");
+  const theme = ref<Theme>(storedTheme());
+  const locale = ref<Locale>(storedLocale());
   const online = ref(true);
   const sidebarOpen = ref(false);
   // Set by "Create post" shortcuts; the home composer opens and clears it.
@@ -30,7 +40,11 @@ export const useUiStore = defineStore("ui", () => {
 
   function setTheme(value: Theme) {
     theme.value = value;
-    localStorage.setItem("tara.theme", value);
+    try {
+      localStorage.setItem("tara.theme", value);
+    } catch {
+      // Storage blocked: the choice lasts for this page.
+    }
     applyTheme(value);
   }
 

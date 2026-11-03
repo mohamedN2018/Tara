@@ -4,7 +4,7 @@ import { onMounted, reactive, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
-import { errorMessage } from "@/lib/errors";
+import { errorMessage, mediaErrorKey } from "@/lib/errors";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import { useFocusTrap } from "@/lib/useFocusTrap";
 import { useMediaUrl } from "@/lib/useMediaUrl";
@@ -188,7 +188,9 @@ async function save() {
     await auth.loadProfile();
     emit("saved", fresh);
   } catch (err) {
-    error.value = errorMessage(err);
+    // A refused avatar or cover says which problem it has.
+    const media = mediaErrorKey(err);
+    error.value = media ? t(media) : errorMessage(err);
   } finally {
     saving.value = false;
   }

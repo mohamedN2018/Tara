@@ -30,6 +30,12 @@ def on_moderation_actioned(event: EventEnvelope) -> None:
         services.apply_comment_moderation(p["target_id"], p.get("action", ""))
 
 
+@on_event("post.deleted")  # also emitted when moderation removes a post
+def on_post_deleted_restrict_media(event: EventEnvelope) -> None:
+    """Outside the delete's transaction, and retried while media is down."""
+    services.restrict_media_of_hidden_post(event.payload["post_id"])
+
+
 @on_event("post.created")
 def on_post_created_preview(event: EventEnvelope) -> None:
     services.refresh_link_preview(event.payload["post_id"])

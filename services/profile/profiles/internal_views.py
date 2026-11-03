@@ -7,7 +7,7 @@ token (HS256), NOT a user token.
 
 from __future__ import annotations
 
-from django.db.models.functions import Lower
+from rest_framework import serializers
 from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -33,19 +33,30 @@ def _require_internal(request: Request) -> None:
         ) from exc
 
 
+MAX_HANDLES = 50
+
+
+class _HandlesSerializer(serializers.Serializer):
+    handles = serializers.ListField(child=serializers.CharField(max_length=60), default=list)
+
+
 class ProfilesByHandleView(APIView):
-    """Resolve @handles to accounts. Unknown handles are simply left out."""
+    """Resolve @handles to accounts. Unknown handles are simply left out.
+
+    Handles are stored lowercase, so the lookup uses the unique index.
+    """
 
     permission_classes = [AllowAny]
     authentication_classes: list = []
+    throttle_classes: list = []  # internal: no per-IP throttle (roadmap 3.3)
 
     def post(self, request: Request) -> Response:
         _require_internal(request)
-        handles = [str(h).lower() for h in request.data.get("handles", [])][:50]
-        rows = (
-            UserProfile.objects.annotate(lower_handle=Lower("handle"))
-            .filter(lower_handle__in=handles, deleted_at__isnull=True)
-            .values_list("lower_handle", "account_id")
+        serializer = _HandlesSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        handles = [h.lower() for h in serializer.validated_data["handles"]][:MAX_HANDLES]
+        rows = UserProfile.objects.filter(handle__in=handles, deleted_at__isnull=True).values_list(
+            "handle", "account_id"
         )
         return data_response({handle: str(account) for handle, account in rows})
 
@@ -53,6 +64,7 @@ class ProfilesByHandleView(APIView):
 class ProfileSnapshotView(APIView):
     permission_classes = [AllowAny]
     authentication_classes: list = []
+    throttle_classes: list = []  # internal: no per-IP throttle (roadmap 3.3)
 
     def get(self, request: Request, account_id: str) -> Response:
         _require_internal(request)

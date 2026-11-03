@@ -1,7 +1,8 @@
 // Realtime gateway client (Django Channels). Authenticates with the access
-// token as a query param, auto-reconnects with capped exponential backoff, and
-// fans incoming frames out to topic subscribers. No DB; presence/typing/receipts
-// and live message/notification frames flow through here.
+// token as the first `Sec-WebSocket-Protocol` entry (never in the URL, which
+// ends up in proxy and access logs), auto-reconnects with capped exponential
+// backoff, and fans incoming frames out to topic subscribers. No DB;
+// presence/typing/receipts and live message/notification frames flow through here.
 //
 // Pushes sent while the socket is down are lost for good (the gateway keeps no
 // history), so a `_reconnected` frame tells subscribers to refetch over REST.
@@ -10,8 +11,8 @@ import { tokenStore } from "./tokens";
 
 // Gateway frames are keyed by `event` (e.g. "chat.message.created",
 // "conversation.typing", "notification.created"); our internal status frames use
-// `type` ("_status", "_reconnected"). We dispatch on both so handlers can
-// subscribe by either.
+// `type` ("_status", "_reconnected"). A gateway frame's own `type` is payload
+// (a message or reaction type), so `type` only dispatches internal frames.
 type Frame = { type?: string; event?: string; [k: string]: unknown };
 type Handler = (frame: Frame) => void;
 
@@ -75,8 +76,9 @@ export class RealtimeClient {
       return;
     }
 
-    const url = `${WS_BASE}?token=${encodeURIComponent(tokenStore.access ?? "")}`;
-    const sock = new WebSocket(url);
+    // The token travels as the subprotocol, never in the URL, where proxies
+    // and access logs would keep it.
+    const sock = new WebSocket(WS_BASE, [tokenStore.access ?? ""]);
     this.socket = sock;
 
     sock.onopen = () => {
@@ -142,12 +144,9 @@ export class RealtimeClient {
   }
 
   private emit(frame: Frame) {
-    const seen = new Set<string>();
-    for (const key of [frame.type, frame.event]) {
-      if (typeof key === "string" && !seen.has(key)) {
-        seen.add(key);
-        this.handlers.get(key)?.forEach((h) => h(frame));
-      }
+    const internal = typeof frame.type === "string" && frame.type.startsWith("_") ? frame.type : null;
+    for (const key of new Set([internal, frame.event])) {
+      if (typeof key === "string") this.handlers.get(key)?.forEach((h) => h(frame));
     }
     this.handlers.get("*")?.forEach((h) => h(frame));
   }

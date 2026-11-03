@@ -3,11 +3,6 @@ import { fileURLToPath, URL } from "node:url";
 import vue from "@vitejs/plugin-vue";
 import { defineConfig, type Plugin } from "vite";
 
-// Chunks only some people need, left out of the install-time precache: the
-// HEIC converter (~1.3 MB, loaded only when someone picks an iPhone photo).
-// The service worker still caches them at runtime once they are used.
-const LAZY_ONLY_CHUNKS = new Set(["heic2any"]);
-
 // Lists every built asset, so the service worker can cache the whole app shell
 // (lazy route chunks included) on install, not only what index.html links.
 function precacheList(): Plugin {
@@ -17,7 +12,6 @@ function precacheList(): Plugin {
     generateBundle(_options, bundle) {
       const files = Object.entries(bundle)
         .filter(([name]) => name.startsWith("assets/"))
-        .filter(([, item]) => !(item.type === "chunk" && LAZY_ONLY_CHUNKS.has(item.name)))
         .map(([name]) => `/${name}`);
       this.emitFile({ type: "asset", fileName: "precache.json", source: JSON.stringify(files) });
     },
@@ -36,8 +30,6 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (!id.includes("node_modules")) return;
-          // Its own lazy chunk (src/lib/heic.ts imports it dynamically).
-          if (id.includes("heic2any")) return "heic2any";
           if (id.includes("lucide")) return "icons";
           if (id.includes("/vue") || id.includes("pinia") || id.includes("@intlify") || id.includes("vue-i18n")) {
             return "vue";

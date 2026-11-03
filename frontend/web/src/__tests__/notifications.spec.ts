@@ -6,7 +6,7 @@ import { i18n } from "@/i18n";
 import { enablePush, pushActiveFor, releasePush, resumePush } from "@/lib/pwa";
 import { inQuietHours, playPing, setSoundEnabled } from "@/lib/sound";
 import { notificationService } from "@/services/notification";
-import { useNotificationStore } from "@/stores/notifications";
+import { parseSync, useNotificationStore } from "@/stores/notifications";
 import type { Notification } from "@/types";
 
 function row(over: Partial<Notification> = {}): Notification {
@@ -50,7 +50,9 @@ describe("notification text and actions", () => {
   });
 
   it("words attachment-only messages and shows a message preview", () => {
-    expect(text(row({ kind: "message", body: "" }))).toBe("Sara sent you an attachment");
+    // A blank preview: an attachment, or a message edited or deleted since.
+    expect(text(row({ kind: "message", body: "" }))).toBe("Sara sent you a message");
+    expect(text(row({ kind: "message", body: "latest", data: { message_count: 3 } }))).toBe("Sara sent you 3 messages");
     expect(text(row({ kind: "message", body: "hi" }))).toBe("Sara: hi");
   });
 
@@ -70,6 +72,20 @@ describe("notification text and actions", () => {
     expect(urlFor(row({ url: "//evil.example/x" }))).toBe("/posts/p1");
     expect(urlFor(row({ url: "https://evil.example" , subject_ref: "conversation:k" }))).toBe("/messages/k");
     expect(urlFor(row({ url: undefined, subject_ref: "", kind: "friend.request" }))).toBe("/u/id/a1");
+  });
+
+  it("refuses links the browser would read as another host", () => {
+    for (const url of ["/\\evil.example", "/\t/evil.example", "/\n/evil.example"]) {
+      expect(urlFor(row({ url }))).toBe("/posts/p1");
+    }
+    expect(urlFor(row({ url: "/%09/x" }))).toBe("/%09/x");
+  });
+
+  it("adds the thread root to a reply's comment link", () => {
+    const reply = row({ kind: "comment.reply", url: "/posts/p1?comment=c2", data: { post_id: "p1", comment_id: "c2", parent_id: "c1" } });
+    expect(urlFor(reply)).toBe("/posts/p1?comment=c2&thread=c1");
+    expect(urlFor({ ...reply, kind: "mention" })).toBe("/posts/p1?comment=c2");
+    expect(urlFor({ ...reply, url: "/posts/p1" })).toBe("/posts/p1");
   });
 });
 
@@ -151,6 +167,36 @@ describe("live notification store", () => {
     await store.load();
     expect(store.items.map((n) => n.id)).toEqual(["live", "p1"]);
   });
+
+  it("drops an older page that lands after the list was reloaded", async () => {
+    const store = useNotificationStore();
+    const page = (ids: string[], next: string | null) => ({
+      data: ids.map((id, i) => row({ id, last_event_at: `2026-11-0${9 - i}T00:00:00Z` })),
+      page: { next_cursor: next, prev_cursor: null, has_more: !!next },
+    });
+    const list = vi.spyOn(notificationService, "list").mockResolvedValueOnce(page(["n1"], "c1"));
+    await store.load();
+    let finishMore: (v: ReturnType<typeof page>) => void = () => {};
+    list.mockReturnValueOnce(new Promise((resolve) => (finishMore = resolve)));
+    const more = store.loadMore();
+    list.mockResolvedValueOnce(page(["n1"], "c1"));
+    await store.load(); // reload while page 2 is in flight
+    finishMore(page(["n2"], "c2"));
+    await more;
+    expect(store.items.map((n) => n.id)).toEqual(["n1"]);
+  });
+
+  it("ignores malformed messages from other tabs", () => {
+    expect(parseSync({ type: "read", ids: "n1", at: "x" })).toBeNull();
+    expect(parseSync({ type: "deleted", ids: [1] })).toBeNull();
+    expect(parseSync({ type: "upsert", item: { id: 1 } })).toBeNull();
+    expect(parseSync(null)).toBeNull();
+    expect(parseSync({ type: "read", ids: ["n1"], at: "2026-11-02T00:00:00Z" })).toEqual({
+      type: "read",
+      ids: ["n1"],
+      at: "2026-11-02T00:00:00Z",
+    });
+  });
 });
 
 describe("sound ping", () => {
@@ -203,7 +249,8 @@ function installPush(initial: FakeSubscription | null, permission: NotificationP
       return current;
     }),
   };
-  const registration = { pushManager };
+  const shown = [{ close: vi.fn() }];
+  const registration = { pushManager, getNotifications: vi.fn(async () => shown) };
   Object.defineProperty(navigator, "serviceWorker", {
     configurable: true,
     value: {
@@ -217,7 +264,7 @@ function installPush(initial: FakeSubscription | null, permission: NotificationP
     permission,
     requestPermission: vi.fn(async () => permission),
   });
-  return { pushManager, current: () => current };
+  return { pushManager, shown, current: () => current };
 }
 
 describe("push lifecycle", () => {
@@ -247,6 +294,16 @@ describe("push lifecycle", () => {
     await releasePush({ remote: true });
     expect(sub.unsubscribe).toHaveBeenCalled();
     expect(localStorage.getItem("tara.push.owner")).toBeNull();
+  });
+
+  it("a session that ends closes its notifications still in the tray", async () => {
+    const push = installPush(fakeSubscription("https://fcm.googleapis.com/fcm/send/a"));
+    await releasePush();
+    expect(push.shown[0].close).toHaveBeenCalled();
+
+    const signedOut = installPush(null);
+    await releasePush({ clearTray: false }); // a boot with no session leaves them
+    expect(signedOut.shown[0].close).not.toHaveBeenCalled();
   });
 
   it("login drops another account's subscription and never hands it over", async () => {

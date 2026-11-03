@@ -31,16 +31,20 @@ import AppShell from "@/components/layout/AppShell.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
+import { httpStatus } from "@/lib/api";
 import {
   advancePointer,
   applyReaction,
   canDeleteForEveryone,
   canEdit,
+  conversationTitle,
   deliveryStatus,
   mergeMessages,
+  typePreview,
   withoutMessage,
 } from "@/lib/chat";
 import { relativeTime } from "@/lib/format";
+import { useEscapeKey } from "@/lib/useEscapeKey";
 import type { VoiceNote } from "@/lib/useVoiceRecorder";
 import { realtime } from "@/lib/ws";
 import { chatService } from "@/services/chat";
@@ -129,6 +133,8 @@ const showNewGroup = ref(false);
 const showGroupPanel = ref(false);
 const showAddMembers = ref(false);
 const showMuteMenu = ref(false);
+useEscapeKey(showMuteMenu, () => (showMuteMenu.value = false));
+useEscapeKey(showConversationMenu, () => (showConversationMenu.value = false));
 const MUTE_OPTIONS = [
   { minutes: 60, label: "messages.muteHour" },
   { minutes: 480, label: "messages.muteEightHours" },
@@ -142,9 +148,7 @@ const activePeerId = computed(() => {
 const peerLastSeen = computed(() => presence.lastSeen(activePeerId.value));
 
 function titleOf(c: Conversation): string {
-  if (c.title) return c.title;
-  const others = c.members.filter((m) => m !== myId.value);
-  return others.map((m) => directory.label(m)).join("، ") || t("messages.groupFallback");
+  return conversationTitle(c, myId.value, directory.label, locale.value, t("messages.groupFallback"));
 }
 const activeTitle = computed(() => (activeConversation.value ? titleOf(activeConversation.value) : ""));
 
@@ -208,28 +212,35 @@ function myState(c: Conversation | undefined) {
   return c?.member_states.find((s) => s.account_id === myId.value);
 }
 
+let listGeneration = 0;
 async function loadConversations(silent = false) {
+  // A folder switch or a silent reload can overlap: only the newest one lands.
+  const generation = ++listGeneration;
   if (!silent) loadingList.value = true;
   listError.value = false;
   const archived = folder.value === "archived";
   try {
     const page = await chatService.conversationsPage(undefined, archived);
-    conversations.value = page.data;
+    if (generation !== listGeneration) return;
+    const list = page.data;
     // The open conversation may sit beyond the first page.
     let next = page.page.next_cursor;
-    while (next && activeId.value && !conversations.value.some((c) => c.id === activeId.value)) {
+    while (next && activeId.value && !list.some((c) => c.id === activeId.value)) {
       const more = await chatService.conversationsPage(next, archived);
-      conversations.value.push(...more.data);
+      if (generation !== listGeneration) return;
+      list.push(...more.data);
       next = more.page.next_cursor;
     }
+    conversations.value = list;
     // ...or in the other folder.
-    if (activeId.value && !conversations.value.some((c) => c.id === activeId.value)) {
-      opened.value = await chatService.get(activeId.value).catch(() => null);
+    if (activeId.value && !list.some((c) => c.id === activeId.value)) {
+      const other = await chatService.get(activeId.value).catch(() => null);
+      if (generation === listGeneration) opened.value = other;
     }
   } catch {
-    if (!silent) listError.value = true;
+    if (!silent && generation === listGeneration) listError.value = true;
   } finally {
-    loadingList.value = false;
+    if (generation === listGeneration) loadingList.value = false;
   }
 }
 
@@ -291,21 +302,23 @@ async function fillViewport(generation: number) {
     scroller.value &&
     scroller.value.scrollHeight <= scroller.value.clientHeight
   ) {
-    await loadOlder();
+    // Nothing loaded (busy, at the end, or backing off): looping again would
+    // only spin on microtasks and freeze the tab.
+    if (!(await loadOlder())) return;
     await scrollToBottom();
-    if (Date.now() < olderRetryAt) return;
   }
 }
 
-async function loadOlder() {
+/** True when an older page was merged in. */
+async function loadOlder(): Promise<boolean> {
   const id = activeId.value;
   const cursor = olderCursor.value;
-  if (!id || !cursor || !hasOlder.value || loadingOlder.value || Date.now() < olderRetryAt) return;
+  if (!id || !cursor || !hasOlder.value || loadingOlder.value || Date.now() < olderRetryAt) return false;
   const generation = loadGeneration;
   loadingOlder.value = true;
   try {
     const page = await chatService.messages(id, cursor);
-    if (generation !== loadGeneration) return;
+    if (generation !== loadGeneration) return false;
     const el = scroller.value;
     const before = el?.scrollHeight ?? 0;
     const top = el?.scrollTop ?? 0;
@@ -315,9 +328,11 @@ async function loadOlder() {
     await nextTick();
     // Keep the same message under the reader's eyes.
     if (el) el.scrollTop = top + (el.scrollHeight - before);
+    return true;
   } catch (e) {
     olderRetryAt = Date.now() + OLDER_RETRY_MS;
     toasts.error(e);
+    return false;
   } finally {
     loadingOlder.value = false;
   }
@@ -374,23 +389,28 @@ async function syncLatest() {
   } finally {
     syncing = false;
   }
+  // A frame for the conversation opened meanwhile asked for a sync too.
+  if (syncAgain && id !== activeId.value) void syncLatest();
 }
 
 /** Refetch one message (edited, or deleted for everyone) and merge it in. */
 async function refreshMessage(messageId: string) {
   if (!messagesById.value[messageId]) return;
+  const generation = loadGeneration;
   try {
     const fresh = await chatService.message(messageId);
-    messages.value = mergeMessages(messages.value, [fresh]);
+    if (generation === loadGeneration) messages.value = mergeMessages(messages.value, [fresh]);
   } catch {
     // Hidden from us now (moderation, or deleted for me elsewhere).
-    messages.value = withoutMessage(messages.value, messageId);
+    if (generation === loadGeneration) messages.value = withoutMessage(messages.value, messageId);
   }
 }
 
 function markLatestRead() {
   const id = activeId.value;
   const last = messages.value.at(-1);
+  // A background tab has not been read: `onVisible` catches up when it is shown.
+  if (document.visibilityState !== "visible") return;
   if (!id || !last || last.id === markedReadId) return;
   markedReadId = last.id;
   const conversation = findConversation(id);
@@ -437,7 +457,8 @@ function onReply(m: Message) {
 }
 
 async function send({ body, attachment }: { body: string; attachment: ComposerAttachment | null }) {
-  if (!activeId.value) return;
+  const id = activeId.value;
+  if (!id) return;
   const replyToId = replyTarget.value?.id ?? null;
   try {
     const payload = attachment
@@ -454,13 +475,17 @@ async function send({ body, attachment }: { body: string; attachment: ComposerAt
           reply_to_id: replyToId,
         }
       : { body, reply_to_id: replyToId };
-    const msg = await chatService.send(activeId.value, payload);
+    const msg = await chatService.send(id, payload);
+    if (id !== activeId.value) return; // switched away while sending
     messages.value = mergeMessages(messages.value, [msg]);
     replyTarget.value = null;
     await scrollToBottom();
   } catch (e) {
     toasts.error(e, SEND_FAILED);
-    composer.value?.restore(body, attachment?.media_id ?? null);
+    // Removed from the conversation meanwhile (404): take it off the list.
+    if (httpStatus(e) === 404) void refreshConversation(id);
+    // The composer is per conversation: never refill another one's.
+    else if (id === activeId.value) composer.value?.restore(body, attachment?.media_id ?? null);
   }
 }
 
@@ -476,6 +501,7 @@ async function sendVoice(note: VoiceNote) {
     }
   } catch (e) {
     toasts.error(e, SEND_FAILED);
+    if (httpStatus(e) === 404) void refreshConversation(id);
   }
 }
 
@@ -487,6 +513,7 @@ function onEdit(m: Message) {
 async function saveEdit({ message, body }: { message: Message; body: string }) {
   try {
     const fresh = await chatService.edit(message.id, body);
+    if (fresh.conversation_id !== activeId.value) return;
     messages.value = mergeMessages(messages.value, [fresh]);
     editTarget.value = null;
   } catch (e) {
@@ -541,9 +568,12 @@ async function refreshConversation(id: string) {
     const index = conversations.value.findIndex((c) => c.id === id);
     if (index >= 0) conversations.value[index] = fresh;
     else if (opened.value?.id === id) opened.value = fresh;
-    else conversations.value.unshift(fresh);
-  } catch {
-    // Removed from it, or it is gone.
+    // New to this list: only when it belongs to the folder being shown.
+    else if (!!fresh.archived === (folder.value === "archived")) conversations.value.unshift(fresh);
+  } catch (e) {
+    // Removed from it, or it is gone. A network blip changes nothing.
+    const status = httpStatus(e);
+    if (status !== 403 && status !== 404) return;
     conversations.value = conversations.value.filter((c) => c.id !== id);
     if (id === activeId.value) router.push("/messages");
   }
@@ -606,7 +636,8 @@ async function clearChat() {
 
 /** Scroll to a message, paging back through history if it isn't loaded yet. */
 async function jumpTo(messageId: string) {
-  for (let i = 0; i <= MAX_JUMP_PAGES; i++) {
+  const generation = loadGeneration;
+  for (let i = 0; i <= MAX_JUMP_PAGES && generation === loadGeneration; i++) {
     await nextTick();
     const el = scroller.value?.querySelector(`[data-message-id="${messageId}"]`);
     if (el) {
@@ -614,7 +645,7 @@ async function jumpTo(messageId: string) {
       return;
     }
     if (!hasOlder.value || i === MAX_JUMP_PAGES) return;
-    await loadOlder();
+    if (!(await loadOlder()) && !loadingOlder.value) return;
   }
 }
 
@@ -629,11 +660,7 @@ function openSearchResult(m: Message) {
 }
 
 function pinPreview(pin: { body: string; type: string }): string {
-  if (pin.body) return pin.body;
-  if (pin.type === "voice") return t("messages.voiceNote");
-  if (pin.type === "video") return t("messages.video");
-  if (pin.type === "file") return t("messages.file");
-  return t("messages.photo");
+  return pin.body || typePreview(pin.type, t);
 }
 
 function onGroupCreated(conversation: Conversation) {
@@ -683,6 +710,7 @@ function unsubscribe(id: string) {
 }
 
 onMounted(() => {
+  document.addEventListener("visibilitychange", onVisible);
   loadConversations();
   loadMessages(activeId.value);
   subscribe(activeId.value);
@@ -748,7 +776,12 @@ onMounted(() => {
   ];
 });
 
+function onVisible() {
+  if (document.visibilityState === "visible" && atBottom.value) markLatestRead();
+}
+
 onUnmounted(() => {
+  document.removeEventListener("visibilitychange", onVisible);
   unsubs.forEach((u) => u());
   unsubscribe(activeId.value);
   if (typingTimer) window.clearTimeout(typingTimer);
@@ -886,6 +919,8 @@ watch(activeId, (id, prev) => {
                   class="btn-ghost px-2"
                   :aria-label="activeConversation?.muted_until ? t('messages.unmute') : t('messages.mute')"
                   :title="activeConversation?.muted_until ? t('messages.unmute') : t('messages.mute')"
+                  :aria-haspopup="activeConversation?.muted_until ? undefined : 'menu'"
+                  :aria-expanded="activeConversation?.muted_until ? undefined : showMuteMenu"
                   @click="activeConversation?.muted_until ? setMute(0) : (showMuteMenu = !showMuteMenu)"
                 >
                   <BellOff v-if="activeConversation?.muted_until" class="h-5 w-5 text-brand-600 dark:text-brand-300" />
@@ -1002,6 +1037,7 @@ watch(activeId, (id, prev) => {
           </button>
 
           <MessageComposer
+            :key="activeId"
             ref="composer"
             :replying-to="replyTarget"
             :replying-to-name="replyTarget ? nameOf(replyTarget.sender_id) : ''"

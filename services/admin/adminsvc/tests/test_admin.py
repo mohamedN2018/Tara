@@ -234,3 +234,67 @@ def test_admin_deploy_check_requires_the_admin_identity_secret(settings):
     ):
         ids = {m.id for m in production_safety_check() if m.is_serious()}
     assert "tara.E007" in ids
+
+
+def test_overlong_flag_key_is_a_400_not_a_500(client_for):
+    resp = client_for(_acct(), roles=["admin"]).patch(
+        reverse("adminsvc:feature-flag-detail", args=["k" * 81]), {"enabled": True}, format="json"
+    )
+    assert resp.status_code == 400
+    assert not FeatureFlag.objects.exists()
+
+
+def test_half_open_breaker_lets_one_probe_through_at_a_time():
+    from tara_resilience import CircuitBreaker, CircuitOpenError
+
+    now = [0.0]
+    breaker = CircuitBreaker(failure_threshold=1, recovery_timeout=10, clock=lambda: now[0])
+    with pytest.raises(ZeroDivisionError):
+        breaker.call(lambda: 1 / 0)
+    with pytest.raises(CircuitOpenError):
+        breaker.call(lambda: "too soon")
+
+    now[0] = 11.0
+    seen = []
+
+    def probe():
+        # A second caller arriving while the probe is still out is turned away.
+        with pytest.raises(CircuitOpenError):
+            breaker.call(lambda: "concurrent")
+        seen.append("probe")
+        return "ok"
+
+    assert breaker.call(probe) == "ok"
+    assert seen == ["probe"]
+    assert breaker.state == "closed"
+    assert breaker.call(lambda: "after") == "after"
+
+
+def test_health_poll_keeps_only_the_newest_snapshots(client_for, monkeypatch, settings):
+    from adminsvc.models import ServiceHealthSnapshot
+
+    settings.HEALTH_TARGETS = {"identity": "http://identity:8000/readyz/"}
+    settings.HEALTH_SNAPSHOTS_KEPT = 3
+
+    def down(*args, **kwargs):
+        raise requests.ConnectionError
+
+    monkeypatch.setattr("adminsvc.services.requests.get", down)
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    for minutes in range(5):  # distinct ages, oldest last
+        row = ServiceHealthSnapshot.objects.create(service="identity", status="ready")
+        ServiceHealthSnapshot.objects.filter(id=row.id).update(
+            checked_at=timezone.now() - timedelta(minutes=minutes + 1)
+        )
+    newest_before = set(
+        ServiceHealthSnapshot.objects.order_by("-checked_at").values_list("id", flat=True)[:2]
+    )
+    resp = client_for(_acct(), roles=["admin"]).get(reverse("adminsvc:service-health"))
+    assert resp.status_code == 200
+    kept = ServiceHealthSnapshot.objects.filter(service="identity")
+    assert kept.count() == 3
+    assert kept.filter(status="unreachable").count() == 1  # this poll's row survives
+    assert newest_before <= set(kept.values_list("id", flat=True))

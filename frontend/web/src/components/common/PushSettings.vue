@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isAxiosError } from "axios";
 import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -43,7 +44,9 @@ async function enable() {
   try {
     state.value = await enablePush(me); // asks for permission: this is the user's click
   } catch (e) {
-    toasts.error(e, { unknown: "settings.pushFailed", request_failed: "settings.pushFailed" });
+    // A failure inside the browser (permission, push service) has no HTTP status.
+    if (!isAxiosError(e)) toasts.push({ text: t("settings.pushFailed"), icon: "error" });
+    else toasts.error(e, { unknown: "settings.pushFailed", request_failed: "settings.pushFailed" });
   } finally {
     busy.value = false;
   }

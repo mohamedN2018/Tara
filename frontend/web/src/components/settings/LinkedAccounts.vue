@@ -23,13 +23,26 @@ const POLL_MS = 3000;
 // ---- Google ----------------------------------------------------------------
 const googleBusy = ref(false);
 const googleError = ref("");
+// Linking or unlinking re-authenticates an account that has a password.
+const googlePassword = ref("");
 
-async function link(credential: string) {
-  googleBusy.value = true;
+/** The password to send, or null (with the error shown) when one is needed and missing. */
+function reauth(): string | undefined | null {
+  if (!props.overview.has_password) return undefined;
+  if (googlePassword.value) return googlePassword.value;
+  googleError.value = t("accountSecurity.errors.passwordRequired");
+  return null;
+}
+
+async function withGoogle(call: (password: string | undefined) => Promise<SecurityOverview>, done: string) {
   googleError.value = "";
+  const password = reauth();
+  if (password === null) return;
+  googleBusy.value = true;
   try {
-    emit("updated", await identityService.linkGoogle(credential));
-    toasts.push({ text: t("accountSecurity.google.linked") });
+    emit("updated", await call(password));
+    googlePassword.value = "";
+    toasts.push({ text: t(done) });
   } catch (e) {
     googleError.value = t(securityErrorKey(e));
   } finally {
@@ -37,18 +50,9 @@ async function link(credential: string) {
   }
 }
 
-async function unlink() {
-  googleBusy.value = true;
-  googleError.value = "";
-  try {
-    emit("updated", await identityService.unlinkGoogle());
-    toasts.push({ text: t("accountSecurity.google.unlinked") });
-  } catch (e) {
-    googleError.value = t(securityErrorKey(e));
-  } finally {
-    googleBusy.value = false;
-  }
-}
+const link = (credential: string) =>
+  withGoogle((password) => identityService.linkGoogle(credential, password), "accountSecurity.google.linked");
+const unlink = () => withGoogle((password) => identityService.unlinkGoogle(password), "accountSecurity.google.unlinked");
 
 // ---- Phone (Telegram) --------------------------------------------------------
 const deepLink = ref("");
@@ -67,7 +71,8 @@ async function startPhone() {
   stopPolling();
   try {
     const started = await identityService.startPhoneVerification();
-    deepLink.value = started.deep_link;
+    // Only ever a Telegram bot link: it becomes an href.
+    deepLink.value = /^https:\/\/t\.me\//.test(started.deep_link) ? started.deep_link : "";
     const seen: { latest: SecurityOverview | null } = { latest: null };
     const current = pollUntil(
       async () => {
@@ -151,6 +156,18 @@ onBeforeUnmount(cancelPhone);
         >
           {{ t("accountSecurity.google.lastMethod") }}
         </p>
+        <div v-if="props.overview.has_password" class="mt-2">
+          <label for="sec-google-password" class="mb-1 block text-xs font-medium">{{ t("accountSecurity.google.confirmPassword") }}</label>
+          <input
+            id="sec-google-password"
+            v-model="googlePassword"
+            type="password"
+            class="input py-1.5"
+            dir="ltr"
+            autocomplete="current-password"
+            :disabled="googleBusy"
+          />
+        </div>
         <div v-if="!props.overview.google.linked && props.providers.google.enabled" class="mt-2">
           <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">{{ t("accountSecurity.google.linkHint") }}</p>
           <GoogleSignInButton text="continue_with" @credential="link" />

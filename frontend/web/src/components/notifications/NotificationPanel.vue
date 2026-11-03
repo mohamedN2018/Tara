@@ -23,7 +23,6 @@ onMounted(() => {
   store.bind();
   void store.ensureLoaded();
 });
-defineExpose({ reload: store.load });
 </script>
 
 <template>

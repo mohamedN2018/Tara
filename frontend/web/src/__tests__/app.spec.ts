@@ -93,7 +93,7 @@ describe("safeRedirect", () => {
     expect(safeRedirect(path)).toBe(path);
   });
 
-  it.each(["//evil.example", "/\\evil.example", "https://evil.example", "javascript:alert(1)", "home", "", undefined, null, ["/a"]])(
+  it.each(["//evil.example", "/\\evil.example", "/\t/evil.example", "/\n/evil.example", "https://evil.example", "javascript:alert(1)", "home", "", undefined, null, ["/a"]])(
     "rejects %j",
     (path) => expect(safeRedirect(path)).toBe("/home"),
   );

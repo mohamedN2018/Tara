@@ -117,6 +117,8 @@ HEALTH_TARGETS = {
     "moderation": "http://moderation:8000/readyz/",
 }
 HEALTH_TIMEOUT = float(os.getenv("ADMIN_HEALTH_TIMEOUT", "2.0"))
+# Health snapshots kept per service; older ones are deleted on each poll.
+HEALTH_SNAPSHOTS_KEPT = int(os.getenv("ADMIN_HEALTH_SNAPSHOTS_KEPT", "500"))
 
 # No event publishing/consuming from Admin in this phase.
 TARA_EVENT_PUBLISHER = "null"

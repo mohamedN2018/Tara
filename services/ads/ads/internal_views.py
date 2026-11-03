@@ -30,6 +30,8 @@ def _require_internal(request: Request) -> None:
 class FeedSlotView(APIView):
     permission_classes = [AllowAny]
     authentication_classes: list = []
+    # Every feed request arrives from feed's address: a per-IP limit would empty the slot.
+    throttle_classes: list = []
 
     def get(self, request: Request) -> Response:
         _require_internal(request)

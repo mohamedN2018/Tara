@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import timedelta
 
 from django.db import IntegrityError, transaction
@@ -181,6 +182,15 @@ def _check_attachments(author_id: str, media_ids: list[str]) -> None:
         raise _bad_request("Media is already attached to another post.", "media_already_attached")
 
 
+def _check_bound(result: media_client.BindResult) -> None:
+    """400 for media that media would not bind: on another post, or deleted or
+    changed hands since the lookup."""
+    if result.attached_elsewhere:
+        raise _bad_request("Media is already attached to another post.", "media_already_attached")
+    if result.skipped:
+        raise _bad_request("Media not found.", "media_not_owned")
+
+
 def create_post(
     author_id: str,
     *,
@@ -211,11 +221,10 @@ def create_post(
         _check_attachments(author_id, media_ids)
         # Restricted before the post exists. If the post then fails to commit,
         # the media point at a post that is never visible: owner-only, safe.
-        skipped = media_client.bind(
+        result = media_client.bind(
             author_id, str(post_id), media_ids, restricted=audience != Audience.PUBLIC
         )
-        if skipped:  # deleted or changed hands since the lookup
-            raise _bad_request("Media not found.", "media_not_owned")
+        _check_bound(result)
 
     with transaction.atomic():
         post = Post.objects.create(
@@ -299,10 +308,15 @@ def edit_post(
     if audience is not None and audience != Audience.PUBLIC:
         # Even when unchanged: a concurrent edit may have widened the post
         # since this read, and binding is idempotent. Skipped ids are deleted,
-        # or (posts from before ownership checks) not the author's.
+        # or (posts from before ownership checks) not the author's. Media that
+        # another post holds would not follow this audience: refused.
         media_ids = [str(m) for m in post.media.values_list("media_id", flat=True)]
         if media_ids:
-            media_client.bind(author_id, str(post.id), media_ids, restricted=True)
+            result = media_client.bind(author_id, str(post.id), media_ids, restricted=True)
+            if result.attached_elsewhere:
+                raise _bad_request(
+                    "Media is already attached to another post.", "media_already_attached"
+                )
 
     with transaction.atomic():
         post = _editable_post(author_id, post_id, lock=True)  # removed meanwhile → 404
@@ -324,27 +338,40 @@ def edit_post(
             post.mentions.all().delete()
             _, mentions = _attach_tags_and_mentions(post)
             new_mentions = sorted(set(mentions) - mentioned_before)
-        events.emit(
-            "post.updated",
-            subject_id=str(post.id),
-            payload={
-                "post_id": str(post.id),
-                "author_id": str(author_id),
-                "audience": post.audience,
-                "comment_policy": post.comment_policy,
-                "excerpt": post.body[:280],
-                "new_mentions": new_mentions,
-            },
-            actor_id=str(author_id),
-        )
+        _emit_updated(post, new_mentions=new_mentions)
     return post
 
 
+def _emit_updated(post: Post, *, new_mentions: list[str]) -> None:
+    """``post.updated`` with the full hashtag list: the excerpt is cut at 280
+    characters, so search cannot re-derive the tags that come after it."""
+    events.emit(
+        "post.updated",
+        subject_id=str(post.id),
+        payload={
+            "post_id": str(post.id),
+            "author_id": str(post.author_id),
+            "audience": post.audience,
+            "comment_policy": post.comment_policy,
+            "excerpt": post.body[:280],
+            "hashtags": sorted(post.hashtags.values_list("hashtag__tag", flat=True)),
+            "new_mentions": new_mentions,
+        },
+        actor_id=str(post.author_id),
+    )
+
+
 def delete_post(author_id: str, post_id: str) -> None:
-    post = Post.objects.filter(id=post_id, author_id=author_id, deleted_at__isnull=True).first()
-    if post is None:
-        raise TaraAPIError("Post not found.", code="not_found", http_status_code=404)
     with transaction.atomic():
+        # Locked: a concurrent delete waits, then finds nothing, so the
+        # original's share_count goes down once.
+        post = (
+            Post.objects.select_for_update()
+            .filter(id=post_id, author_id=author_id, deleted_at__isnull=True)
+            .first()
+        )
+        if post is None:
+            raise TaraAPIError("Post not found.", code="not_found", http_status_code=404)
         post.deleted_at = timezone.now()
         post.save(update_fields=["deleted_at"])
         if post.shared_post_id:
@@ -357,6 +384,22 @@ def delete_post(author_id: str, post_id: str) -> None:
             payload={"post_id": str(post.id)},
             actor_id=str(author_id),
         )
+
+
+def restrict_media_of_hidden_post(post_id: str) -> None:
+    """Driven by the post's own ``post.deleted`` (author delete or moderator
+    removal), after that commit: restricted media follow the post's visibility,
+    so once the post is hidden nobody but the owner gets them. A public post's
+    media were not restricted until now. Raises 503 while media is down, so the
+    consumer retries; an approved removal needs no call back, since restricted
+    media open up with the post.
+    """
+    post = Post.objects.filter(id=post_id).first()
+    if post is None or post.is_visible:
+        return  # gone, or shown again by the time this ran
+    media_ids = [str(m) for m in post.media.values_list("media_id", flat=True)]
+    if media_ids:
+        media_client.bind(str(post.author_id), str(post.id), media_ids, restricted=True)
 
 
 def get_post(viewer_id: str, post_id: str) -> Post:
@@ -374,6 +417,10 @@ def author_posts_queryset(author_id: str | None):
     """Posts by one author (a profile timeline); filter with ``only_visible``."""
     if not author_id:
         raise TaraAPIError("author_id is required.", code="validation_error", http_status_code=400)
+    try:
+        author_id = str(uuid.UUID(str(author_id)))
+    except ValueError as exc:
+        raise _bad_request("author_id must be a UUID.") from exc
     return with_detail(Post.objects.filter(author_id=author_id, deleted_at__isnull=True))
 
 
@@ -424,23 +471,31 @@ def viewer_state(viewer_id: str, posts: list[Post]) -> dict:
 
 
 def apply_moderation(post_id: str, action: str) -> None:
-    """Driven by moderation.actioned. Other actions do not change the post."""
-    post = Post.objects.filter(id=post_id).first()
+    """Driven by moderation.actioned. Other actions do not change the post.
+
+    ``remove`` hides the post and emits ``post.deleted``, so feeds and search drop
+    it as they drop a deleted post. ``approve`` (an overturned removal) shows it
+    again and emits ``post.updated``, so search indexes it again. Feed rows are
+    not rebuilt; the post shows on the author's profile.
+    """
+    post = Post.objects.select_for_update().filter(id=post_id).first()
     if post is None:
         return
-    if action == "remove":
+    removed = post.moderation_status == Post.ModerationStatus.REMOVED
+    if action == "remove" and not removed:
         post.moderation_status = Post.ModerationStatus.REMOVED
         post.save(update_fields=["moderation_status"])
-        # Feeds and search drop it the same way they drop a deleted post.
         events.emit(
             "post.deleted",
             subject_id=str(post.id),
             payload={"post_id": str(post.id)},
             actor_id=str(post.author_id),
         )
-    elif action == "approve":  # appeal overturned; feeds rebuild as people post
+    elif action == "approve" and post.moderation_status != Post.ModerationStatus.OK:
         post.moderation_status = Post.ModerationStatus.OK
         post.save(update_fields=["moderation_status"])
+        if post.deleted_at is None:
+            _emit_updated(post, new_mentions=[])
 
 
 # ---- reactions --------------------------------------------------------------
@@ -776,6 +831,15 @@ def apply_comment_moderation(comment_id: str, action: str) -> None:
         comment = Comment.objects.select_for_update().get(id=comment.id)
         if comment.moderation_status != Comment.ModerationStatus.REMOVED:
             return
+        if comment.parent_id:
+            root = Comment.objects.select_for_update().get(id=comment.parent_id)
+            if root.deleted_at is not None:
+                # Its thread is gone, so it stays hidden and uncounted. Under a
+                # root that moderation removed it joins that removal, and comes
+                # back (and is counted) if that is overturned too.
+                if root.moderation_status == Comment.ModerationStatus.REMOVED:
+                    Comment.objects.filter(id=comment.id).update(deleted_at=root.deleted_at)
+                return
         # The rows that one removal hid share its timestamp.
         hidden = Comment.objects.filter(
             Q(id=comment.id) | Q(parent=comment),
@@ -787,6 +851,9 @@ def apply_comment_moderation(comment_id: str, action: str) -> None:
         Post.objects.filter(id=comment.post_id).update(comment_count=F("comment_count") + len(ids))
         if comment.parent_id:
             Comment.objects.filter(id=comment.parent_id).update(reply_count=F("reply_count") + 1)
+        else:  # recounted: a reply removed on its own may have joined this removal
+            live = Comment.objects.filter(parent=comment, deleted_at__isnull=True).count()
+            Comment.objects.filter(id=comment.id).update(reply_count=live)
         events.emit(
             "comment.restored",
             subject_id=str(comment.id),
@@ -1031,10 +1098,16 @@ def notify_mentions(
 
 
 def _default_collection(owner_id: str) -> SavedCollection:
-    collection, _ = SavedCollection.objects.get_or_create(
-        owner_id=owner_id, is_default=True, defaults={"name": "Saved"}
+    # Not get_or_create: nothing makes the default unique, so two first saves at
+    # once can both create one, and get() then fails on every later save.
+    collection = (
+        SavedCollection.objects.filter(owner_id=owner_id, is_default=True)
+        .order_by("created_at", "id")
+        .first()
     )
-    return collection
+    return collection or SavedCollection.objects.create(
+        owner_id=owner_id, is_default=True, name="Saved"
+    )
 
 
 def save_item(owner_id: str, item_type: str, item_id: str) -> SavedItem:

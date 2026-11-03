@@ -3,7 +3,7 @@ import { BellOff } from "lucide-vue-next";
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
-import { badgeText } from "@/lib/chat";
+import { badgeText, conversationTitle } from "@/lib/chat";
 import { relativeTime } from "@/lib/format";
 import { useDirectoryStore } from "@/stores/directory";
 import { usePresenceStore } from "@/stores/presence";
@@ -12,7 +12,7 @@ import type { Conversation } from "@/types";
 const props = defineProps<{ conversations: Conversation[]; activeId?: string; selfId?: string }>();
 defineEmits<{ select: [id: string] }>();
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const presence = usePresenceStore();
 const directory = useDirectoryStore();
 
@@ -25,8 +25,7 @@ function peerId(c: Conversation): string {
 function title(c: Conversation): string {
   if (c.title) return c.title;
   if (isDm(c)) return directory.label(peerId(c));
-  const others = c.members.filter((m) => m !== props.selfId);
-  return others.map((m) => directory.label(m)).join("، ") || t("messages.groupFallback");
+  return conversationTitle(c, props.selfId, directory.label, locale.value, t("messages.groupFallback"));
 }
 </script>
 
@@ -61,7 +60,7 @@ function title(c: Conversation): string {
             v-if="c.unread_count"
             class="badge"
             :class="c.muted_until ? 'opacity-60' : ''"
-            :aria-label="t('messages.unreadCount', { count: c.unread_count })"
+            :aria-label="t('messages.unreadCount', c.unread_count)"
             data-testid="conversation-unread"
           >
             {{ badgeText(c.unread_count) }}

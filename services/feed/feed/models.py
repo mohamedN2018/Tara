@@ -44,6 +44,24 @@ class FeedItem(models.Model):
         ]
 
 
+class PostState(models.Model):
+    """The newest edit or delete applied per post, kept after the delete (a tombstone).
+
+    Retries reorder events. A ``post.created`` retried after the post was deleted
+    fans out nothing, one retried after an edit fans out the edited audience and
+    excerpt, and an edit older than the stored one is ignored.
+    """
+
+    post_id = models.UUIDField(primary_key=True)
+    occurred_at = models.DateTimeField()
+    deleted = models.BooleanField(default=False)
+    audience = models.CharField(max_length=16, blank=True, default="")
+    excerpt = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "post_state"
+
+
 class OutboxEvent(AbstractOutboxEvent):
     class Meta(AbstractOutboxEvent.Meta):
         abstract = False

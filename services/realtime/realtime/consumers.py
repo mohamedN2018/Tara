@@ -11,6 +11,12 @@ announces "offline" with ``last_seen``; announcements go only to the account's
 authorised peers (``peers.audience``), never to a global group. A client asks
 for peers' current state with ``{"action": "presence.query", "account_ids": [...]}``
 and gets back only the ones it is allowed to see.
+
+Limits: a frame over ``WS_MAX_FRAME_BYTES`` closes the socket (1009); frames
+beyond the per-socket token bucket (``WS_FRAME_BURST``, refilled at
+``WS_FRAMES_PER_SECOND``) are dropped unread; non-JSON and binary frames are
+ignored. Blocking work (Redis, Chat, Graph, JWKS) runs in the thread pool, not
+on one shared thread, so one slow dependency cannot stall every socket.
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from urllib.parse import parse_qs
 
 from asgiref.sync import sync_to_async
@@ -31,7 +38,23 @@ from .groups import conversation_group, user_group
 logger = logging.getLogger("tara.realtime.consumer")
 
 CLOSE_UNAUTHENTICATED = 4401
+CLOSE_TOO_LARGE = 1009
 MAX_SUBSCRIPTIONS = 200
+# The loop keeps only weak references to tasks: hold announcements until done.
+_announcements: set[asyncio.Task] = set()
+
+
+def _off_loop(fn):
+    """Run blocking I/O in the thread pool. The gateway has no database, so
+    nothing needs Django's single "thread sensitive" thread."""
+    return sync_to_async(fn, thread_sensitive=False)
+
+
+def _uuid(value) -> str | None:
+    try:
+        return str(uuid.UUID(str(value)))
+    except (TypeError, ValueError, AttributeError):
+        return None
 
 
 async def announce(account_id: str, online: bool) -> None:
@@ -39,8 +62,8 @@ async def announce(account_id: str, online: bool) -> None:
     from channels.layers import get_channel_layer
 
     try:
-        audience = await sync_to_async(peers.audience)(account_id)
-        state = await sync_to_async(presence.state)(account_id)
+        audience = await _off_loop(peers.audience)(account_id)
+        last_seen = None if online else (await _off_loop(presence.state)(account_id))["last_seen"]
     except Exception:  # noqa: BLE001 - presence is best-effort, never break the socket
         logger.warning("presence announce failed", exc_info=True)
         return
@@ -48,7 +71,7 @@ async def announce(account_id: str, online: bool) -> None:
         "event": "presence.changed",
         "account_id": account_id,
         "online": online,
-        "last_seen": None if online else state["last_seen"],
+        "last_seen": last_seen,
     }
     layer = get_channel_layer()
     for peer in audience:
@@ -61,12 +84,12 @@ class TaraConsumer(AsyncJsonWebsocketConsumer):
         await self.close(code=CLOSE_UNAUTHENTICATED)
 
     async def connect(self) -> None:
-        token = self._token_from_scope()
+        token, subprotocol = self._token_from_scope()
         if not token:
             await self.close(code=CLOSE_UNAUTHENTICATED)
             return
         try:
-            claims = await sync_to_async(verify_access_token)(token)
+            claims = await _off_loop(verify_access_token)(token)
         except Exception:  # noqa: BLE001 - any verification failure rejects the socket
             await self.close(code=CLOSE_UNAUTHENTICATED)
             return
@@ -74,10 +97,13 @@ class TaraConsumer(AsyncJsonWebsocketConsumer):
         self.account_id = str(claims["sub"])
         self.subscriptions: set[str] = set()
         self.typing_at: dict[str, float] = {}
+        self.allowance = float(settings.WS_FRAME_BURST)
+        self.allowance_at = time.monotonic()
         # The socket lives no longer than its token; the client reconnects with a new one.
         self.expiry_task = asyncio.create_task(self._close_at(claims["exp"]))
         await self.channel_layer.group_add(user_group(self.account_id), self.channel_name)
-        await self.accept()
+        # A browser drops the handshake unless the server echoes an offered subprotocol.
+        await self.accept(subprotocol=subprotocol)
         await self.send_json({"event": "connected", "account_id": self.account_id})
         await self._heartbeat(first=True)
 
@@ -90,7 +116,7 @@ class TaraConsumer(AsyncJsonWebsocketConsumer):
         for conv_id in getattr(self, "subscriptions", set()):
             await self.channel_layer.group_discard(conversation_group(conv_id), self.channel_name)
         try:
-            last_out = await sync_to_async(presence.disconnect)(account_id, self.channel_name)
+            last_out = await _off_loop(presence.disconnect)(account_id, self.channel_name)
         except Exception:  # noqa: BLE001 - the key expires on its own anyway
             logger.warning("presence disconnect failed", exc_info=True)
             return
@@ -99,14 +125,43 @@ class TaraConsumer(AsyncJsonWebsocketConsumer):
 
     async def _heartbeat(self, first: bool = False) -> None:
         try:
-            came_online = await sync_to_async(presence.connect if first else presence.heartbeat)(
+            came_online = await _off_loop(presence.connect if first else presence.heartbeat)(
                 self.account_id, self.channel_name
             )
         except Exception:  # noqa: BLE001 - Redis down: no presence, socket still works
             logger.warning("presence heartbeat failed", exc_info=True)
             return
         if came_online:
-            asyncio.create_task(announce(self.account_id, online=True))
+            task = asyncio.create_task(announce(self.account_id, online=True))
+            _announcements.add(task)
+            task.add_done_callback(_announcements.discard)
+
+    def _take_frame(self) -> bool:
+        """Token bucket: False when this socket is sending too fast."""
+        now = time.monotonic()
+        self.allowance = min(
+            float(settings.WS_FRAME_BURST),
+            self.allowance + (now - self.allowance_at) * settings.WS_FRAMES_PER_SECOND,
+        )
+        self.allowance_at = now
+        if self.allowance < 1:
+            return False
+        self.allowance -= 1
+        return True
+
+    async def receive(self, text_data=None, bytes_data=None, **kwargs) -> None:
+        if text_data is None:
+            return  # binary frames are not part of the protocol
+        if len(text_data) > settings.WS_MAX_FRAME_BYTES:
+            await self.close(code=CLOSE_TOO_LARGE)
+            return
+        if not self._take_frame():
+            return
+        try:
+            content = await self.decode_json(text_data)
+        except ValueError:
+            return
+        await self.receive_json(content, **kwargs)
 
     async def receive_json(self, content, **kwargs) -> None:
         if not isinstance(content, dict):
@@ -118,20 +173,21 @@ class TaraConsumer(AsyncJsonWebsocketConsumer):
         elif action == "presence.query":
             await self._presence_query(content.get("account_ids"))
         elif action == "subscribe":
-            conv_id = str(content.get("conversation_id", ""))
+            conv_id = _uuid(content.get("conversation_id"))
             if (
                 conv_id
+                and conv_id not in self.subscriptions
                 and len(self.subscriptions) < MAX_SUBSCRIPTIONS
-                and await sync_to_async(chat_client.is_member)(conv_id, self.account_id)
+                and await _off_loop(chat_client.is_member)(conv_id, self.account_id)
             ):
                 self.subscriptions.add(conv_id)
                 await self.channel_layer.group_add(conversation_group(conv_id), self.channel_name)
         elif action == "unsubscribe":
-            conv_id = str(content.get("conversation_id", ""))
-            self.subscriptions.discard(conv_id)
-            await self.channel_layer.group_discard(conversation_group(conv_id), self.channel_name)
+            conv_id = _uuid(content.get("conversation_id"))
+            if conv_id:
+                await self._drop_subscription(conv_id)
         elif action == "typing":
-            conv_id = str(content.get("conversation_id", ""))
+            conv_id = _uuid(content.get("conversation_id"))
             now = time.monotonic()
             # At most one typing frame per conversation every TYPING_MIN_INTERVAL.
             if (
@@ -155,10 +211,22 @@ class TaraConsumer(AsyncJsonWebsocketConsumer):
         if not isinstance(account_ids, list):
             return
         wanted = {str(a) for a in account_ids[: settings.PRESENCE_QUERY_MAX] if a}
-        allowed = await sync_to_async(peers.audience)(self.account_id)
-        visible = sorted(wanted & allowed)
-        states = [await sync_to_async(presence.state)(a) for a in visible]
+
+        def lookup() -> list[dict]:
+            visible = sorted(wanted & peers.audience(self.account_id))
+            return [presence.state(a) for a in visible]
+
+        try:
+            states = await _off_loop(lookup)()
+        except Exception:  # noqa: BLE001 - Redis down: answer nothing, keep the socket
+            logger.warning("presence query failed", exc_info=True)
+            return
         await self.send_json({"event": "presence.state", "states": states})
+
+    async def _drop_subscription(self, conv_id: str) -> None:
+        self.subscriptions.discard(conv_id)
+        self.typing_at.pop(conv_id, None)
+        await self.channel_layer.group_discard(conversation_group(conv_id), self.channel_name)
 
     # ---- channel-layer message handlers (type -> method, dots become _) ----
 
@@ -166,16 +234,28 @@ class TaraConsumer(AsyncJsonWebsocketConsumer):
         await self.send_json(event["data"])
 
     async def typing_event(self, event) -> None:
+        # Not echoed: the typist's own tabs already know.
+        if event["payload"].get("actor_id") == self.account_id:
+            return
         await self.send_json(event["payload"])
+
+    async def subscription_revoke(self, event) -> None:
+        """Chat says this account lost access (removed from the group, or a
+        block): its live frames stop now. Silent: the client is not told."""
+        conv_id = _uuid(event.get("conversation_id"))
+        if conv_id:
+            await self._drop_subscription(conv_id)
 
     # ---- helpers ----
 
-    def _token_from_scope(self) -> str | None:
+    def _token_from_scope(self) -> tuple[str | None, str | None]:
+        """``(token, subprotocol to accept)``. The token comes from ``?token=``
+        or, failing that, is the first offered ``Sec-WebSocket-Protocol``
+        (the ASGI server parses that header into ``scope["subprotocols"]``)."""
         qs = parse_qs(self.scope.get("query_string", b"").decode())
         if "token" in qs:
-            return qs["token"][0]
-        # Fallback: token in the Sec-WebSocket-Protocol header.
-        for name, value in self.scope.get("headers", []):
-            if name == b"sec-websocket-protocol":
-                return value.decode().split(",")[0].strip()
-        return None
+            return qs["token"][0], None
+        offered = [p.strip() for p in self.scope.get("subprotocols") or [] if p.strip()]
+        if offered:
+            return offered[0], offered[0]
+        return None, None

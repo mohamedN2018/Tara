@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ArrowLeft } from "lucide-vue-next";
-import { onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 
@@ -14,6 +14,15 @@ import type { Post } from "@/types";
 const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
+
+// `?comment=<id>` (notification links) and optionally `?thread=<root id>`.
+const ID_RE = /^[0-9a-f-]{8,64}$/i;
+const queryId = (key: string) => {
+  const v = route.query[key];
+  return typeof v === "string" && ID_RE.test(v) ? v : null;
+};
+const focusCommentId = computed(() => queryId("comment"));
+const focusThreadId = computed(() => queryId("thread"));
 
 const post = ref<Post | null>(null);
 const loading = ref(true);
@@ -47,7 +56,15 @@ onMounted(load);
       </button>
       <LoadingSkeleton v-if="loading" :rows="3" />
       <ErrorState v-else-if="error || !post" @retry="load" />
-      <PostCard v-else :key="post.id" :post="post" :start-comments-open="true" @removed="onRemoved" />
+      <PostCard
+        v-else
+        :key="post.id"
+        :post="post"
+        :start-comments-open="true"
+        :focus-comment-id="focusCommentId"
+        :focus-thread-id="focusThreadId"
+        @removed="onRemoved"
+      />
     </div>
   </AppShell>
 </template>

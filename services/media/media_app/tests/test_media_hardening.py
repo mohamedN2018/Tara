@@ -264,16 +264,43 @@ def test_rebinding_the_same_post_never_lifts_a_restriction():
     assert (asset.restricted, str(asset.post_id)) == (True, post_id)
 
 
-def test_binding_to_a_new_post_follows_that_post():
+def test_binding_to_a_new_post_follows_that_post(post_liveness):
     """A post that failed after binding leaves a ghost; the next post takes over."""
     owner, ghost, real = _acct(), _acct(), _acct()
     media_id = services.sign_upload(
         owner, kind="image", mime="image/png", size=1, visibility="public"
     )["media_id"]
     _bind(owner, ghost, [media_id], True)
+    post_liveness.answers[ghost] = False  # post: never committed (or deleted)
     _bind(owner, real, [media_id], False)
     asset = MediaAsset.objects.get(id=media_id)
     assert (asset.restricted, str(asset.post_id)) == (False, real)
+    assert post_liveness.calls == [(owner, ghost)]
+
+
+@pytest.mark.parametrize("answer", [True, None], ids=["live", "post-down"])
+def test_media_of_a_live_post_cannot_be_bound_to_another(post_liveness, answer):
+    """One media, one post: moving it would change who can see the first post's photo."""
+    owner, first, second = _acct(), _acct(), _acct()
+    media_id = services.sign_upload(
+        owner, kind="image", mime="image/png", size=1, visibility="public"
+    )["media_id"]
+    _bind(owner, first, [media_id], True)
+    post_liveness.answers[first] = answer
+    result = _bind(owner, second, [media_id], False)
+    assert result == {"bound": [], "skipped": [media_id], "attached_elsewhere": [media_id]}
+    asset = MediaAsset.objects.get(id=media_id)
+    assert (asset.restricted, str(asset.post_id)) == (True, first)
+
+
+def test_binding_fresh_media_or_the_same_post_never_asks_post(post_liveness):
+    owner, post_id = _acct(), _acct()
+    media_id = services.sign_upload(
+        owner, kind="image", mime="image/png", size=1, visibility="public"
+    )["media_id"]
+    _bind(owner, post_id, [media_id], False)
+    _bind(owner, post_id, [media_id], True)
+    assert post_liveness.calls == []
 
 
 def test_bind_validates_its_payload():

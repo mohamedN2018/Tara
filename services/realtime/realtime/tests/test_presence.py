@@ -252,3 +252,31 @@ def test_lifecycle_and_receipt_frames_reach_only_recipients(monkeypatch):
         ("b", "chat.message.delivered"),
     ]
     assert pushed[-1][1]["up_to_seq"] == 4
+
+
+def test_a_block_outlives_chats_stale_answer(monkeypatch):
+    me, blocked, friend = _acct(), _acct(), _acct()
+    # Chat has not processed the block yet: it still lists the DM peer.
+    monkeypatch.setattr("realtime.chat_client.presence_peers", lambda a: [blocked, friend])
+    monkeypatch.setattr("realtime.graph_client.friends", lambda a: [])
+    monkeypatch.setattr(bridge, "_push_to_user", lambda who, data: None)
+    assert real_audience(me) == {blocked, friend}  # cached before the block
+    bridge.on_user_blocked(
+        EventEnvelope(
+            event_type="user.blocked",
+            subject_id="x",
+            producer="graph-service",
+            payload={"blocker_id": blocked, "blocked_id": me},
+        )
+    )
+    assert real_audience(me) == {friend}
+    assert real_audience(me) == {friend}  # and the recomputed, cached answer too
+    bridge.on_user_unblocked(
+        EventEnvelope(
+            event_type="user.unblocked",
+            subject_id="x",
+            producer="graph-service",
+            payload={"blocker_id": blocked, "blocked_id": me},
+        )
+    )
+    assert real_audience(me) == {blocked, friend}

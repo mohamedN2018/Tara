@@ -102,8 +102,9 @@ def on_message_deleted(event: EventEnvelope) -> None:
 
 
 def _hide_presence(a: str, b: str) -> None:
-    """Drop cached verdicts and blank each side's view of the other right away."""
-    peers.invalidate(a, b)
+    """Keep the pair out of each other's audience and blank each side's view
+    of the other right away."""
+    peers.remember_block(a, b)
     for viewer, target in ((a, b), (b, a)):
         _push_to_user(
             viewer,
@@ -135,7 +136,8 @@ def on_friendship_accepted(event: EventEnvelope) -> None:
 @on_event("user.unblocked")
 def on_user_unblocked(event: EventEnvelope) -> None:
     p = event.payload
-    peers.invalidate(str(p.get("blocker_id") or ""), str(p.get("blocked_id") or ""))
+    if p.get("blocker_id") and p.get("blocked_id"):
+        peers.forget_block(str(p["blocker_id"]), str(p["blocked_id"]))
 
 
 @on_event("message.reacted")
@@ -154,10 +156,19 @@ def on_message_reacted(event: EventEnvelope) -> None:
 
 @on_event("conversation.member.changed")
 def on_conversation_changed(event: EventEnvelope) -> None:
+    """``revoked`` accounts lost access (removed, or a block): every socket of
+    theirs drops the conversation's subscription before the refresh frame."""
     p = event.payload
+    conversation_id = p.get("conversation_id")
+    layer = get_channel_layer()
+    for account in p.get("revoked") or []:
+        async_to_sync(layer.group_send)(
+            user_group(str(account)),
+            {"type": "subscription.revoke", "conversation_id": conversation_id},
+        )
     data = {
         "event": "chat.conversation.changed",
-        "conversation_id": p.get("conversation_id"),
+        "conversation_id": conversation_id,
         "action": p.get("action"),
     }
     for recipient in p.get("recipients", []):

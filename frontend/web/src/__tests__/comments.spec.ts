@@ -1,7 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { api } from "@/lib/api";
-import { addReply, emptyThread, mergeById, removeComment, replaceComment, replyTargetAuthor, threadRootId } from "@/lib/commentThreads";
+import {
+  addReply,
+  type CommentLocator,
+  emptyThread,
+  LOCATE_ROOT_PAGES,
+  locateComment,
+  mergeById,
+  removeComment,
+  replaceComment,
+  replyTargetAuthor,
+  type Thread,
+  threadRootId,
+} from "@/lib/commentThreads";
 import { applyReactionChange, topReactions } from "@/lib/reactionCounts";
 import { type Comment, postService } from "@/services/post";
 
@@ -117,5 +129,71 @@ describe("postService comment endpoints", () => {
     });
     await postService.reactions("p1", "love");
     expect(get).toHaveBeenCalledWith("/posts/p1/reactions/", { params: { type: "love", cursor: undefined } });
+  });
+});
+
+/** A fake list: `rootPages` served one per moreRoots(), replies two per page. */
+function fakeList(rootPages: Comment[][], replies: Record<string, Comment[]> = {}) {
+  const pages = rootPages.slice(1);
+  let roots = rootPages[0] ?? [];
+  const threads: Record<string, Thread> = {};
+  const calls = { roots: 0, replies: 0 };
+  const thread = (id: string) => threads[id] ?? emptyThread();
+  const src: CommentLocator = {
+    hasRoot: (id) => roots.some((r) => r.id === id),
+    moreRoots: async () => {
+      const next = pages.shift();
+      if (!next) return false;
+      calls.roots += 1;
+      roots = roots.concat(next);
+      return true;
+    },
+    roots: () => roots,
+    thread,
+    loadReplies: async (rootId) => {
+      calls.replies += 1;
+      const all = replies[rootId] ?? [];
+      const at = Number(thread(rootId).cursor ?? 0);
+      const next = at + 2 < all.length ? String(at + 2) : null;
+      threads[rootId] = { open: true, loaded: true, cursor: next, replies: thread(rootId).replies.concat(all.slice(at, at + 2)) };
+      return true;
+    },
+    setOpen: (rootId, open) => (threads[rootId] = { ...thread(rootId), open }),
+  };
+  return { src, calls, thread };
+}
+
+const replies = (root: string, n: number) =>
+  Array.from({ length: n }, (_, i) => c(`${root}-r${i}`, { parent_id: root, reply_to_id: root }));
+
+describe("locateComment (deep links)", () => {
+  it("finds a root on a later page", async () => {
+    const list = fakeList([[c("a")], [c("b")], [c("target")]]);
+    expect(await locateComment(list.src, "target")).toBe(true);
+    expect(list.calls.roots).toBe(2);
+  });
+
+  it("opens the hinted thread and pages its replies to the reply", async () => {
+    const list = fakeList([[c("a"), c("root", { reply_count: 5 })]], { root: replies("root", 5) });
+    expect(await locateComment(list.src, "root-r4", "root")).toBe(true);
+    expect(list.calls.replies).toBe(3);
+    expect(list.thread("root").open).toBe(true);
+  });
+
+  it("searches threads without a hint and closes the ones it opened in vain", async () => {
+    const list = fakeList(
+      [[c("a", { reply_count: 1 }), c("b"), c("z", { reply_count: 2 })]],
+      { a: replies("a", 1), z: replies("z", 2) },
+    );
+    expect(await locateComment(list.src, "z-r1")).toBe(true);
+    expect(list.thread("a").open).toBe(false);
+    expect(list.thread("z").open).toBe(true);
+  });
+
+  it("gives up on a missing comment within its page budget", async () => {
+    const many = Array.from({ length: LOCATE_ROOT_PAGES + 5 }, (_, i) => [c(`p${i}`)]);
+    const list = fakeList(many);
+    expect(await locateComment(list.src, "gone")).toBe(false);
+    expect(list.calls.roots).toBe(LOCATE_ROOT_PAGES);
   });
 });

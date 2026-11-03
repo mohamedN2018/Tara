@@ -8,6 +8,7 @@ import {
   badgeText,
   canDeleteForEveryone,
   canEdit,
+  conversationTitle,
   deliveryStatus,
   formatBytes,
   tooLarge,
@@ -103,9 +104,28 @@ describe("message lifecycle rules", () => {
   });
 });
 
+describe("conversationTitle", () => {
+  const label = (id: string) => ({ a: "Ann", b: "Bob", me: "Me" })[id] ?? id;
+  it("joins the other members in the UI language's list style", () => {
+    const c = { title: null, members: ["me", "a", "b"] };
+    expect(conversationTitle(c, "me", label, "en", "Group")).toBe("Ann, Bob");
+    // Arabic list punctuation, never the English comma.
+    const ar = conversationTitle(c, "me", label, "ar", "مجموعة");
+    expect(ar).toMatch(/^Ann.+Bob$/);
+    expect(ar).not.toContain(", ");
+  });
+  it("prefers the group's own title, and falls back when alone", () => {
+    expect(conversationTitle({ title: "Trip", members: ["me", "a"] }, "me", label, "en", "Group")).toBe("Trip");
+    expect(conversationTitle({ title: "", members: ["me"] }, "me", label, "en", "Group")).toBe("Group");
+  });
+});
+
 describe("attachments", () => {
   it("accepts photos, mp4/webm video and PDF only", () => {
     expect(attachmentKind({ type: "image/heic" })).toBe("image");
+    // Chrome on Windows reports no type for an iPhone photo.
+    expect(attachmentKind({ type: "", name: "IMG_0001.HEIC" })).toBe("image");
+    expect(attachmentKind({ type: "", name: "notes.txt" })).toBeNull();
     expect(attachmentKind({ type: "video/mp4" })).toBe("video");
     expect(attachmentKind({ type: "video/quicktime" })).toBeNull();
     expect(attachmentKind({ type: "application/pdf" })).toBe("file");

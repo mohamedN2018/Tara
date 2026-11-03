@@ -77,10 +77,25 @@ def lookup(media_ids: list[str]) -> dict[str, MediaInfo]:
 BIND_CHUNK = 20  # media's per-call limit; older posts may carry more media
 
 
-def bind(owner_id: str, post_id: str, media_ids: list[str], *, restricted: bool) -> list[str]:
-    """Attach media to the post; returns the ids media skipped (not owned or deleted)."""
+@dataclass(frozen=True)
+class BindResult:
+    """``skipped``: every id media did not bind to the post. ``attached_elsewhere``:
+    the skipped ids that belong to another live post (the rest are deleted or
+    not the owner's)."""
+
+    skipped: list[str]
+    attached_elsewhere: list[str]
+
+
+def bind(owner_id: str, post_id: str, media_ids: list[str], *, restricted: bool) -> BindResult:
+    """Attach media to the post, or (``restricted``) tighten them to its visibility.
+
+    Media never lifts a restriction: restricted media follow the post's
+    visibility, so they open up again with the post (an approved removal).
+    """
     ids = [str(m) for m in media_ids]
     skipped: list[str] = []
+    elsewhere: list[str] = []
     for start in range(0, len(ids), BIND_CHUNK):
         result = _post(
             "media/bind/",
@@ -92,4 +107,5 @@ def bind(owner_id: str, post_id: str, media_ids: list[str], *, restricted: bool)
             },
         )
         skipped += result.get("skipped", [])
-    return skipped
+        elsewhere += result.get("attached_elsewhere", [])
+    return BindResult(skipped=skipped, attached_elsewhere=elsewhere)

@@ -5,9 +5,13 @@ import { mediaService } from "@/services/media";
 /** Resolve a single media id to a presigned display URL (reactive, cached). */
 export function useMediaUrl(getId: () => string | null | undefined): Ref<string | null> {
   const url = ref<string | null>(null);
-  watchEffect(async () => {
+  watchEffect(async (onCleanup) => {
     const id = getId();
-    url.value = id ? await mediaService.resolveUrl(id) : null;
+    // An id that changed while the previous one resolved must not show its URL.
+    let stale = false;
+    onCleanup(() => (stale = true));
+    const resolved = id ? await mediaService.resolveUrl(id) : null;
+    if (!stale) url.value = resolved;
   });
   return url;
 }
@@ -15,10 +19,12 @@ export function useMediaUrl(getId: () => string | null | undefined): Ref<string 
 /** Resolve a list of media ids to URLs (drops the ones that aren't ready). */
 export function useMediaUrls(getIds: () => string[]): Ref<string[]> {
   const urls = ref<string[]>([]);
-  watchEffect(async () => {
+  watchEffect(async (onCleanup) => {
     const ids = getIds();
+    let stale = false;
+    onCleanup(() => (stale = true));
     const resolved = await Promise.all(ids.map((id) => mediaService.resolveUrl(id)));
-    urls.value = resolved.filter((u): u is string => !!u);
+    if (!stale) urls.value = resolved.filter((u): u is string => !!u);
   });
   return urls;
 }

@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import { uploadMime } from "@/lib/heic";
 
 export interface MediaVariant {
   kind: string;
@@ -55,7 +56,7 @@ export const mediaService = {
    * Returns the asset (status will be "processing" until the worker finishes).
    */
   async upload(file: File, kind = "image", visibility = "public"): Promise<MediaAsset> {
-    const mime = file.type || "application/octet-stream";
+    const mime = uploadMime(file);
     const { data: signed } = await api.post<{ data: SignResult }>("/media/uploads/sign/", {
       kind,
       mime,

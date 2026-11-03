@@ -729,3 +729,37 @@ def test_resolve_unknown_appeal_returns_404(client_for):
         format="json",
     )
     assert resp.status_code == 404
+
+
+# ---- appeal queue -------------------------------------------------------------
+
+
+def test_moderators_find_open_appeals_in_the_queue(client_for, moderator):
+    _, mod = moderator
+    owner = _acct()
+    case = _resolved_case(owner)
+    assert _appeal(client_for(owner), case.id).status_code == 201
+    resolved_case = _resolved_case(owner)
+    resolved = services.file_appeal(str(resolved_case.id), owner, "again")
+    services.resolve_appeal(str(resolved.id), _acct(), "upheld")
+
+    resp = mod.get(reverse("moderation:appeals"))
+    assert resp.status_code == 200
+    (row,) = resp.json()["data"]
+    assert row["case_id"] == str(case.id)
+    assert row["target_type"] == "post"
+    assert row["target_id"] == case.target_id
+    assert row["status"] == "open"
+    # The id is what resolving needs.
+    resolve = mod.post(
+        reverse("moderation:appeal-resolve", args=[row["id"]]), {"status": "upheld"}, format="json"
+    )
+    assert resolve.status_code == 200
+
+    upheld = mod.get(reverse("moderation:appeals"), {"status": "upheld"}).json()["data"]
+    assert {r["id"] for r in upheld} == {row["id"], str(resolved.id)}
+    assert mod.get(reverse("moderation:appeals"), {"status": "nope"}).status_code == 400
+
+
+def test_the_appeal_queue_is_for_moderators_only(client_for):
+    assert client_for(_acct()).get(reverse("moderation:appeals")).status_code == 403

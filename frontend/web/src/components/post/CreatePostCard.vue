@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { BarChart3, ChevronDown, Globe, ImagePlus, Lock, Plus, UserCheck, Users, X } from "lucide-vue-next";
-import { computed, nextTick, ref, watch } from "vue";
+import { BarChart3, ChevronDown, Globe, Image as ImageIcon, ImagePlus, Lock, Plus, UserCheck, Users, X } from "lucide-vue-next";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import MentionField from "@/components/post/MentionField.vue";
 import { errorMessage } from "@/lib/errors";
-import { IMAGE_ACCEPT, isHeic, toUploadable } from "@/lib/heic";
+import { IMAGE_ACCEPT, isHeic } from "@/lib/heic";
 import { mediaService } from "@/services/media";
 import { COMMENT_POLICIES, type CommentPolicy, postService } from "@/services/post";
 import { useAuthStore } from "@/stores/auth";
@@ -21,10 +21,11 @@ const auth = useAuthStore();
 const expanded = ref(false);
 const body = ref("");
 const mediaIds = ref<string[]>([]);
-const previews = ref<string[]>([]);
+// An object URL per photo, or null for HEIC, which most browsers cannot draw
+// (media converts it to JPEG on the server).
+const previews = ref<(string | null)[]>([]);
 const submitting = ref(false);
 const uploading = ref(false);
-const converting = ref(false);
 const error = ref("");
 // The post service accepts at most 10 media per post (MAX_MEDIA_PER_POST).
 const MAX_PHOTOS = 10;
@@ -86,23 +87,10 @@ async function onFiles(e: Event) {
   uploading.value = true;
   error.value = room < files.length ? t("feed.tooManyPhotos", { max: MAX_PHOTOS }) : "";
   try {
-    for (const picked of files.slice(0, Math.max(0, room))) {
-      let file = picked;
-      if (isHeic(picked)) {
-        // iPhone photos: converted to JPEG in a lazily loaded chunk.
-        converting.value = true;
-        try {
-          file = await toUploadable(picked);
-        } catch {
-          error.value = t("feed.heicFailed");
-          continue;
-        } finally {
-          converting.value = false;
-        }
-      }
+    for (const file of files.slice(0, Math.max(0, room))) {
       const asset = await mediaService.upload(file, "image");
       mediaIds.value.push(asset.id);
-      previews.value.push(URL.createObjectURL(file));
+      previews.value.push(isHeic(file) ? null : URL.createObjectURL(file));
     }
   } catch (err) {
     error.value = errorMessage(err);
@@ -111,15 +99,19 @@ async function onFiles(e: Event) {
   }
 }
 
+function revoke(url: string | null) {
+  if (url) URL.revokeObjectURL(url);
+}
+
 function removeMedia(i: number) {
-  URL.revokeObjectURL(previews.value[i]);
+  revoke(previews.value[i]);
   mediaIds.value.splice(i, 1);
   previews.value.splice(i, 1);
 }
 
 function reset() {
   body.value = "";
-  previews.value.forEach((url) => URL.revokeObjectURL(url));
+  previews.value.forEach(revoke);
   mediaIds.value = [];
   previews.value = [];
   audience.value = "public";
@@ -129,6 +121,9 @@ function reset() {
   pollOptions.value = ["", ""];
   pollHours.value = null;
 }
+
+// Leaving the page with photos still in the composer.
+onBeforeUnmount(() => previews.value.forEach(revoke));
 
 async function submit() {
   const text = body.value.trim();
@@ -206,7 +201,7 @@ async function submit() {
     <div v-if="!expanded" class="mt-3 grid grid-cols-2 gap-1 border-t border-gray-100 pt-2 dark:border-gray-800">
       <label class="btn-ghost cursor-pointer focus-within:ring-2 focus-within:ring-brand-400" :class="uploading ? 'opacity-50' : ''">
         <ImagePlus class="h-5 w-5 text-emerald-500" />
-        <span>{{ converting ? t("feed.heicConverting") : uploading ? t("states.loading") : t("feed.photo") }}</span>
+        <span>{{ uploading ? t("states.loading") : t("feed.photo") }}</span>
         <input type="file" :accept="IMAGE_ACCEPT" multiple class="sr-only" :aria-label="t('feed.addPhotos')" @change="onFiles($event); expanded = true" />
       </label>
       <button type="button" class="btn-ghost" @click="expanded = true; pollOpen = true">
@@ -251,7 +246,17 @@ async function submit() {
 
       <div v-if="previews.length" class="mt-2 grid grid-cols-4 gap-2 sm:grid-cols-5">
         <div v-for="(src, i) in previews" :key="i" class="relative">
-          <img :src="src" class="h-20 w-full rounded-lg object-cover" :alt="t('post.imageAlt', { n: i + 1, name: authorName() })" />
+          <img v-if="src" :src="src" class="h-20 w-full rounded-lg object-cover" :alt="t('post.imageAlt', { n: i + 1, name: authorName() })" />
+          <div
+            v-else
+            role="img"
+            class="flex h-20 w-full flex-col items-center justify-center gap-1 rounded-lg bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"
+            :aria-label="t('feed.heicPreview', { n: i + 1 })"
+            data-testid="heic-placeholder"
+          >
+            <ImageIcon class="h-5 w-5" aria-hidden="true" />
+            <span class="text-[10px] font-semibold">HEIC</span>
+          </div>
           <button
             class="absolute end-1 top-1 rounded-full bg-black/60 p-0.5 text-white"
             :aria-label="t('friends.delete')"
@@ -267,7 +272,7 @@ async function submit() {
       <div class="mt-3 flex flex-wrap items-center gap-1 border-t border-gray-100 pt-3 dark:border-gray-800">
         <label class="btn-ghost cursor-pointer focus-within:ring-2 focus-within:ring-brand-400" :class="uploading ? 'opacity-50' : ''" :title="t('feed.addPhotos')">
           <ImagePlus class="h-5 w-5 text-green-600" />
-          <span class="text-sm">{{ converting ? t("feed.heicConverting") : uploading ? t("states.loading") : t("feed.photo") }}</span>
+          <span class="text-sm">{{ uploading ? t("states.loading") : t("feed.photo") }}</span>
           <input type="file" :accept="IMAGE_ACCEPT" multiple class="sr-only" :aria-label="t('feed.addPhotos')" @change="onFiles" />
         </label>
         <button type="button" class="btn-ghost" :aria-pressed="pollOpen" :class="pollOpen ? 'text-brand-600 dark:text-brand-300' : ''" @click="pollOpen = !pollOpen">

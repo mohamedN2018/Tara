@@ -89,12 +89,19 @@ export const identityService = {
     const { data } = await api.post<{ data: Account }>("/auth/email/confirm/", { token });
     return data.data;
   },
-  async linkGoogle(credential: string): Promise<SecurityOverview> {
-    const { data } = await api.post<{ data: SecurityOverview }>("/me/google/", { credential });
+  /** `password`: required by the server when the account has one (re-authentication). */
+  async linkGoogle(credential: string, password?: string): Promise<SecurityOverview> {
+    const { data } = await api.post<{ data: SecurityOverview }>("/me/google/", {
+      credential,
+      ...(password ? { password } : {}),
+    });
     return data.data;
   },
-  async unlinkGoogle(): Promise<SecurityOverview> {
-    const { data } = await api.delete<{ data: SecurityOverview }>("/me/google/");
+  async unlinkGoogle(password?: string): Promise<SecurityOverview> {
+    const { data } = await api.delete<{ data: SecurityOverview }>(
+      "/me/google/",
+      password ? { data: { password } } : undefined,
+    );
     return data.data;
   },
   async startPhoneVerification(): Promise<TelegramLink> {

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from django.db import transaction
+from django.utils.decorators import method_decorator
 from rest_framework import serializers
 from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
@@ -33,6 +35,12 @@ def _require_internal(request: Request) -> None:
 
 
 class InternalMediaView(APIView):
+    """One asset with presigned URLs, for a caller that already checked access.
+
+    ``?filename=`` names the download of a file or audio asset (chat passes the
+    attachment's name); it is cleaned, and the extension follows the real type.
+    """
+
     permission_classes = [AllowAny]
     authentication_classes: list = []
     throttle_classes: list = []  # internal: no per-IP throttle (roadmap 3.3)
@@ -42,7 +50,8 @@ class InternalMediaView(APIView):
         asset = MediaAsset.objects.filter(id=media_id, deleted_at__isnull=True).first()
         if asset is None:
             raise TaraAPIError("Media not found.", code="not_found", http_status_code=404)
-        payload = services.asset_payload(asset)
+        filename = request.query_params.get("filename", "")[:255]
+        payload = services.asset_payload(asset, filename=filename)
         payload["owner_id"] = str(asset.owner_id)
         return data_response(payload)
 
@@ -75,6 +84,8 @@ class _BindSerializer(serializers.Serializer):
     restricted = serializers.BooleanField()
 
 
+# Binding may ask post about an older post first; no transaction is held for it.
+@method_decorator(transaction.non_atomic_requests, name="dispatch")
 class InternalMediaBindView(APIView):
     """Attach media to a post; ``restricted`` media then follow the post's audience."""
 

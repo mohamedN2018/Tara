@@ -41,6 +41,24 @@ class ActionSerializer(serializers.Serializer):
     reason = serializers.CharField(max_length=2000, required=False, allow_blank=True, default="")
 
 
+class AppealSerializer(serializers.ModelSerializer):
+    target_type = serializers.CharField(source="case.target_type", read_only=True)
+    target_id = serializers.CharField(source="case.target_id", read_only=True)
+
+    class Meta:
+        model = Appeal
+        fields = [
+            "id",
+            "case_id",
+            "target_type",
+            "target_id",
+            "account_id",
+            "text",
+            "status",
+            "created_at",
+        ]
+
+
 class AppealCreateSerializer(serializers.Serializer):
     text = serializers.CharField(max_length=4000)
 

@@ -28,6 +28,7 @@ from .services import (
     _create_session_and_tokens,
     _hash,
     _validate_password,
+    invalidate_account_recovery,
 )
 
 EMAIL_CHANGE_TTL = timedelta(hours=24)
@@ -41,6 +42,21 @@ def _field_error(field: str, code: str, message: str) -> TaraAPIError:
         details=[{"field": field, "code": code, "message": message}],
         http_status_code=400,
     )
+
+
+def _reauthenticate(account: Account, password: object, *, ip_region: str) -> None:
+    """Re-auth for adding or removing a sign-in method, when the account has a password.
+
+    A stolen access token alone must not be able to plant a lasting way in.
+    Accounts without a password (Google-only) have nothing to check against.
+    """
+    if not account.has_usable_password():
+        return
+    if not password:
+        raise _field_error(
+            "password", "password_required", "Enter your current password to continue."
+        )
+    _require_password(account, str(password), field="password", ip_region=ip_region)
 
 
 def _require_password(account: Account, password: str, *, field: str, ip_region: str) -> None:
@@ -134,7 +150,6 @@ def google_sign_in(
                     "account.registered",
                     subject_id=str(account.id),
                     payload={
-                        "email": google.email,
                         "email_verified": True,
                         "language": language,
                         "display_name": google.name,
@@ -146,7 +161,7 @@ def google_sign_in(
                 emit_domain_event(
                     "account.verified",
                     subject_id=str(account.id),
-                    payload={"email": google.email},
+                    payload={"email_verified": True},
                     actor_id=str(account.id),
                     correlation_id=correlation_id,
                 )
@@ -182,8 +197,11 @@ def google_sign_in(
     return issued, created
 
 
-def link_google(account: Account, *, credential: object, ip_region: str = "") -> SocialIdentity:
-    """Attach a Google identity to the signed-in account (being signed in is the proof)."""
+def link_google(
+    account: Account, *, credential: object, password: object = "", ip_region: str = ""
+) -> SocialIdentity:
+    """Attach a Google identity to the signed-in account, after re-authentication."""
+    _reauthenticate(account, password, ip_region=ip_region)
     google = _verified_google(credential, signed_in=True)
     existing = SocialIdentity.objects.filter(provider=GOOGLE, subject=google.subject).first()
     if existing is not None:
@@ -211,7 +229,7 @@ def link_google(account: Account, *, credential: object, ip_region: str = "") ->
     return link
 
 
-def unlink_google(account: Account, *, ip_region: str = "") -> None:
+def unlink_google(account: Account, *, password: object = "", ip_region: str = "") -> None:
     link = account.social_identities.filter(provider=GOOGLE).first()
     if link is None:
         raise TaraAPIError("No Google account is linked.", code="not_found", http_status_code=404)
@@ -221,6 +239,7 @@ def unlink_google(account: Account, *, ip_region: str = "") -> None:
             code="last_login_method",
             http_status_code=409,
         )
+    _reauthenticate(account, password, ip_region=ip_region)
     with transaction.atomic():
         link.delete()
         emit_security_event(account, "google_unlinked", {}, ip_region=ip_region)
@@ -254,10 +273,8 @@ def change_password(
         for session in others:
             token_engine.revoke_session(session)
             revoked += 1
-        # Outstanding reset links were issued for the old password.
-        PasswordReset.objects.filter(account=account, consumed_at__isnull=True).update(
-            consumed_at=timezone.now()
-        )
+        # Old reset links and a pending email change die with the old password.
+        invalidate_account_recovery(account)
         emit_security_event(
             account, "password_changed", {"revoked_sessions": revoked}, ip_region=ip_region
         )
@@ -347,6 +364,18 @@ def confirm_email_change(*, raw_token: str, correlation_id: str | None = None) -
     old_email = account.email
     try:
         with transaction.atomic():
+            # Re-check under a lock: a password reset may cancel it meanwhile,
+            # and two clicks on the link must not both apply it.
+            if (
+                not EmailChangeRequest.objects.select_for_update()
+                .filter(id=record.id, consumed_at__isnull=True, cancelled_at__isnull=True)
+                .first()
+            ):
+                raise TaraAPIError(
+                    "Invalid or expired confirmation link.",
+                    code="validation_error",
+                    http_status_code=400,
+                )
             now = timezone.now()
             account.email = new_email
             account.email_verified = True
@@ -364,7 +393,7 @@ def confirm_email_change(*, raw_token: str, correlation_id: str | None = None) -
             emit_domain_event(
                 "account.email_changed",
                 subject_id=str(account.id),
-                payload={"email": new_email, "previous_email": old_email, "email_verified": True},
+                payload={"email_verified": True},  # addresses stay in identity
                 actor_id=str(account.id),
                 correlation_id=correlation_id,
             )

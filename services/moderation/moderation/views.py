@@ -15,10 +15,12 @@ from tara_common.permissions import IsModerator
 from tara_common.responses import data_response
 
 from . import services
+from .models import Appeal
 from .serializers import (
     ActionSerializer,
     AppealCreateSerializer,
     AppealResolveSerializer,
+    AppealSerializer,
     CaseSerializer,
     ManualReportSerializer,
     ReportSerializer,
@@ -126,6 +128,19 @@ class CaseAppealView(APIView):
         serializer.is_valid(raise_exception=True)
         services.file_appeal(case_id, _me(request), serializer.validated_data["text"])
         return data_response({"detail": "appeal filed"}, status=status.HTTP_201_CREATED)
+
+
+class AppealsView(APIView):
+    """The appeal queue: without it a moderator has no way to find an appeal's id."""
+
+    permission_classes = [IsModerator]
+
+    @extend_schema(responses={200: AppealSerializer(many=True)}, tags=["moderation"])
+    def get(self, request: Request) -> Response:
+        status_filter = request.query_params.get("status")
+        if status_filter and status_filter not in Appeal.Status.values:
+            raise TaraAPIError("Invalid status.", code="validation_error", http_status_code=400)
+        return _paginate(request, services.appeals(status_filter), AppealSerializer)
 
 
 class AppealResolveView(APIView):

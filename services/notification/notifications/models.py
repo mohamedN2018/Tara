@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from django.db import models
+from django.db.models.fields.json import KeyTransform
 from django.db.models.functions import Now
 from django.utils import timezone
 
@@ -55,6 +56,12 @@ class Notification(models.Model):
             ),
             models.Index(fields=["subject_ref"], name="notif_subject_idx"),
             models.Index(fields=["target_ref"], name="notif_target_idx"),
+            # services.resolve_friend_request: graph names the request, not the recipient.
+            models.Index(
+                KeyTransform("request_id", "data"),
+                name="notif_friend_request_idx",
+                condition=models.Q(kind="friend.request"),
+            ),
         ]
         constraints = [
             models.UniqueConstraint(

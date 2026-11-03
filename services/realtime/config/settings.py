@@ -82,7 +82,15 @@ PRESENCE_TTL = int(os.getenv("PRESENCE_TTL", "70"))
 PRESENCE_KEY_TTL = int(os.getenv("PRESENCE_KEY_TTL", "120"))
 PRESENCE_AUDIENCE_TTL = int(os.getenv("PRESENCE_AUDIENCE_TTL", "60"))
 PRESENCE_QUERY_MAX = 100
+# How long a block received on the bus keeps the pair out of each other's
+# audience, whatever Chat's (eventually consistent) copy of the block says.
+PRESENCE_BLOCK_MEMORY_TTL = int(os.getenv("PRESENCE_BLOCK_MEMORY_TTL", "3600"))
 TYPING_MIN_INTERVAL = 2.0
+
+# Per-socket limits (realtime/consumers.py).
+WS_MAX_FRAME_BYTES = 16 * 1024
+WS_FRAME_BURST = 60
+WS_FRAMES_PER_SECOND = 10.0
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = os.getenv("TZ", "UTC")

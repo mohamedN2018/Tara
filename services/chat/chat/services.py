@@ -1,9 +1,10 @@
 """Chat business logic. Object-level rule: only active members touch a conversation.
 
 Visibility of a message to a member (``visible_messages``): not removed by
-moderation, not hidden by that member ("delete for me"), and created after the
-member's ``cleared_at``. Anything else answers 404, exactly like a message that
-does not exist. A message deleted for everyone stays visible as a tombstone.
+moderation, not hidden by that member ("delete for me"), created after the
+member's ``cleared_at`` and, in a group, not before the member (re)joined.
+Anything else answers 404, exactly like a message that does not exist. A
+message deleted for everyone stays visible as a tombstone.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import uuid
 from datetime import timedelta
 
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Exists, F, OuterRef, Prefetch, Q
 from django.db.models.functions import Coalesce, Greatest
 from django.utils import timezone
@@ -79,6 +80,17 @@ def is_blocked(a: str, b: str) -> bool:
     ).exists()
 
 
+def _blocked_with_any(actor_id: str, others) -> bool:
+    """One query for "is the actor blocked with any of these accounts"."""
+    others = [str(o) for o in others]
+    if not others:
+        return False
+    return BlockedPair.objects.filter(
+        Q(blocker_id=actor_id, blocked_id__in=others)
+        | Q(blocked_id=actor_id, blocker_id__in=others)
+    ).exists()
+
+
 def member_ids(conversation: Conversation) -> list[str]:
     return [
         str(m)
@@ -103,29 +115,43 @@ def require_member(account_id: str, conversation_id: str) -> ConversationMember:
 # ---- conversations ----------------------------------------------------------
 
 
+def _find_pair(key: str) -> Conversation | None:
+    return Conversation.objects.filter(dm_key=key).first()
+
+
+def _get_or_create_pair(key: str, a: str, b: str, **fields) -> Conversation:
+    """The two-member conversation with this ``dm_key``, created at most once:
+    a concurrent request that loses the unique-key race gets the winner's row."""
+    existing = _find_pair(key)
+    if existing:
+        return existing
+    try:
+        with transaction.atomic():
+            conversation = Conversation.objects.create(dm_key=key, created_by=a, **fields)
+            ConversationMember.objects.bulk_create(
+                [
+                    ConversationMember(conversation=conversation, account_id=a),
+                    ConversationMember(conversation=conversation, account_id=b),
+                ]
+            )
+    except IntegrityError:
+        return Conversation.objects.get(dm_key=key)
+    return conversation
+
+
 def create_or_get_dm(actor_id: str, other_id: str) -> Conversation:
     if str(actor_id) == str(other_id):
         raise TaraAPIError("Cannot DM yourself.", code="validation_error", http_status_code=400)
     if is_blocked(actor_id, other_id):
         raise TaraAPIError("Action not allowed.", code="permission_denied", http_status_code=403)
-    key = _dm_key(actor_id, other_id)
-    existing = Conversation.objects.filter(dm_key=key).first()
-    if existing:
-        return existing
-    with transaction.atomic():
-        conversation = Conversation.objects.create(
-            type=Conversation.Type.DM, created_by=actor_id, dm_key=key
-        )
-        ConversationMember.objects.bulk_create(
-            [
-                ConversationMember(conversation=conversation, account_id=actor_id),
-                ConversationMember(conversation=conversation, account_id=other_id),
-            ]
-        )
-    return conversation
+    return _get_or_create_pair(
+        _dm_key(actor_id, other_id), actor_id, other_id, type=Conversation.Type.DM
+    )
 
 
-def create_marketplace_conversation(buyer_id: str, seller_id: str, listing_id: str) -> Conversation:
+def create_marketplace_conversation(
+    buyer_id: str, seller_id: str, listing_id: str
+) -> Conversation | None:
     """Create (idempotently) a buyer↔seller conversation for a listing.
 
     Driven by the `marketplace.contact.requested` event (doc 01 §2.10). Keyed so
@@ -135,24 +161,13 @@ def create_marketplace_conversation(buyer_id: str, seller_id: str, listing_id: s
         raise TaraAPIError("Action not allowed.", code="permission_denied", http_status_code=403)
     if str(buyer_id) == str(seller_id):
         return None  # nothing to do
-    key = f"mkt:{listing_id}:{buyer_id}:{seller_id}"
-    existing = Conversation.objects.filter(dm_key=key).first()
-    if existing:
-        return existing
-    with transaction.atomic():
-        conversation = Conversation.objects.create(
-            type=Conversation.Type.MARKETPLACE,
-            created_by=buyer_id,
-            listing_id=listing_id,
-            dm_key=key,
-        )
-        ConversationMember.objects.bulk_create(
-            [
-                ConversationMember(conversation=conversation, account_id=buyer_id),
-                ConversationMember(conversation=conversation, account_id=seller_id),
-            ]
-        )
-    return conversation
+    return _get_or_create_pair(
+        f"mkt:{listing_id}:{buyer_id}:{seller_id}",
+        buyer_id,
+        seller_id,
+        type=Conversation.Type.MARKETPLACE,
+        listing_id=listing_id,
+    )
 
 
 def create_group(actor_id: str, member_account_ids: list[str], title: str = "") -> Conversation:
@@ -163,15 +178,17 @@ def create_group(actor_id: str, member_account_ids: list[str], title: str = "") 
             code="validation_error",
             http_status_code=400,
         )
-    if any(is_blocked(actor_id, mid) for mid in others):
+    if len(others) + 1 > MAX_GROUP_MEMBERS:
+        raise _invalid("This group is full.")
+    if _blocked_with_any(actor_id, others):
         raise TaraAPIError("Action not allowed.", code="permission_denied", http_status_code=403)
     with transaction.atomic():
         conversation = Conversation.objects.create(
             type=Conversation.Type.GROUP, created_by=actor_id, title=title
         )
         members = {str(actor_id): ConversationMember.Role.ADMIN}
-        for mid in member_account_ids:
-            members.setdefault(str(mid), ConversationMember.Role.MEMBER)
+        for mid in others:
+            members.setdefault(mid, ConversationMember.Role.MEMBER)
         ConversationMember.objects.bulk_create(
             [
                 ConversationMember(conversation=conversation, account_id=mid, role=role)
@@ -210,17 +227,25 @@ def _require_group_member(actor_id: str, conversation_id: str) -> ConversationMe
     return member
 
 
-def _emit_changed(conversation: Conversation, actor_id: str, action: str, extra=()) -> None:
-    """Tell members (and anyone just removed) to refresh this conversation."""
+def _emit_changed(
+    conversation: Conversation, actor_id: str | None, action: str, revoked=(), notify=True
+) -> None:
+    """Tell members (and anyone just removed) to refresh this conversation.
+
+    ``revoked`` lists accounts that just lost access: Realtime drops their live
+    subscriptions to the conversation. ``notify=False`` sends no refresh frame.
+    """
+    revoked = sorted({str(r) for r in revoked})
     events.emit(
         "conversation.member.changed",
         subject_id=str(conversation.id),
         payload={
             "conversation_id": str(conversation.id),
             "action": action,
-            "recipients": sorted({*member_ids(conversation), *(str(e) for e in extra)}),
+            "recipients": sorted({*member_ids(conversation), *revoked}) if notify else [],
+            "revoked": revoked,
         },
-        actor_id=str(actor_id),
+        actor_id=str(actor_id) if actor_id else None,
         partition_key=f"conversation:{conversation.id}",
     )
 
@@ -232,34 +257,54 @@ def rename_group(actor_id: str, conversation_id: str, title: str) -> None:
         _emit_changed(member.conversation, actor_id, "renamed")
 
 
+def _lock_conversation(conversation_id: str) -> None:
+    """Serialise membership changes (and sends) on one conversation, so the
+    "always an admin" and size rules hold under concurrent requests."""
+    Conversation.objects.select_for_update().filter(id=conversation_id).first()
+
+
 def add_members(actor_id: str, conversation_id: str, account_ids: list[str]) -> None:
-    member = _require_group_admin(actor_id, conversation_id)
-    conversation = member.conversation
-    new_ids = {str(a) for a in account_ids} - set(member_ids(conversation))
-    if any(is_blocked(actor_id, account) for account in new_ids):
-        raise TaraAPIError("Action not allowed.", code="permission_denied", http_status_code=403)
-    if len(member_ids(conversation)) + len(new_ids) > MAX_GROUP_MEMBERS:
-        raise TaraAPIError("This group is full.", code="validation_error", http_status_code=400)
     with transaction.atomic():
+        _lock_conversation(conversation_id)
+        member = _require_group_admin(actor_id, conversation_id)
+        conversation = member.conversation
+        current = set(member_ids(conversation))
+        new_ids = {str(a) for a in account_ids} - current
+        if _blocked_with_any(actor_id, new_ids):
+            raise _denied()
+        if len(current) + len(new_ids) > MAX_GROUP_MEMBERS:
+            raise _invalid("This group is full.")
+        now = timezone.now()
         for account in new_ids:
             # Someone who left comes back as an ordinary member, on the same row.
+            # Either way history starts now and nothing earlier counts as unread.
             ConversationMember.objects.update_or_create(
                 conversation=conversation,
                 account_id=account,
-                defaults={"left_at": None, "role": ConversationMember.Role.MEMBER},
+                defaults={
+                    "left_at": None,
+                    "role": ConversationMember.Role.MEMBER,
+                    "joined_at": now,
+                    "cleared_at": None,
+                    "archived_at": None,
+                    "last_read_message_id": None,
+                    "last_read_seq": conversation.last_seq,
+                    "last_delivered_seq": conversation.last_seq,
+                },
             )
         _emit_changed(conversation, actor_id, "added")
 
 
 def remove_member(actor_id: str, conversation_id: str, account_id: str) -> None:
     """Admins remove anyone; everyone can leave. The group always keeps an admin."""
-    if str(actor_id) == str(account_id):
-        member = _require_group_member(actor_id, conversation_id)
-    else:
-        _require_group_admin(actor_id, conversation_id)
-        member = require_member(account_id, conversation_id)
-    conversation = member.conversation
     with transaction.atomic():
+        _lock_conversation(conversation_id)
+        if str(actor_id) == str(account_id):
+            member = _require_group_member(actor_id, conversation_id)
+        else:
+            _require_group_admin(actor_id, conversation_id)
+            member = require_member(account_id, conversation_id)
+        conversation = member.conversation
         member.left_at = timezone.now()
         member.role = ConversationMember.Role.MEMBER
         member.save(update_fields=["left_at", "role"])
@@ -269,14 +314,15 @@ def remove_member(actor_id: str, conversation_id: str, account_id: str) -> None:
             if successor:
                 successor.role = ConversationMember.Role.ADMIN
                 successor.save(update_fields=["role"])
-        _emit_changed(conversation, actor_id, "removed", extra=[account_id])
+        _emit_changed(conversation, actor_id, "removed", revoked=[account_id])
 
 
 def set_member_role(actor_id: str, conversation_id: str, account_id: str, role: str) -> None:
-    member = _require_group_admin(actor_id, conversation_id)
-    target = require_member(account_id, conversation_id)
-    conversation = member.conversation
     with transaction.atomic():
+        _lock_conversation(conversation_id)
+        member = _require_group_admin(actor_id, conversation_id)
+        target = require_member(account_id, conversation_id)
+        conversation = member.conversation
         target.role = role
         target.save(update_fields=["role"])
         if not conversation.members.filter(
@@ -288,8 +334,10 @@ def set_member_role(actor_id: str, conversation_id: str, account_id: str, role: 
         _emit_changed(conversation, actor_id, "role_changed")
 
 
-def with_state(queryset):
-    """Load members and pins up front; the serializer reads these attributes."""
+def with_state(queryset, viewer_id: str):
+    """Load members and pins up front; the serializer reads these attributes.
+    Each pin says whether the viewer hid its message (``hidden_by_viewer``)."""
+    hidden = MessageHidden.objects.filter(message=OuterRef("message_id"), account_id=viewer_id)
     return queryset.prefetch_related(
         Prefetch(
             "members",
@@ -302,6 +350,7 @@ def with_state(queryset):
                 message__deleted_at__isnull=True, message__moderation_removed_at__isnull=True
             )
             .select_related("message")
+            .annotate(hidden_by_viewer=Exists(hidden))
             .order_by("-created_at"),
             to_attr="active_pins",
         ),
@@ -310,7 +359,7 @@ def with_state(queryset):
 
 def get_conversation(account_id: str, conversation_id: str) -> Conversation:
     require_member(account_id, conversation_id)
-    return with_state(Conversation.objects.filter(id=conversation_id)).get()
+    return with_state(Conversation.objects.filter(id=conversation_id), account_id).get()
 
 
 def list_conversations(account_id: str, *, archived: bool = False):
@@ -323,7 +372,8 @@ def list_conversations(account_id: str, *, archived: bool = False):
     return with_state(
         Conversation.objects.filter(id__in=conv_ids)
         .annotate(activity_at=Coalesce("last_message_at", "created_at"))
-        .order_by("-activity_at", "-id")
+        .order_by("-activity_at", "-id"),
+        account_id,
     )
 
 
@@ -408,6 +458,43 @@ def presence_peers(account_id: str) -> list[str]:
     return sorted(peers - blocked)
 
 
+def _pair_conversations(a: str, b: str):
+    """The DM and marketplace threads these two accounts share."""
+    theirs = ConversationMember.objects.filter(account_id=b, left_at__isnull=True).values(
+        "conversation_id"
+    )
+    return Conversation.objects.filter(
+        type__in=(Conversation.Type.DM, Conversation.Type.MARKETPLACE),
+        members__account_id=a,
+        members__left_at__isnull=True,
+        id__in=theirs,
+    )
+
+
+def may_subscribe(account_id: str, conversation_id: str) -> bool:
+    """May this account receive the conversation's live frames (typing)?
+    Active members only, and never across a block in a two-person thread."""
+    member = (
+        ConversationMember.objects.select_related("conversation")
+        .filter(conversation_id=conversation_id, account_id=account_id, left_at__isnull=True)
+        .first()
+    )
+    if member is None:
+        return False
+    try:
+        _forbid_if_blocked(member.conversation, account_id)
+    except TaraAPIError:
+        return False
+    return True
+
+
+def revoke_pair_subscriptions(a: str, b: str) -> None:
+    """After a block, Realtime drops both sides' live subscriptions to their
+    shared threads. No refresh frame: the blocked side is not told."""
+    for conversation in _pair_conversations(str(a), str(b)):
+        _emit_changed(conversation, None, "blocked", revoked=[a, b], notify=False)
+
+
 # ---- messages ---------------------------------------------------------------
 
 
@@ -424,6 +511,9 @@ def visible_messages(member: ConversationMember):
     qs = Message.objects.filter(
         conversation_id=member.conversation_id, moderation_removed_at__isnull=True
     ).filter(~Exists(hidden))
+    if member.conversation.type == Conversation.Type.GROUP:
+        # Group history starts when this member (re)joined.
+        qs = qs.filter(created_at__gte=member.joined_at)
     if member.cleared_at:
         qs = qs.filter(created_at__gt=member.cleared_at)
     return qs
@@ -562,6 +652,10 @@ def _record_message(
     """
     with transaction.atomic():
         conversation = Conversation.objects.select_for_update().get(id=conversation_id)
+        # Membership changes take the same lock: someone removed after the
+        # caller's check must not get a message in.
+        if not conversation.members.filter(account_id=actor_id, left_at__isnull=True).exists():
+            raise TaraAPIError("Conversation not found.", code="not_found", http_status_code=404)
         seq = conversation.last_seq + 1 if conversation.seq_ready else None
         message = Message.objects.create(
             conversation=conversation,
@@ -687,37 +781,67 @@ def _wipe(message: Message, deleted_by: str) -> None:
 
 
 def remove_message(message_id: str) -> None:
-    """A moderator removed this message. Reversible (``restore_message``)."""
-    message = (
-        Message.objects.select_related("conversation")
-        .filter(id=message_id, moderation_removed_at__isnull=True)
-        .first()
-    )
-    if message is None:
-        return
+    """A moderator removed this message. Reversible (``restore_message``).
+
+    The conditional update makes a repeated or concurrent removal a no-op, so
+    ``message.deleted`` goes out once.
+    """
     with transaction.atomic():
-        message.moderation_removed_at = timezone.now()
-        message.save(update_fields=["moderation_removed_at"])
+        removed = Message.objects.filter(id=message_id, moderation_removed_at__isnull=True).update(
+            moderation_removed_at=timezone.now()
+        )
+        if not removed:
+            return
+        message = Message.objects.select_related("conversation").get(id=message_id)
         _emit_message_event("message.deleted", message, None, scope="moderation")
 
 
 def restore_message(message_id: str) -> None:
-    """Moderation reversed its removal (an upheld appeal)."""
-    Message.objects.filter(id=message_id).update(moderation_removed_at=None)
+    """Moderation reversed its removal (an overturned appeal)."""
+    Message.objects.filter(id=message_id, moderation_removed_at__isnull=False).update(
+        moderation_removed_at=None
+    )
 
 
 def list_messages(actor_id: str, conversation_id: str):
     member = require_member(actor_id, conversation_id)
-    return _with_message_state(visible_messages(member)).order_by("-created_at")
+    return _with_message_state(visible_messages(member), actor_id).order_by("-created_at")
 
 
-def _with_message_state(queryset):
-    return queryset.select_related("reply_to").prefetch_related("attachments", "reactions")
+def _saw_it(actor_id: str):
+    """The caller's membership, if it covers the outer message's conversation
+    and time (not cleared, and not before a group join)."""
+    return (
+        ConversationMember.objects.filter(
+            conversation_id=OuterRef("conversation_id"), account_id=actor_id, left_at__isnull=True
+        )
+        .filter(Q(cleared_at__isnull=True) | Q(cleared_at__lt=OuterRef("created_at")))
+        .filter(
+            ~Q(conversation__type=Conversation.Type.GROUP)
+            | Q(joined_at__lte=OuterRef("created_at"))
+        )
+    )
+
+
+def _with_message_state(queryset, actor_id: str):
+    """``reply_visible`` says whether the caller may see the message replied to:
+    a reply must not quote what the caller cannot open (``reply_preview``)."""
+    hidden = MessageHidden.objects.filter(message=OuterRef("pk"), account_id=actor_id)
+    reply_visible = Exists(
+        Message.objects.filter(pk=OuterRef("reply_to_id"), moderation_removed_at__isnull=True)
+        .filter(Exists(_saw_it(actor_id)))
+        .filter(~Exists(hidden))
+    )
+    return (
+        queryset.select_related("reply_to")
+        .prefetch_related("attachments", "reactions")
+        .annotate(reply_visible=reply_visible)
+    )
 
 
 def get_message(actor_id: str, message_id: str) -> Message:
     message, _ = get_visible_message(actor_id, message_id)
-    return _with_message_state(Message.objects.filter(id=message.id)).get()
+    return _with_message_state(Message.objects.filter(id=message.id), actor_id).get()
 
 
 def edit_message(actor_id: str, message_id: str, body: str) -> Message:
@@ -738,8 +862,13 @@ def edit_message(actor_id: str, message_id: str, body: str) -> Message:
     _forbid_if_blocked(member.conversation, actor_id)
     if not body and not message.attachments.exists():
         raise _invalid("Message is empty.")
-    if body != message.body:
-        with transaction.atomic():
+    with transaction.atomic():
+        # Re-read under a row lock: a concurrent delete-for-everyone must not
+        # have its wiped body written back by this edit.
+        message = Message.objects.select_for_update().get(id=message.id)
+        if message.deleted_at or message.moderation_removed_at:
+            raise Conflict("This message was deleted.", code="conflict")
+        if body != message.body:
             MessageEdit.objects.create(message=message, previous_body=message.body)
             message.body = body
             message.body_norm = text.normalize(body)
@@ -768,6 +897,10 @@ def delete_for_everyone(actor_id: str, message_id: str) -> None:
             http_status_code=403,
         )
     with transaction.atomic():
+        # The lock orders this against a concurrent edit; a second delete is a no-op.
+        message = Message.objects.select_for_update().get(id=message.id)
+        if message.deleted_at:
+            return
         _wipe(message, deleted_by=actor_id)
         _emit_message_event("message.deleted", message, actor_id, scope="everyone")
 
@@ -801,8 +934,10 @@ def forward_message(actor_id: str, message_id: str, conversation_ids: list[str])
         for a in source.attachments.order_by("position", "id")
     ]
     message_type = source.type if source.type in CLIENT_MESSAGE_TYPES else Message.Type.TEXT
-    return [
-        _record_message(
+    # Each copy locks its conversation until the request commits: take the
+    # locks in one global order so two concurrent forwards cannot deadlock.
+    copies = {
+        conversation_id: _record_message(
             conversation_id,
             actor_id,
             body=source.body,
@@ -810,8 +945,9 @@ def forward_message(actor_id: str, message_id: str, conversation_ids: list[str])
             attachments=attachments,
             forwarded_from=str(source.id),
         )
-        for conversation_id in targets
-    ]
+        for conversation_id in sorted(targets)
+    }
+    return [copies[conversation_id] for conversation_id in targets]
 
 
 # ---- search and shared media ------------------------------------------------
@@ -828,7 +964,8 @@ def search_conversation(actor_id: str, conversation_id: str, query: str):
     member = require_member(actor_id, conversation_id)
     term = _search_term(query)
     return _with_message_state(
-        visible_messages(member).filter(deleted_at__isnull=True, body_norm__contains=term)
+        visible_messages(member).filter(deleted_at__isnull=True, body_norm__contains=term),
+        actor_id,
     ).order_by("-created_at")
 
 
@@ -836,9 +973,6 @@ def search_messages(actor_id: str, query: str):
     """Messages the caller can see, across every conversation they belong to."""
     term = _search_term(query)
     mine = ConversationMember.objects.filter(account_id=actor_id, left_at__isnull=True)
-    still_visible = mine.filter(conversation_id=OuterRef("conversation_id")).filter(
-        Q(cleared_at__isnull=True) | Q(cleared_at__lt=OuterRef("created_at"))
-    )
     hidden = MessageHidden.objects.filter(message=OuterRef("pk"), account_id=actor_id)
     return _with_message_state(
         Message.objects.filter(
@@ -846,7 +980,8 @@ def search_messages(actor_id: str, query: str):
             moderation_removed_at__isnull=True,
             deleted_at__isnull=True,
             body_norm__contains=term,
-        ).filter(Exists(still_visible), ~Exists(hidden))
+        ).filter(Exists(_saw_it(actor_id)), ~Exists(hidden)),
+        actor_id,
     ).order_by("-created_at")
 
 
@@ -873,7 +1008,7 @@ def attachment_url(actor_id: str, message_id: str, media_id: str) -> dict:
     if attachment is None:
         raise _not_found("Attachment")
     try:
-        asset = media_client.signed(str(attachment.media_id))
+        asset = media_client.signed(str(attachment.media_id), filename=attachment.file_name or None)
     except media_client.MediaNotFound as exc:
         raise _not_found("Attachment") from exc
     thumb = next(

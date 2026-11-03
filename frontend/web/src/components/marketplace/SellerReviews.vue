@@ -6,6 +6,7 @@ import { onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
+import { apiError, httpStatus } from "@/lib/api";
 import { relativeTime } from "@/lib/format";
 import { marketplaceService, type SellerReview } from "@/services/marketplace";
 import { useDirectoryStore } from "@/stores/directory";
@@ -30,6 +31,12 @@ const body = ref("");
 const submitting = ref(false);
 const reportingId = ref<string | null>(null);
 const reportReason = ref("");
+// The server refused this buyer's review (too soon, or one already this month).
+const refused = ref(false);
+const REVIEW_ERRORS = {
+  review_not_eligible_yet: "market.reviews.tooSoon",
+  review_rate_limited: "market.reviews.tooOften",
+};
 
 async function load(more = false) {
   if (!more) loading.value = true;
@@ -39,8 +46,12 @@ async function load(more = false) {
     reviews.value = more ? [...reviews.value, ...page.data] : page.data;
     cursor.value = page.page.next_cursor;
     hasMore.value = page.page.has_more;
-  } catch {
-    failed.value = true;
+  } catch (e) {
+    // 404: a seller with nothing public (blocked, unknown): no reviews to show.
+    if (httpStatus(e) === 404) {
+      reviews.value = [];
+      hasMore.value = false;
+    } else failed.value = true;
   } finally {
     loading.value = false;
   }
@@ -59,7 +70,8 @@ async function submit() {
     toasts.success(t("market.reviews.thanks"));
     emit("reviewed");
   } catch (e) {
-    toasts.error(e);
+    toasts.error(e, REVIEW_ERRORS);
+    if (apiError(e).code in REVIEW_ERRORS) refused.value = true;
   } finally {
     submitting.value = false;
   }
@@ -83,7 +95,7 @@ async function sendReport(id: string) {
     <h2 id="seller-reviews-title" class="section-title mb-3">{{ t("market.reviews.title") }}</h2>
 
     <form
-      v-if="canReview"
+      v-if="canReview && !refused"
       class="mb-4 space-y-2 rounded-xl border border-brand-100 bg-brand-50/50 p-3 dark:border-brand-900/60 dark:bg-brand-950/30"
       @submit.prevent="submit"
     >

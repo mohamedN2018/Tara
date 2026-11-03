@@ -118,6 +118,16 @@ CELERY_BEAT_SCHEDULE = {
     "flush-view-counts": {"task": "marketplace.flush_view_counts", "schedule": 30.0},
 }
 
+# Review brakes until chat's seller-reply events allow a two-way eligibility rule
+# (roadmap 4.8): an inquiry must be this old before its buyer can review, and a
+# buyer reviews one seller at most once per window.
+MARKETPLACE_REVIEW_MIN_INQUIRY_AGE_SECONDS = int(
+    os.getenv("MARKETPLACE_REVIEW_MIN_INQUIRY_AGE_SECONDS", "86400")
+)
+MARKETPLACE_REVIEW_SELLER_WINDOW_DAYS = int(
+    os.getenv("MARKETPLACE_REVIEW_SELLER_WINDOW_DAYS", "30")
+)
+
 # Listing views: a per-viewer cooldown and a buffer in Redis, flushed by the beat above.
 MARKETPLACE_REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/8")
 MARKETPLACE_VIEW_KEY_PREFIX = os.getenv("MARKETPLACE_VIEW_KEY_PREFIX", "mkt:views:")

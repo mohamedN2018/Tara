@@ -295,6 +295,15 @@ def file_appeal(case_id: str, account_id: str, text: str) -> Appeal:
     return appeal
 
 
+def appeals(status: str | None = None):
+    """The appeal queue, oldest first; open appeals unless ``status`` says otherwise."""
+    return (
+        Appeal.objects.filter(status=status or Appeal.Status.OPEN)
+        .select_related("case")
+        .order_by("created_at", "id")
+    )
+
+
 def resolve_appeal(appeal_id: str, moderator_id: str, status: str) -> Appeal:
     if status not in (Appeal.Status.UPHELD, Appeal.Status.OVERTURNED):
         raise TaraAPIError("Invalid appeal status.", code="validation_error", http_status_code=400)

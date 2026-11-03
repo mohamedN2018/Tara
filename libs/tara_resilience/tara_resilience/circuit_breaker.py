@@ -39,6 +39,7 @@ class CircuitBreaker:
         self._failures = 0
         self._state = "closed"
         self._opened_at = 0.0
+        self._probing = False
 
     @property
     def state(self) -> str:
@@ -48,11 +49,14 @@ class CircuitBreaker:
         if self._state == "closed":
             return True
         if self._state == "open":
-            if (self._clock() - self._opened_at) >= self.recovery_timeout:
-                self._state = "half_open"
-                return True
+            if (self._clock() - self._opened_at) < self.recovery_timeout:
+                return False
+            self._state = "half_open"
+        # half_open: one probe at a time; the others short-circuit until it ends.
+        if self._probing:
             return False
-        return True  # half_open: allow a single probe
+        self._probing = True
+        return True
 
     def _on_success(self) -> None:
         self._failures = 0
@@ -69,12 +73,18 @@ class CircuitBreaker:
         with self._lock:
             if not self._can_attempt():
                 raise CircuitOpenError(f"circuit '{self.name}' is open")
+            probe = self._probing
         try:
             result = func(*args, **kwargs)
         except Exception:
             with self._lock:
                 self._on_failure()
             raise
-        with self._lock:
-            self._on_success()
-        return result
+        else:
+            with self._lock:
+                self._on_success()
+            return result
+        finally:
+            if probe:
+                with self._lock:
+                    self._probing = False

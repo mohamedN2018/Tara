@@ -26,10 +26,11 @@ from .serializers import (
     ConfirmEmailChangeSerializer,
     GoogleLinkSerializer,
     GoogleSignInSerializer,
+    GoogleUnlinkSerializer,
     SecurityOverviewSerializer,
     TokenResponseSerializer,
 )
-from .views import _client_meta, _get_account, _set_refresh_cookie, _token_body
+from .views import NO_AUTH, _client_meta, _get_account, _set_refresh_cookie, _token_body
 
 
 def _session_id(request: Request) -> str | None:
@@ -63,6 +64,7 @@ class AuthProvidersView(APIView):
 
 class GoogleSignInView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = NO_AUTH
     throttle_scope = "auth_login"
 
     @extend_schema(
@@ -103,14 +105,25 @@ class GoogleLinkView(APIView):
         account_security.link_google(
             account,
             credential=serializer.validated_data["credential"],
+            password=serializer.validated_data.get("password", ""),
             ip_region=_client_meta(request)["ip_region"],
         )
         return data_response(account_security.security_overview(account))
 
-    @extend_schema(responses={200: SecurityOverviewSerializer}, tags=["account"])
+    @extend_schema(
+        request=GoogleUnlinkSerializer,
+        responses={200: SecurityOverviewSerializer},
+        tags=["account"],
+    )
     def delete(self, request: Request) -> Response:
         account = _get_account(request)
-        account_security.unlink_google(account, ip_region=_client_meta(request)["ip_region"])
+        serializer = GoogleUnlinkSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        account_security.unlink_google(
+            account,
+            password=serializer.validated_data.get("password", ""),
+            ip_region=_client_meta(request)["ip_region"],
+        )
         return data_response(account_security.security_overview(account))
 
 
@@ -183,6 +196,7 @@ class ConfirmEmailChangeView(APIView):
     """Opened from the link in the email: the token is the proof, no session needed."""
 
     permission_classes = [AllowAny]
+    authentication_classes = NO_AUTH
     throttle_scope = "auth_password"
 
     @extend_schema(

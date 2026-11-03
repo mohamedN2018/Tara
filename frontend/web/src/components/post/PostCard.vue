@@ -32,7 +32,7 @@ import { applyReactionChange } from "@/lib/reactionCounts";
 import { hasLink } from "@/lib/richText";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import { useMediaViewer } from "@/lib/useMediaViewer";
-import { COMMENT_POLICIES, type CommentPolicy, postService } from "@/services/post";
+import { COMMENT_POLICIES, type CommentPolicy, postService, REPORT_ERRORS } from "@/services/post";
 import { useAuthStore } from "@/stores/auth";
 import { useDirectoryStore } from "@/stores/directory";
 import { useToastStore } from "@/stores/toasts";
@@ -45,8 +45,11 @@ const props = withDefaults(
     authorHandle?: string;
     authorAvatar?: string | null;
     startCommentsOpen?: boolean;
+    /** Scroll the open comments to this comment (and its thread root, if known). */
+    focusCommentId?: string | null;
+    focusThreadId?: string | null;
   }>(),
-  { startCommentsOpen: false },
+  { startCommentsOpen: false, focusCommentId: null, focusThreadId: null },
 );
 const emit = defineEmits<{ removed: [id: string]; shared: [post: Post] }>();
 
@@ -178,7 +181,7 @@ async function submitReport() {
     showReport.value = false;
     reportReason.value = "";
   } catch (e) {
-    toasts.error(e);
+    toasts.error(e, REPORT_ERRORS);
   }
 }
 
@@ -426,6 +429,8 @@ async function toggleSave() {
         :post-author-id="post.author_id"
         :policy="commentPolicy"
         :known-names="knownNames"
+        :focus-id="focusCommentId"
+        :focus-root-id="focusThreadId"
         @added="commentCount += 1"
         @total="commentCount = $event"
       />

@@ -6,7 +6,7 @@ import { useRoute } from "vue-router";
 import AppShell from "@/components/layout/AppShell.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
-import { type AdSet, adsService, type Campaign, type CampaignReport } from "@/services/ads";
+import { adErrorKey, type AdSet, adsService, type Campaign, type CampaignReport } from "@/services/ads";
 import { useToastStore } from "@/stores/toasts";
 
 const { t } = useI18n();
@@ -85,7 +85,7 @@ async function addCreative(adSetId: string) {
     adSets.value = await adsService.adSets(id.value);
     report.value = await adsService.report(id.value);
   } catch (e) {
-    toasts.error(e);
+    toasts.push({ text: t(adErrorKey(e)), icon: "error" });
   } finally {
     busy.value = false;
   }

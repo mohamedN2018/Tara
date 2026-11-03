@@ -19,6 +19,20 @@ interface RegisterResult {
 
 const MAX_PROFILE_RETRIES = 5;
 
+// Per-account conveniences kept in this browser, and whose they are. A session
+// can end without a logout (expired, revoked elsewhere), so a sign-in by
+// someone else must clear them too, not only the logout button.
+const ACCOUNT_KEYS = ["tara.recentSearches", "tara.market.compare"];
+const DATA_OWNER_KEY = "tara.dataOwner";
+
+function storedOwner(): string | null {
+  try {
+    return localStorage.getItem(DATA_OWNER_KEY);
+  } catch {
+    return null;
+  }
+}
+
 export const useAuthStore = defineStore("auth", () => {
   const account = ref<Account | null>(null);
   const profile = ref<Profile | null>(null);
@@ -34,7 +48,19 @@ export const useAuthStore = defineStore("auth", () => {
   // RBAC roles live in the access-token JWT (not in /me/). Decode them locally.
   function decodeRoles(token: string | null): string[] {
     const claimed = jwtClaims(token)?.roles;
-    return Array.isArray(claimed) ? (claimed as string[]) : [];
+    return Array.isArray(claimed) ? claimed.filter((r): r is string => typeof r === "string") : [];
+  }
+
+  /** Forget the previous account's cached names, recent searches and comparisons. */
+  function clearAccountData(nextOwner: string | null = null) {
+    useDirectoryStore().clear();
+    try {
+      ACCOUNT_KEYS.forEach((key) => localStorage.removeItem(key));
+      if (nextOwner) localStorage.setItem(DATA_OWNER_KEY, nextOwner);
+      else localStorage.removeItem(DATA_OWNER_KEY);
+    } catch {
+      // Storage may be unavailable (private mode).
+    }
   }
 
   function applyTokens(t: Tokens) {
@@ -64,6 +90,7 @@ export const useAuthStore = defineStore("auth", () => {
   async function loadAccount() {
     const { data } = await api.get<{ data: Account }>("/me/");
     account.value = data.data;
+    if (storedOwner() !== data.data.id) clearAccountData(data.data.id);
     // Login and boot: drop another account's push subscription, re-bind ours.
     void resumePush(data.data.id);
   }
@@ -115,11 +142,13 @@ export const useAuthStore = defineStore("auth", () => {
         // tokens so the next attempt can still restore it.
         if (isAuthFailure(e)) {
           tokenStore.clear();
+          clearAccountData();
           void releasePush(); // the session expired while the app was closed
         } else sessionUnavailable.value = true;
       }
     } else {
-      void releasePush(); // signed out elsewhere: no subscription may outlive the session
+      // Signed out elsewhere (whose logout cleared the tray): no subscription may outlive the session.
+      void releasePush({ clearTray: false });
     }
     ready.value = true;
   }
@@ -142,12 +171,7 @@ export const useAuthStore = defineStore("auth", () => {
     }
     tokenStore.clear();
     realtime.close();
-    useDirectoryStore().clear();
-    try {
-      localStorage.removeItem("tara.recentSearches");
-    } catch {
-      // Storage may be unavailable (private mode).
-    }
+    clearAccountData();
     window.location.assign("/login");
   }
 

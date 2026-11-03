@@ -16,8 +16,9 @@ const url = ref<string | null>(null);
 const failed = ref(false);
 const busy = ref(false);
 
-async function resolve(): Promise<string | null> {
-  if (url.value) return url.value;
+// `fresh` goes back to chat's cache, which re-mints a URL before it expires.
+async function resolve(fresh = false): Promise<string | null> {
+  if (url.value && !fresh) return url.value;
   busy.value = true;
   const signed = await chatService.attachmentUrl(props.messageId, props.attachment.media_id);
   busy.value = false;
@@ -31,8 +32,20 @@ onMounted(() => {
   if (props.attachment.kind === "image" || props.attachment.kind === "video") void resolve();
 });
 
+// A photo or video rendered long ago may hold an expired URL: retry once.
+let retried = false;
+function onMediaError() {
+  url.value = null;
+  if (retried) {
+    failed.value = true;
+    return;
+  }
+  retried = true;
+  void resolve(true);
+}
+
 async function open() {
-  const href = await resolve();
+  const href = await resolve(true);
   if (href) window.open(href, "_blank", "noopener,noreferrer");
 }
 </script>
@@ -46,6 +59,7 @@ async function open() {
     loading="lazy"
     decoding="async"
     :alt="alt ?? t('messages.photo')"
+    @error="onMediaError"
   />
   <video
     v-else-if="attachment.kind === 'video' && url"
@@ -56,6 +70,7 @@ async function open() {
     preload="metadata"
     playsinline
     data-testid="chat-video"
+    @error="onMediaError"
   />
   <button
     v-else-if="attachment.kind === 'file'"

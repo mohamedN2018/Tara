@@ -153,7 +153,7 @@ watch(() => route.params.handle, (handle) => handle && load(), { immediate: true
             <input v-model="form.name" class="input" dir="auto" maxlength="120" required :aria-label="t('pages.name')" />
             <input v-model="form.category" class="input" dir="auto" maxlength="80" :aria-label="t('pages.category')" :placeholder="t('pages.category')" />
             <input v-model="form.location" class="input" dir="auto" maxlength="160" :aria-label="t('pages.location')" :placeholder="t('pages.location')" />
-            <textarea v-model="form.description" class="input min-h-20" dir="auto" rows="3" :aria-label="t('pages.description')" :placeholder="t('pages.description')" />
+            <textarea v-model="form.description" class="input min-h-20" dir="auto" rows="3" maxlength="2000" :aria-label="t('pages.description')" :placeholder="t('pages.description')" />
             <select v-if="canManage && page.status !== 'suspended'" v-model="form.status" class="input" :aria-label="t('pages.statusLabel')">
               <option value="published">{{ t("pages.status.published") }}</option>
               <option value="draft">{{ t("pages.status.draft") }}</option>

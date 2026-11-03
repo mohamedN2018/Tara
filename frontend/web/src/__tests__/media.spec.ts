@@ -9,7 +9,9 @@ import {
   stepIndex,
   swipeToDelta,
 } from "@/lib/mediaViewer";
-import { IMAGE_ACCEPT, isHeic, toUploadable } from "@/lib/heic";
+import { api } from "@/lib/api";
+import { IMAGE_ACCEPT, isHeic, uploadMime } from "@/lib/heic";
+import { mediaService } from "@/services/media";
 
 describe("gridLayout", () => {
   it("has no tiles without photos", () => {
@@ -109,12 +111,11 @@ describe("viewer navigation follows the reading direction", () => {
   });
 });
 
-vi.mock("heic2any", () => ({
-  default: vi.fn(async () => new Blob(["jpeg"], { type: "image/jpeg" })),
-}));
-
-describe("HEIC conversion", () => {
-  afterEach(() => vi.clearAllMocks());
+describe("HEIC upload", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
 
   it("recognises HEIC by name or type", () => {
     expect(isHeic({ name: "IMG_0001.HEIC", type: "" })).toBe(true);
@@ -122,20 +123,31 @@ describe("HEIC conversion", () => {
     expect(isHeic({ name: "photo.jpg", type: "image/jpeg" })).toBe(false);
     expect(isHeic(null)).toBe(false);
     expect(IMAGE_ACCEPT).toContain(".heic");
+    expect(IMAGE_ACCEPT).toContain(".heif");
   });
 
-  it("passes other files through without loading the converter", async () => {
-    const heic2any = (await import("heic2any")).default;
-    const jpeg = new File(["x"], "a.jpg", { type: "image/jpeg" });
-    expect(await toUploadable(jpeg)).toBe(jpeg);
-    expect(heic2any).not.toHaveBeenCalled();
+  it("keeps the real MIME and names HEIC when the browser reports none", () => {
+    expect(uploadMime({ name: "IMG_0001.heic", type: "image/heic" })).toBe("image/heic");
+    expect(uploadMime({ name: "IMG_0002.HEIF", type: "" })).toBe("image/heif");
+    expect(uploadMime({ name: "IMG_0003.heic", type: "" })).toBe("image/heic");
+    expect(uploadMime({ name: "a.jpg", type: "image/jpeg" })).toBe("image/jpeg");
+    expect(uploadMime({ name: "blob", type: "" })).toBe("application/octet-stream");
   });
 
-  it("turns a HEIC photo into a JPEG file", async () => {
-    const heic2any = (await import("heic2any")).default;
-    const out = await toUploadable(new File(["x"], "IMG_0001.heic", { type: "image/heic" }));
-    expect(heic2any).toHaveBeenCalledWith(expect.objectContaining({ toType: "image/jpeg", quality: 0.9 }));
-    expect(out.name).toBe("IMG_0001.jpg");
-    expect(out.type).toBe("image/jpeg");
+  it("uploads a HEIC photo unchanged, signed as image/heic", async () => {
+    const post = vi.spyOn(api, "post").mockImplementation(async (url: string) =>
+      url.endsWith("/sign/")
+        ? { data: { data: { media_id: "m1", storage_key: "k", upload_url: "/__s3/x", method: "PUT", expires_in: 900 } } }
+        : { data: { data: { id: "m1", kind: "image", status: "processing", url: null } } },
+    );
+    const put = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", put);
+    const file = new File(["heic-bytes"], "IMG_0001.heic", { type: "" });
+
+    const asset = await mediaService.upload(file, "image");
+
+    expect(asset.id).toBe("m1");
+    expect(post).toHaveBeenCalledWith("/media/uploads/sign/", expect.objectContaining({ kind: "image", mime: "image/heic" }));
+    expect(put).toHaveBeenCalledWith("/__s3/x", expect.objectContaining({ body: file, headers: { "Content-Type": "image/heic" } }));
   });
 });

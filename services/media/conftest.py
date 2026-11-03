@@ -42,6 +42,29 @@ def _fresh_post_breaker(monkeypatch):
     monkeypatch.setattr(post_client, "_breaker", CircuitBreaker(name="post-test"))
 
 
+@pytest.fixture(autouse=True)
+def post_liveness(monkeypatch):
+    """Stub post's "is the owner's post live?" answer used by binding.
+
+    ``post_liveness.answers[post_id] = True | False | None``; unknown posts are
+    None (post could not answer), so no test ever calls the real post service.
+    """
+    from media_app import post_client
+
+    class _Liveness:
+        def __init__(self):
+            self.answers: dict[str, bool | None] = {}
+            self.calls: list[tuple[str, str]] = []
+
+        def __call__(self, owner_id, post_id):
+            self.calls.append((str(owner_id), str(post_id)))
+            return self.answers.get(str(post_id))
+
+    stub = _Liveness()
+    monkeypatch.setattr(post_client, "post_is_live", stub)
+    return stub
+
+
 @pytest.fixture
 def memory_storage(settings):
     """A bucket in a dict: the real verify, copy and image-cleaning paths run."""

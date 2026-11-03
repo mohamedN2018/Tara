@@ -18,7 +18,10 @@ class FakeSocket {
   onmessage: ((e: { data: string }) => void) | null = null;
   onerror: (() => void) | null = null;
 
-  constructor(public url: string) {
+  constructor(
+    public url: string,
+    public protocols?: string[],
+  ) {
     FakeSocket.instances.push(this);
   }
   send(data: string) {
@@ -104,7 +107,40 @@ describe("RealtimeClient", () => {
     await vi.advanceTimersByTimeAsync(1100);
 
     expect(post).toHaveBeenCalledOnce();
-    expect(latest().url).toContain(encodeURIComponent(fresh));
+    expect(latest().protocols).toEqual([fresh]);
+  });
+
+  it("sends the token as a subprotocol, never in the URL", async () => {
+    client.connect();
+    await flush();
+    expect(latest().url).not.toContain("token");
+    expect(latest().protocols).toEqual([tokenStore.access]);
+  });
+
+  it("never puts the token in the URL, even after a refused handshake", async () => {
+    client.connect();
+    await flush();
+    latest().close(); // refused before opening
+    await vi.advanceTimersByTimeAsync(1100);
+    latest().accept();
+    latest().close(); // and a dropped socket later on
+    await vi.advanceTimersByTimeAsync(2100);
+    expect(FakeSocket.instances.length).toBeGreaterThanOrEqual(3);
+    expect(FakeSocket.instances.every((s) => !s.url.includes("token"))).toBe(true);
+    expect(FakeSocket.instances.every((s) => s.protocols?.[0] === tokenStore.access)).toBe(true);
+  });
+
+  it("dispatches gateway frames by event, not by their payload type", async () => {
+    const byPayload = vi.fn();
+    const byEvent = vi.fn();
+    client.on("image", byPayload);
+    client.on("chat.message.created", byEvent);
+    client.connect();
+    await flush();
+    latest().accept();
+    latest().onmessage?.({ data: JSON.stringify({ event: "chat.message.created", type: "image" }) });
+    expect(byEvent).toHaveBeenCalledOnce();
+    expect(byPayload).not.toHaveBeenCalled();
   });
 
   it("stops and reports when the session is over", async () => {

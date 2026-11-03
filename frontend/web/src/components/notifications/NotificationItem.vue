@@ -141,7 +141,7 @@ const resolutionText = computed(() => {
     </div>
 
     <div class="relative z-10 flex shrink-0 items-center gap-0.5">
-      <span v-if="unread" class="me-1 h-2 w-2 rounded-full bg-brand-500" :aria-label="t('notifications.unread')" />
+      <span v-if="unread" role="img" class="me-1 h-2 w-2 rounded-full bg-brand-500" :aria-label="t('notifications.unread')" />
       <button
         v-if="unread"
         type="button"

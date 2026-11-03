@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from rest_framework.pagination import CursorPagination as DRFCursorPagination
 from rest_framework.response import Response
-from rest_framework.utils.urls import remove_query_param, replace_query_param
 
 
 class CursorPagination(DRFCursorPagination):
@@ -71,7 +70,3 @@ class CursorPagination(DRFCursorPagination):
                 },
             },
         }
-
-
-# Silence unused-import linters for the helpers re-exported for convenience.
-__all__ = ["CursorPagination", "remove_query_param", "replace_query_param"]

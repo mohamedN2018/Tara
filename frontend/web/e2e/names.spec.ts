@@ -94,7 +94,26 @@ test("a moderation action that fails leaves the case in the queue", async ({ bro
         json: { data: { overall: "degraded", services: [{ service: "chat", status: "not_ready", latency_ms: 1 }] } },
       });
     }
-    if (url.endsWith("/action/")) return route.fulfill(failed);
+    if (url.endsWith("/action/") || url.endsWith("/resolve/")) return route.fulfill(failed);
+    if (url.includes("/moderation/appeals/")) {
+      return route.fulfill({
+        json: {
+          data: [
+            {
+              id: "ap1",
+              case_id: "c0",
+              target_type: "comment",
+              target_id: "t2",
+              account_id: a.id,
+              text: "طعن تجريبي",
+              status: "open",
+              created_at: "2026-11-03T00:00:00Z",
+            },
+          ],
+          page: { next_cursor: null, prev_cursor: null, has_more: false },
+        },
+      });
+    }
     if (url.includes("/moderation/cases/")) {
       return route.fulfill({
         json: {
@@ -125,6 +144,13 @@ test("a moderation action that fails leaves the case in the queue", async ({ bro
   await row.getByRole("button", { name: "إزالة" }).click();
   await expect(page.getByRole("status").filter({ hasText: "هذه الخدمة غير متاحة مؤقتًا" })).toBeVisible();
   await expect(row).toBeVisible();
+
+  // An appeal whose resolution fails stays open, too.
+  const appeal = page.getByTestId("appeals").getByRole("listitem").filter({ hasText: "طعن تجريبي" });
+  await expect(appeal).toContainText("تعليق");
+  await appeal.getByRole("button", { name: "إلغاء القرار" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "هذه الخدمة غير متاحة مؤقتًا" }).last()).toBeVisible();
+  await expect(appeal).toBeVisible();
 });
 
 test("modals are dialogs that trap focus, and Escape gives it back", async ({ browser }) => {

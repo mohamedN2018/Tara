@@ -8,8 +8,7 @@ import AppShell from "@/components/layout/AppShell.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
-import { errorMessage } from "@/lib/errors";
-import { adsService, type Campaign } from "@/services/ads";
+import { adErrorKey, adsService, CAMPAIGN_CURRENCIES, type Campaign } from "@/services/ads";
 import { useAuthStore } from "@/stores/auth";
 
 const { t } = useI18n();
@@ -46,7 +45,7 @@ async function create() {
     const campaign = await adsService.createCampaign({ ...form.value, name: form.value.name.trim() });
     router.push({ name: "ad-campaign", params: { id: campaign.id } });
   } catch (e) {
-    formError.value = errorMessage(e);
+    formError.value = t(adErrorKey(e));
   } finally {
     saving.value = false;
   }
@@ -78,11 +77,13 @@ onMounted(load);
           </div>
           <div>
             <label for="campaign-currency" class="mb-1 block text-sm font-medium">{{ t("market.currency") }}</label>
-            <input id="campaign-currency" v-model="form.currency" class="input" dir="ltr" maxlength="3" required />
+            <select id="campaign-currency" v-model="form.currency" class="input" dir="ltr" required>
+              <option v-for="c in CAMPAIGN_CURRENCIES" :key="c" :value="c">{{ c }}</option>
+            </select>
           </div>
         </div>
         <p class="text-xs text-gray-500 dark:text-gray-400">{{ t("ads.noBilling") }}</p>
-        <p v-if="formError" class="text-sm text-red-500">{{ formError }}</p>
+        <p v-if="formError" class="text-sm text-red-500" role="alert">{{ formError }}</p>
         <div class="flex justify-end gap-2">
           <button type="button" class="btn-ghost" @click="creating = false">{{ t("feed.cancel") }}</button>
           <button type="submit" class="btn-primary" :disabled="saving">{{ t("ads.createCampaign") }}</button>

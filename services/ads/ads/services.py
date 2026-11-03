@@ -8,12 +8,13 @@ from decimal import Decimal
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Count, F, Q
+from django.db.models import Count, F, IntegerField, OuterRef, Q, Subquery
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from tara_common.exceptions import Conflict, TaraAPIError
 
-from . import events, serve_tokens
+from . import events, media_client, serve_tokens
 from .models import (
     AdBudgetLedger,
     AdClickEvent,
@@ -64,7 +65,8 @@ def create_campaign(owner_account_id: str, data: dict) -> Campaign:
 
 def set_campaign_status(owner_account_id: str, campaign_id: str, status: str) -> Campaign:
     """Pause or resume. A finished campaign stays finished: its budget is spent."""
-    campaign = _own_campaign(owner_account_id, campaign_id)
+    # Locked like a debit, so a concurrent last charge's COMPLETED is never overwritten.
+    campaign = _own_campaign(owner_account_id, campaign_id, lock=True)
     if campaign.status == Campaign.Status.COMPLETED:
         raise Conflict("This campaign has finished.", code="conflict")
     campaign.status = status
@@ -77,8 +79,11 @@ def campaign_ad_sets(owner_account_id: str, campaign_id: str):
     return campaign.ad_sets.prefetch_related("creatives").order_by("created_at")
 
 
-def _own_campaign(owner_account_id: str, campaign_id: str) -> Campaign:
-    campaign = Campaign.objects.select_related("advertiser").filter(id=campaign_id).first()
+def _own_campaign(owner_account_id: str, campaign_id: str, *, lock: bool = False) -> Campaign:
+    qs = Campaign.objects.select_related("advertiser")
+    if lock:
+        qs = qs.select_for_update(of=("self",))
+    campaign = qs.filter(id=campaign_id).first()
     if campaign is None or str(campaign.advertiser.owner_account_id) != str(owner_account_id):
         raise TaraAPIError("Campaign not found.", code="not_found", http_status_code=404)
     return campaign
@@ -97,10 +102,33 @@ def create_ad_set(owner_account_id: str, campaign_id: str, data: dict) -> AdSet:
     )
 
 
+def _media_error(message: str, code: str) -> TaraAPIError:
+    return TaraAPIError(
+        message,
+        code="validation_error",
+        http_status_code=400,
+        details=[{"field": "media_id", "code": code, "message": message}],
+    )
+
+
+def _check_media(owner_account_id: str, media_id: str) -> None:
+    """The advertiser's own image, fully processed. Media down is a 503 (fail closed)."""
+    info = media_client.lookup([media_id]).get(media_id)
+    # Someone else's media and an unknown id look the same, so neither leaks.
+    if info is None or info.owner_id != str(owner_account_id):
+        raise _media_error("Media not found.", "media_not_owned")
+    if info.kind != "image":
+        raise _media_error("Only images can be used in an ad.", "media_kind_not_allowed")
+    if info.status != "ready":
+        raise _media_error("Media upload is not complete.", "media_not_ready")
+
+
 def create_creative(owner_account_id: str, ad_set_id: str, data: dict) -> AdCreative:
     ad_set = AdSet.objects.select_related("campaign__advertiser").filter(id=ad_set_id).first()
     if ad_set is None or str(ad_set.campaign.advertiser.owner_account_id) != str(owner_account_id):
         raise TaraAPIError("Ad set not found.", code="not_found", http_status_code=404)
+    if data.get("media_id"):
+        _check_media(owner_account_id, str(data["media_id"]))  # remote: before any write
     creative = AdCreative.objects.create(
         ad_set=ad_set,
         headline=data["headline"],
@@ -118,9 +146,11 @@ def create_creative(owner_account_id: str, ad_set_id: str, data: dict) -> AdCrea
 # ---- review (RBAC: ad_reviewer/admin) ---------------------------------------
 
 
-def review_queue():
+def review_queue(reviewer_id: str):
+    """Pending creatives, oldest first; never the reviewer's own (they cannot decide them)."""
     return (
         AdCreative.objects.filter(review_status=AdCreative.Review.PENDING)
+        .exclude(ad_set__campaign__advertiser__owner_account_id=reviewer_id)
         .select_related("ad_set__campaign__advertiser")
         .order_by("created_at")
     )
@@ -131,9 +161,18 @@ def review_creative(
 ) -> AdCreative:
     if decision not in (AdCreative.Review.APPROVED, AdCreative.Review.REJECTED):
         raise TaraAPIError("Invalid decision.", code="validation_error", http_status_code=400)
-    creative = AdCreative.objects.filter(id=creative_id).first()
+    creative = (
+        AdCreative.objects.select_related("ad_set__campaign__advertiser")
+        .filter(id=creative_id)
+        .first()
+    )
     if creative is None:
         raise TaraAPIError("Creative not found.", code="not_found", http_status_code=404)
+    if str(creative.ad_set.campaign.advertiser.owner_account_id) == str(reviewer_id):
+        # Separation of duties: holding the role does not let anyone approve their own ads.
+        raise TaraAPIError(
+            "You cannot review your own ad.", code="permission_denied", http_status_code=403
+        )
     with transaction.atomic():
         creative.review_status = decision
         creative.save(update_fields=["review_status"])
@@ -210,6 +249,8 @@ def pick_for_viewer(viewer_id: str, placement: str = "feed") -> dict | None:
 
 
 def _debit(campaign: Campaign, amount: Decimal, reason: str) -> None:
+    """Charge ``campaign`` (locked by the caller), never past its budget."""
+    amount = min(amount, campaign.budget_remaining)
     if amount <= 0:
         return
     campaign.spent = (campaign.spent or Decimal("0")) + amount
@@ -256,6 +297,10 @@ def record_event(kind: str, creative_id: str, viewer_id: str) -> None:
         locked = (
             Campaign.objects.select_for_update().select_related("advertiser").get(id=campaign.id)
         )
+        # Checked again under the lock: a concurrent event may have spent the
+        # last of the budget (or the owner paused it) since the read above.
+        if locked.status != Campaign.Status.ACTIVE or locked.budget_remaining <= 0:
+            raise TaraAPIError("This ad is not running.", code="conflict", http_status_code=409)
         if kind == "impression":
             AdImpressionEvent.objects.create(
                 creative=creative, viewer_bucket=bucket, placement=placement
@@ -292,14 +337,26 @@ def record_event(kind: str, creative_id: str, viewer_id: str) -> None:
             raise TaraAPIError("Invalid event kind.", code="validation_error", http_status_code=400)
 
 
+def _count_of(event_model) -> Subquery:
+    rows = (
+        event_model.objects.filter(creative=OuterRef("pk"))
+        .order_by()
+        .values("creative")
+        .annotate(n=Count("id"))
+        .values("n")
+    )
+    return Coalesce(Subquery(rows, output_field=IntegerField()), 0)
+
+
 def campaign_report(owner_account_id: str, campaign_id: str) -> dict:
     campaign = _own_campaign(owner_account_id, campaign_id)
     impressions = AdImpressionEvent.objects.filter(creative__ad_set__campaign=campaign).count()
     clicks = AdClickEvent.objects.filter(creative__ad_set__campaign=campaign).count()
     ctr = (clicks / impressions) if impressions else 0.0
+    # One subquery per counter: joining both event tables would multiply their rows.
     creatives = AdCreative.objects.filter(ad_set__campaign=campaign).annotate(
-        impression_count=Count("impressions", distinct=True),
-        click_count=Count("clicks", distinct=True),
+        impression_count=_count_of(AdImpressionEvent),
+        click_count=_count_of(AdClickEvent),
     )
     return {
         "campaign_id": str(campaign.id),

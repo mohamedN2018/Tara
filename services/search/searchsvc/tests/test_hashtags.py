@@ -46,7 +46,7 @@ def created(post_id, *, audience="public", hashtags=(), excerpt="", at=0, **extr
 
 
 def updated(post_id, *, audience="public", excerpt="", at=1, **extra):
-    # post-service's payload today: no `hashtags` key, so tags come from the excerpt.
+    # An older post-service payload: no `hashtags` key, so tags come from the excerpt.
     payload = {"author_id": AUTHOR, "audience": audience, "excerpt": excerpt}
     on_post_updated(_event("post.updated", post_id, at, {**payload, **extra}))
 

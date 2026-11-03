@@ -5,9 +5,10 @@ import { useI18n } from "vue-i18n";
 
 import ChatAttachment from "@/components/chat/ChatAttachment.vue";
 import VoicePlayer from "@/components/chat/VoicePlayer.vue";
-import { type DeliveryStatus, reactionSummary } from "@/lib/chat";
+import { type DeliveryStatus, reactionSummary, typePreview } from "@/lib/chat";
 import { relativeTime } from "@/lib/format";
 import { MESSAGE_REACTIONS, reactionByKey } from "@/lib/reactions";
+import { useEscapeKey } from "@/lib/useEscapeKey";
 import type { Message } from "@/types";
 
 const props = defineProps<{
@@ -37,6 +38,8 @@ const { t } = useI18n();
 const ROW = "block w-full rounded-lg px-3 py-2 text-start text-sm hover:bg-gray-100 dark:hover:bg-gray-800";
 const pickerOpen = ref(false);
 const menuOpen = ref(false);
+useEscapeKey(pickerOpen, () => (pickerOpen.value = false));
+useEscapeKey(menuOpen, () => (menuOpen.value = false));
 const mineReaction = computed(
   () => props.message.reactions.find((r) => r.account_id === props.selfId)?.type ?? null,
 );
@@ -63,24 +66,19 @@ const files = computed(() => props.message.attachments.filter((a) => a.kind === 
 // The quoted message: the loaded one if we have it, else the server's preview.
 const quote = computed(() => {
   if (props.replyTo) {
-    return { body: preview(props.replyTo), deleted: !!props.replyTo.deleted };
+    return { body: preview(props.replyTo), deleted: !!props.replyTo.deleted, unavailable: false };
   }
   const p = props.message.reply_preview;
   if (!p) return null;
-  return { body: p.deleted ? "" : p.body || typePreview(p.type), deleted: p.deleted };
+  // The server cannot say whether a quote it withholds was deleted or predates
+  // this member joining the group: either way it is just unavailable.
+  return { body: p.deleted ? "" : p.body || typePreview(p.type, t), deleted: false, unavailable: !!p.deleted };
 });
 
-function typePreview(type: string): string {
-  if (type === "image") return `📷 ${t("messages.photo")}`;
-  if (type === "voice" || type === "audio") return `🎤 ${t("messages.voiceNote")}`;
-  if (type === "video") return `🎬 ${t("messages.video")}`;
-  if (type === "file") return `📄 ${t("messages.file")}`;
-  return "…";
-}
 function preview(m: Message): string {
   if (m.deleted) return "";
   if (m.body) return m.body;
-  return typePreview(m.attachments[0]?.kind ?? m.type);
+  return typePreview(m.attachments[0]?.kind ?? m.type, t);
 }
 
 const statusLabel = computed(() =>
@@ -115,8 +113,9 @@ const statusLabel = computed(() =>
             class="mx-1 mt-1 rounded-lg border-s-2 px-2 py-1 text-xs"
             :class="mine ? 'border-white/60 bg-white/15' : 'border-brand-500 bg-black/5 dark:bg-white/10'"
           >
-            <span class="block font-semibold">{{ replyToName }}</span>
-            <span v-if="quote.deleted" class="block italic opacity-80">{{ t("messages.deleted") }}</span>
+            <span v-if="replyToName" class="block font-semibold">{{ replyToName }}</span>
+            <span v-if="quote.unavailable" class="block italic opacity-80" data-testid="quote-unavailable">{{ t("messages.quoteUnavailable") }}</span>
+            <span v-else-if="quote.deleted" class="block italic opacity-80">{{ t("messages.deleted") }}</span>
             <span v-else class="block truncate opacity-80" dir="auto">{{ quote.body }}</span>
           </div>
 
@@ -156,7 +155,8 @@ const statusLabel = computed(() =>
           :key="s.type"
           class="inline-flex items-center gap-0.5 rounded-full border border-gray-200 bg-white px-1.5 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
           :class="mineReaction === s.type ? 'border-brand-400' : ''"
-          :aria-label="t(`reactionTypes.${s.type}`)"
+          :aria-label="`${t(`reactionTypes.${s.type}`)}: ${s.count}`"
+          :aria-pressed="mineReaction === s.type"
           @click="choose(s.type)"
         >
           <span aria-hidden="true">{{ s.emoji }}</span>{{ s.count }}
@@ -176,7 +176,7 @@ const statusLabel = computed(() =>
           :title="t('messages.reply')"
           @click="$emit('reply', message)"
         >
-          <Reply class="h-4 w-4" />
+          <Reply class="h-4 w-4 rtl:-scale-x-100" />
         </button>
         <button
           class="rounded-full p-1 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"

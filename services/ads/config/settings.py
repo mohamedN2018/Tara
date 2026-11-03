@@ -6,8 +6,10 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
-from tara_common.rate_limits import NUM_PROXIES
+from tara_common.rate_limits import api_throttling
 from tara_observability.logging import build_logging_config
+
+_throttling = api_throttling()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -88,9 +90,10 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 20,
     "EXCEPTION_HANDLER": "tara_common.exceptions.tara_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-    "NUM_PROXIES": NUM_PROXIES,
-    "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.ScopedRateThrottle"],
-    "DEFAULT_THROTTLE_RATES": {"ad_events": "600/min"},
+    # The platform read/write limits for every endpoint; the events endpoint
+    # uses its own `ad_events` scope instead (views.EventsView).
+    **_throttling,
+    "DEFAULT_THROTTLE_RATES": {**_throttling["DEFAULT_THROTTLE_RATES"], "ad_events": "600/min"},
 }
 
 SPECTACULAR_SETTINGS = {
@@ -106,6 +109,10 @@ TARA_JWT_PUBLIC_KEY = os.getenv("TARA_JWT_PUBLIC_KEY", "")
 TARA_JWT_ISSUER = os.getenv("JWT_ISSUER", "tara-identity")
 TARA_JWT_AUDIENCE = os.getenv("JWT_AUDIENCE", "tara")
 TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-secret-change-me")
+
+# Creative images are checked with media's internal batch lookup (fail closed).
+MEDIA_INTERNAL_URL = os.getenv("MEDIA_INTERNAL_URL", "http://media:8000")
+MEDIA_CALL_TIMEOUT = float(os.getenv("MEDIA_CALL_TIMEOUT", "2.0"))
 
 # Until the Moderation/ad-review team is staffed, dev auto-approves creatives.
 ADS_AUTO_APPROVE = env_bool("ADS_AUTO_APPROVE", False)

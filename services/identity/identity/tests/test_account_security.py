@@ -243,8 +243,7 @@ def test_change_email_full_flow(api_client, active_account, django_capture_on_co
     assert active_account.email == "new.address@tara.local"
     assert active_account.email_verified is True
     event = OutboxEvent.objects.get(event_type="account.email_changed")
-    assert event.payload["payload"]["email"] == "new.address@tara.local"
-    assert event.payload["payload"]["previous_email"] == "active@tara.local"
+    assert event.payload["payload"] == {"email_verified": True}  # no addresses on the bus
     assert "changed" in _mails_to("active@tara.local")[-1].subject.lower()
 
     from rest_framework.test import APIClient

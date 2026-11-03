@@ -122,7 +122,8 @@ docker exec tara-search-1 python manage.py reconcile_hashtags        # hashtags 
 catalogue, account security).** All new variables are optional:
 `GOOGLE_CLIENT_ID`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` and
 `TELEGRAM_WEBHOOK_SECRET` (each feature stays off while empty), and
-`AUTH_LOGIN_TARGET_RATE` (default `10/min`).
+`AUTH_LOGIN_TARGET_RATE` (default `10/min`), and `POST_REPORT_RATE` (post and
+comment reports per user, default `20/hour`).
 
 - **Order:** deploy notification, moderation and realtime first. They consume
   the new event types, so they must be running before post, chat, graph and
@@ -130,9 +131,23 @@ catalogue, account security).** All new variables are optional:
 - **Marketplace:** recreate `marketplace` together with its relay and consumer.
   The old image writes `price=0` with type `fixed`, and the new check
   constraints reject that.
-- **Migrations:** chat `0004`, marketplace `0007` and notification `0005` build
-  indexes `CONCURRENTLY`, and the first two create the `pg_trgm` extension.
-  The database owner can create it, because it is a trusted extension.
+- **Migrations:** chat `0004`, marketplace `0007` and notification `0005` and
+  `0006` build indexes `CONCURRENTLY`, and the first two create the `pg_trgm`
+  extension. The database owner can create it, because it is a trusted
+  extension. Feed `0003` adds a small `post_state` table.
+- **Hardening pass (same release):**
+  - Realtime starts Daphne with 64 KiB WebSocket frame and message limits.
+  - The SPA sends the realtime token as the WebSocket subprotocol, so deploy
+    realtime before the frontend. Realtime still accepts `?token=` for SPAs
+    cached from before the change.
+  - Media now accepts HEIC (`pillow-heif`) and runs `media.expire_stale_uploads`
+    every 15 minutes from the beat embedded in its relay worker (`-B`). It
+    also adds the `staging/` lifecycle rule below to the bucket by itself.
+  - New optional variables, all with safe defaults:
+    `TARA_IDEMPOTENCY_STALE_SECONDS` (60), `TARA_JWKS_TIMEOUT` (5),
+    `ADMIN_HEALTH_SNAPSHOTS_KEPT` (500), `PRESENCE_BLOCK_MEMORY_TTL` (3600),
+    `MARKETPLACE_REVIEW_MIN_INQUIRY_AGE_SECONDS` (86400) and
+    `MARKETPLACE_REVIEW_SELLER_WINDOW_DAYS` (30).
 
 After the stack is up, run once:
 

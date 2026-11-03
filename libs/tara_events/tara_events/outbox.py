@@ -11,6 +11,7 @@ import logging
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
+from django.conf import settings
 from django.db import connection, transaction
 from django.utils import timezone
 
@@ -21,6 +22,11 @@ if TYPE_CHECKING:
     from .models import AbstractOutboxEvent
 
 logger = logging.getLogger("tara.events.outbox")
+
+try:  # metrics are optional: a service without prometheus_client still relays
+    from tara_observability.metrics import EVENTS_PUBLISHED
+except ImportError:  # pragma: no cover
+    EVENTS_PUBLISHED = None
 
 MAX_ATTEMPTS = 8
 PURGE_BATCH_SIZE = 5000
@@ -81,6 +87,10 @@ def publish_pending(
             row.published_at = timezone.now()
             row.save(update_fields=["published_at"])
             published += 1
+            if EVENTS_PUBLISHED is not None:
+                EVENTS_PUBLISHED.labels(
+                    event_type=row.event_type, service=getattr(settings, "SERVICE_NAME", "unknown")
+                ).inc()
 
     if published:
         logger.info("outbox published batch", extra={"count": published})

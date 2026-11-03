@@ -30,6 +30,8 @@ def _isolated_settings(settings):
     settings.TARA_EVENT_PUBLISHER = "null"
     settings.CELERY_TASK_ALWAYS_EAGER = True
     settings.MARKETPLACE_AUTO_APPROVE = True
+    # Reviews right after an inquiry; the age brake has tests of its own.
+    settings.MARKETPLACE_REVIEW_MIN_INQUIRY_AGE_SECONDS = 0
     settings.CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
     # View counters use the real test Redis under a prefix of their own per test,
     # so parallel suites sharing the database never see each other's keys.

@@ -17,8 +17,12 @@ export function pickContainer(supports: (mime: string) => boolean) {
   return CONTAINERS.find((c) => supports(c.mime)) ?? null;
 }
 
-/** Record from the microphone. `stop()` resolves with the note, `cancel()` drops it. */
-export function useVoiceRecorder() {
+/**
+ * Record from the microphone. `stop()` resolves with the note, `cancel()` drops
+ * it. `onLimit` runs at the length limit, typically to `stop()` and send; without
+ * it the recording just ends there.
+ */
+export function useVoiceRecorder({ onLimit }: { onLimit?: () => void } = {}) {
   const recording = ref(false);
   const seconds = ref(0);
   const supported =
@@ -30,6 +34,9 @@ export function useVoiceRecorder() {
   let startedAt = 0;
   let resolveStop: ((note: VoiceNote | null) => void) | null = null;
   let chunks: Blob[] = [];
+  // Bumped by cancel(): a start() still waiting on the permission prompt gives up.
+  let attempt = 0;
+  let starting = false;
 
   function release() {
     window.clearInterval(ticker);
@@ -43,7 +50,21 @@ export function useVoiceRecorder() {
   async function start(): Promise<void> {
     const container = pickContainer((mime) => MediaRecorder.isTypeSupported(mime));
     if (!container) throw new Error("no supported audio format");
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (starting || recorder) return;
+    starting = true;
+    const mine = ++attempt;
+    let granted: MediaStream;
+    try {
+      granted = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } finally {
+      starting = false;
+    }
+    if (mine !== attempt) {
+      // Cancelled (or unmounted) while the prompt was open: free the mic.
+      granted.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    stream = granted;
     chunks = [];
     const active = new MediaRecorder(stream, { mimeType: container.mime });
     active.ondataavailable = (e) => {
@@ -64,7 +85,10 @@ export function useVoiceRecorder() {
     recording.value = true;
     ticker = window.setInterval(() => {
       seconds.value = Math.floor((Date.now() - startedAt) / 1000);
-      if (seconds.value >= MAX_SECONDS) active.stop();
+      if (seconds.value < MAX_SECONDS) return;
+      window.clearInterval(ticker);
+      if (onLimit) onLimit();
+      else void stop();
     }, 250);
   }
 
@@ -77,6 +101,7 @@ export function useVoiceRecorder() {
   }
 
   function cancel() {
+    attempt += 1;
     if (recorder && recorder.state !== "inactive") {
       recorder.onstop = release;
       recorder.stop();

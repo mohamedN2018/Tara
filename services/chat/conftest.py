@@ -71,6 +71,7 @@ class FakeMedia:
         self._uuid = uuid
         self.assets: dict[str, dict] = {}
         self.down = False
+        self.signed_names: list[str | None] = []  # the filename of each signed() call
 
     def add(
         self,
@@ -103,9 +104,10 @@ class FakeMedia:
             raise _unavailable()
         return {m: MediaInfo(**self.assets[m]) for m in map(str, media_ids) if m in self.assets}
 
-    def signed(self, media_id):
+    def signed(self, media_id, filename=None):
         from chat.media_client import MediaNotFound, _unavailable
 
+        self.signed_names.append(filename)
         if self.down:
             raise _unavailable()
         asset = self.assets.get(str(media_id))

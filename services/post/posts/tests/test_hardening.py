@@ -396,7 +396,8 @@ def test_a_media_belongs_to_one_live_post(client_for, media_stub):
 def test_media_that_changed_hands_after_the_lookup_is_refused(client_for, media_stub, monkeypatch):
     author = _acct()
     photo = media_stub.add(author)
-    monkeypatch.setattr(media_client, "bind", lambda *a, **k: [photo])  # media skipped it
+    skipped = media_client.BindResult(skipped=[photo], attached_elsewhere=[])
+    monkeypatch.setattr(media_client, "bind", lambda *a, **k: skipped)  # media skipped it
     resp = _create(client_for(author), body="x", media_ids=[photo])
     assert resp.status_code == 400
     assert _error_code(resp) == "media_not_owned"
@@ -496,18 +497,25 @@ def test_client_lookup_and_bind_parse_media_responses(monkeypatch):
         sent.append((url, json))
         if url.endswith("/media/batch/"):
             return _Resp([{"id": photo, "owner_id": owner, "kind": "image", "status": "ready"}])
-        return _Resp({"bound": json["media_ids"][:1], "skipped": json["media_ids"][1:]})
+        return _Resp(
+            {
+                "bound": json["media_ids"][:1],
+                "skipped": json["media_ids"][1:],
+                "attached_elsewhere": json["media_ids"][1:2],
+            }
+        )
 
     monkeypatch.setattr("posts.media_client.requests.post", fake_post)
 
     info = real_lookup([photo])[photo]
     assert (info.owner_id, info.kind, info.status) == (owner, "image", "ready")
     many = [_acct() for _ in range(25)]
-    skipped = real_bind(owner, _acct(), many, restricted=True)
+    result = real_bind(owner, _acct(), many, restricted=True)
     binds = [body for url, body in sent if url.endswith("/media/bind/")]
     assert [len(b["media_ids"]) for b in binds] == [20, 5]  # chunked to media's limit
     assert all(b["restricted"] is True for b in binds)
-    assert skipped == many[1:20] + many[21:]
+    assert result.skipped == many[1:20] + many[21:]
+    assert result.attached_elsewhere == [many[1], many[21]]
     token = jwt.decode(
         media_client._internal_token(),
         settings.TARA_INTERNAL_JWT_SECRET,

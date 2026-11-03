@@ -20,6 +20,8 @@ from . import identity_client, services
 from .models import FeatureFlag
 from .serializers import FeatureFlagSerializer, FeatureFlagWriteSerializer, RoleSerializer
 
+FLAG_KEY_MAX_LENGTH = FeatureFlag._meta.get_field("key").max_length
+
 
 def _me(request: Request) -> str:
     return request.user.account_id
@@ -51,6 +53,12 @@ class FeatureFlagDetailView(APIView):
         request=FeatureFlagWriteSerializer, responses={200: FeatureFlagSerializer}, tags=["admin"]
     )
     def patch(self, request: Request, key: str) -> Response:
+        if len(key) > FLAG_KEY_MAX_LENGTH:
+            raise TaraAPIError(
+                f"A flag key is at most {FLAG_KEY_MAX_LENGTH} characters.",
+                code="validation_error",
+                http_status_code=400,
+            )
         serializer = FeatureFlagWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         v = serializer.validated_data

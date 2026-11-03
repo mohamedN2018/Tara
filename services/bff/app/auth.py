@@ -18,7 +18,10 @@ def _jwk_client() -> PyJWKClient:
     global _client, _fetched_at
     now = time.monotonic()
     if _client is None or (now - _fetched_at) > settings.jwks_cache_ttl:
-        _client = PyJWKClient(settings.jwks_url, cache_keys=True)
+        # A bounded fetch: the default timeout is 30 s per request.
+        _client = PyJWKClient(
+            settings.jwks_url, cache_keys=True, timeout=settings.upstream_timeout_seconds
+        )
         _fetched_at = now
     return _client
 
@@ -36,9 +39,11 @@ def verify_token(token: str) -> dict:
         )
     except jwt.ExpiredSignatureError as exc:
         raise HTTPException(status_code=401, detail="access token expired") from exc
-    except jwt.InvalidTokenError as exc:
+    except jwt.PyJWKClientConnectionError as exc:  # JWKS unreachable: not the token's fault
+        raise HTTPException(status_code=503, detail="unable to verify token") from exc
+    except (jwt.InvalidTokenError, jwt.PyJWKClientError) as exc:  # incl. an unknown kid
         raise HTTPException(status_code=401, detail="invalid access token") from exc
-    except Exception as exc:  # JWKS fetch failure, etc.
+    except Exception as exc:  # anything else while fetching keys
         raise HTTPException(status_code=503, detail="unable to verify token") from exc
 
 

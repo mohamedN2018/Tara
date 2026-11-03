@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { CornerUpLeft, FileText, Mic, Paperclip, Pencil, Send, Square, Trash2, X } from "lucide-vue-next";
-import { ref, watch } from "vue";
+import { onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
-import { ATTACH_ACCEPT, type AttachmentKind, attachmentKind, formatBytes, tooLarge } from "@/lib/chat";
+import { ATTACH_ACCEPT, type AttachmentKind, attachmentKind, formatBytes, tooLarge, typePreview } from "@/lib/chat";
+import { isHeic } from "@/lib/heic";
 import { useVoiceRecorder, type VoiceNote } from "@/lib/useVoiceRecorder";
 import { chatService } from "@/services/chat";
 import { useToastStore } from "@/stores/toasts";
@@ -33,7 +34,8 @@ const body = ref("");
 const attachment = ref<ComposerAttachment | null>(null);
 const uploading = ref(false);
 let sent: ComposerAttachment | null = null;
-const voice = useVoiceRecorder();
+// At the length limit the note is sent, as if Stop had been pressed.
+const voice = useVoiceRecorder({ onLimit: () => void finishRecording() });
 
 // Editing puts the message's text in the box; leaving edit mode clears it.
 watch(
@@ -77,12 +79,14 @@ async function onFile(e: Event) {
   try {
     // Private upload: only chat, after a membership check, hands out its URL.
     const asset = await chatService.upload(file, kind);
+    clearAttachment();
     attachment.value = {
       media_id: asset.id,
       kind,
       file_name: file.name,
       bytes: file.size,
-      preview: kind === "file" ? null : URL.createObjectURL(file),
+      // Most browsers cannot draw HEIC: it shows as a file chip instead.
+      preview: kind === "file" || isHeic(file) ? null : URL.createObjectURL(file),
     };
   } catch {
     // Keep the composer usable for text.
@@ -92,7 +96,13 @@ async function onFile(e: Event) {
   }
 }
 
+function revokePreview(a: ComposerAttachment | null) {
+  if (a?.preview) URL.revokeObjectURL(a.preview);
+}
+
 function clearAttachment() {
+  // The one just sent keeps its preview until `restore` can no longer need it.
+  if (attachment.value !== sent) revokePreview(attachment.value);
   attachment.value = null;
 }
 
@@ -104,11 +114,17 @@ function submit() {
     return;
   }
   if ((!text && !attachment.value) || uploading.value) return;
+  if (sent !== attachment.value) revokePreview(sent);
   sent = attachment.value;
   emit("send", { body: text, attachment: attachment.value });
   body.value = "";
-  clearAttachment();
+  attachment.value = null;
 }
+
+onBeforeUnmount(() => {
+  revokePreview(attachment.value);
+  if (sent !== attachment.value) revokePreview(sent);
+});
 
 /** Put a message back after a failed send so nothing typed is lost. */
 function restore(text: string, mediaId: string | null) {
@@ -135,10 +151,10 @@ defineExpose({ restore });
       v-else-if="replyingTo"
       class="mb-2 flex items-center gap-2 rounded-lg border-s-2 border-brand-500 bg-gray-50 px-3 py-1.5 text-xs dark:bg-gray-800/60"
     >
-      <CornerUpLeft class="h-4 w-4 shrink-0 text-brand-500" />
+      <CornerUpLeft class="h-4 w-4 shrink-0 text-brand-500 rtl:-scale-x-100" />
       <span class="min-w-0 flex-1">
         <span class="font-semibold">{{ t("messages.replyingTo", { name: replyingToName }) }}</span>
-        <span class="block truncate text-gray-500 dark:text-gray-400" dir="auto">{{ replyingTo.body || `📎 ${t("messages.file")}` }}</span>
+        <span class="block truncate text-gray-500 dark:text-gray-400" dir="auto">{{ replyingTo.body || typePreview(replyingTo.attachments[0]?.kind ?? replyingTo.type, t) }}</span>
       </span>
       <button class="rounded-full p-0.5 text-gray-500 hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-gray-700" :aria-label="t('messages.cancelReply')" @click="emit('cancelReply')">
         <X class="h-4 w-4" />

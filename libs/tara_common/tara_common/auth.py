@@ -10,6 +10,7 @@ Settings used (any Django service):
     TARA_JWT_ISSUER       expected `iss`
     TARA_JWT_AUDIENCE     expected `aud`
     TARA_JWKS_CACHE_TTL   seconds to cache JWKS (default 300)
+    TARA_JWKS_TIMEOUT     seconds to wait for the JWKS fetch (default 5)
 """
 
 from __future__ import annotations
@@ -23,6 +24,14 @@ from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from jwt import PyJWKClient
 from rest_framework import authentication, exceptions
+
+
+class VerificationUnavailable(exceptions.APIException):
+    """The issuer's JWKS cannot be fetched: says nothing about the token itself."""
+
+    status_code = 503
+    default_detail = "Unable to verify the access token right now."
+    default_code = "dependency_unavailable"
 
 
 class TokenUser:
@@ -60,11 +69,11 @@ class _JWKSCache:
         self._fetched_at: float = 0.0
         self._url: str | None = None
 
-    def signing_key(self, url: str, token: str, ttl: int):
+    def signing_key(self, url: str, token: str, ttl: int, timeout: float = 5):
         with self._lock:
             now = time.monotonic()
             if self._client is None or self._url != url or (now - self._fetched_at) > ttl:
-                self._client = PyJWKClient(url, cache_keys=True)
+                self._client = PyJWKClient(url, cache_keys=True, timeout=timeout)
                 self._url = url
                 self._fetched_at = now
         return self._client.get_signing_key_from_jwt(token)
@@ -83,7 +92,7 @@ class JWTAuthentication(authentication.BaseAuthentication):
         if not header:
             return None  # allow other authenticators / AllowAny
         parts = header.split()
-        if parts[0] != self.keyword:
+        if not parts or parts[0] != self.keyword:
             return None
         if len(parts) != 2:
             raise exceptions.AuthenticationFailed("Malformed Authorization header.")
@@ -111,7 +120,10 @@ class JWTAuthentication(authentication.BaseAuthentication):
             )
         except jwt.ExpiredSignatureError as exc:
             raise exceptions.AuthenticationFailed("Access token has expired.") from exc
-        except jwt.PyJWKClientError as exc:  # unknown kid, or JWKS unreachable
+        except jwt.PyJWKClientConnectionError as exc:
+            # Not a 401: clients would throw their session away for it.
+            raise VerificationUnavailable() from exc
+        except jwt.PyJWKClientError as exc:  # unknown kid
             raise exceptions.AuthenticationFailed("Unable to verify token signature.") from exc
         except jwt.InvalidTokenError as exc:
             raise exceptions.AuthenticationFailed("Invalid access token.") from exc
@@ -126,7 +138,8 @@ class JWTAuthentication(authentication.BaseAuthentication):
                 "No verification key configured (set TARA_JWT_PUBLIC_KEY or TARA_JWKS_URL)."
             )
         ttl = int(getattr(settings, "TARA_JWKS_CACHE_TTL", 300))
-        return _jwks_cache.signing_key(jwks_url, token, ttl).key
+        timeout = float(getattr(settings, "TARA_JWKS_TIMEOUT", 5))
+        return _jwks_cache.signing_key(jwks_url, token, ttl, timeout).key
 
 
 INTERNAL_TOKEN_TTL_SECONDS = 30

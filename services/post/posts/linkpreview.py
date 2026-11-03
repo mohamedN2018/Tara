@@ -7,7 +7,8 @@ The URL comes from a user, so nothing here trusts it:
   connection itself and the socket connects to the checked address, so a DNS
   answer that changes between check and connect (rebinding) cannot get through;
 - redirects are followed by hand, and each hop goes through the same checks;
-- short timeouts, and a byte cap on what is read.
+- short timeouts, a deadline on the whole fetch (redirects included) and a byte
+  cap on what is read, so a server that drips bytes cannot hold the consumer.
 
 Only text is kept. Preview images are not fetched or stored: showing a remote
 image would hand every reader's IP address to whoever wrote the post.
@@ -19,6 +20,7 @@ import ipaddress
 import logging
 import re
 import socket
+import time
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 
@@ -31,6 +33,7 @@ logger = logging.getLogger("tara.post.linkpreview")
 
 CONNECT_TIMEOUT = 2.0
 READ_TIMEOUT = 3.0
+TOTAL_TIMEOUT = 8.0  # the whole fetch; one read may overrun it by READ_TIMEOUT
 MAX_BYTES = 256 * 1024
 MAX_REDIRECTS = 3
 MAX_URL_LENGTH = 2000
@@ -39,6 +42,10 @@ USER_AGENT = "TaraLinkPreview/1.0"
 
 _URL_RE = re.compile(r"https?://[^\s<>\"'()]+", re.IGNORECASE)
 _TRAILING_PUNCTUATION = ".,;:!?،؛؟"
+
+
+# The NAT64 well-known prefix embeds an IPv4 target in its last 32 bits.
+_NAT64 = ipaddress.IPv6Network("64:ff9b::/96")
 
 
 class UnsafeURL(Exception):
@@ -54,7 +61,8 @@ def is_public_address(address: str) -> bool:
     ip = ipaddress.ip_address(address.split("%", 1)[0])
     if isinstance(ip, ipaddress.IPv6Address):
         # Tunnelled forms carry an IPv4 target; judge that, not the wrapper.
-        for inner in (ip.ipv4_mapped, ip.sixtofour, ip.teredo[1] if ip.teredo else None):
+        nat64 = ipaddress.IPv4Address(ip.packed[-4:]) if ip in _NAT64 else None
+        for inner in (ip.ipv4_mapped, ip.sixtofour, ip.teredo[1] if ip.teredo else None, nat64):
             if inner is not None:
                 ip = inner
                 break
@@ -130,13 +138,32 @@ def _check_url(url: str) -> None:
         raise UnsafeURL("port not allowed")
 
 
-def _read_capped(response: requests.Response) -> bytes:
+def _check_deadline(deadline: float) -> None:
+    if time.monotonic() > deadline:
+        raise TimeoutError("link preview took too long")
+
+
+def _read_capped(response: requests.Response, deadline: float) -> bytes:
+    """At most ``MAX_BYTES``, read before ``deadline``.
+
+    ``read1`` returns what one socket read brings, so the deadline is checked
+    between reads that each wait at most ``READ_TIMEOUT``.
+    """
     body = b""
-    for chunk in response.iter_content(chunk_size=16 * 1024):
+    while len(body) < MAX_BYTES:
+        _check_deadline(deadline)
+        chunk = response.raw.read1(16 * 1024, decode_content=True)
+        if not chunk:
+            break
         body += chunk
-        if len(body) >= MAX_BYTES:
-            return body[:MAX_BYTES]
-    return body
+    return body[:MAX_BYTES]
+
+
+def _decode(body: bytes, encoding: str | None) -> str:
+    try:
+        return body.decode(encoding or "utf-8", "replace")
+    except LookupError:  # a charset Python does not know
+        return body.decode("utf-8", "replace")
 
 
 class _MetaParser(HTMLParser):
@@ -191,15 +218,22 @@ def fetch_preview(url: str) -> dict | None:
     """The preview for ``url``, or None for anything unsafe, broken or not HTML."""
     session = _session()
     current = url
+    deadline = time.monotonic() + TOTAL_TIMEOUT
     try:
         for _ in range(MAX_REDIRECTS + 1):
             _check_url(current)
+            _check_deadline(deadline)
             with session.get(
                 current,
                 stream=True,
                 allow_redirects=False,
                 timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
-                headers={"User-Agent": USER_AGENT, "Accept": "text/html"},
+                # Uncompressed: the byte cap then bounds memory too.
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Accept": "text/html",
+                    "Accept-Encoding": "identity",
+                },
             ) as response:
                 if response.is_redirect:
                     current = urljoin(current, response.headers.get("location", ""))
@@ -208,8 +242,8 @@ def fetch_preview(url: str) -> dict | None:
                     return None
                 if "text/html" not in response.headers.get("content-type", "").lower():
                     return None
-                body = _read_capped(response)
-                return parse_html(body.decode(response.encoding or "utf-8", "replace"), current)
+                body = _read_capped(response, deadline)
+                return parse_html(_decode(body, response.encoding), current)
         return None  # too many redirects
     except UnsafeURL as exc:
         logger.info("link preview refused", extra={"reason": str(exc)})

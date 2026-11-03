@@ -7,6 +7,19 @@ export type NotificationChannel = "in_app" | "push";
 // { kind or category: { channel: enabled } }, e.g. { follow: { in_app: false } }.
 export type NotificationPrefs = Record<string, Partial<Record<NotificationChannel, boolean>>>;
 
+/** `prefs` with one switch set, or unset (back to inherited) when `value` is undefined. */
+export function withSwitch(
+  prefs: NotificationPrefs,
+  key: string,
+  channel: NotificationChannel,
+  value: boolean | undefined,
+): NotificationPrefs {
+  const entry = { ...prefs[key] };
+  if (value === undefined) delete entry[channel];
+  else entry[channel] = value;
+  return { ...prefs, [key]: entry };
+}
+
 export interface QuietHours {
   start?: string;
   end?: string;

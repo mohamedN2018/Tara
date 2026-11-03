@@ -5,7 +5,15 @@ import en from "./en";
 
 export type Locale = "en" | "ar";
 
-const stored = (localStorage.getItem("tara.locale") as Locale | null) ?? "ar";
+/** The saved language; Arabic when none (or storage is blocked, or the value is junk). */
+export function storedLocale(): Locale {
+  try {
+    return localStorage.getItem("tara.locale") === "en" ? "en" : "ar";
+  } catch {
+    return "ar";
+  }
+}
+const stored = storedLocale();
 
 /**
  * Arabic has six plural forms, written in this order in ar.ts:
@@ -31,7 +39,11 @@ export const i18n = createI18n({
 /** Apply locale + document direction together; persists the choice. */
 export function setLocale(locale: Locale) {
   i18n.global.locale.value = locale;
-  localStorage.setItem("tara.locale", locale);
+  try {
+    localStorage.setItem("tara.locale", locale);
+  } catch {
+    // Storage blocked: the choice lasts for this page.
+  }
   document.documentElement.lang = locale;
   document.documentElement.dir = locale === "ar" ? "rtl" : "ltr";
   // The service worker can't read localStorage: leave the language where it can.

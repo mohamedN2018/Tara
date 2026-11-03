@@ -27,6 +27,28 @@ type SyncMessage =
 
 const sortKey = (n: Notification) => n.last_event_at ?? n.created_at;
 
+const isIdList = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
+
+/** Another tab's message, checked: a malformed one is dropped, never applied. */
+export function parseSync(data: unknown): SyncMessage | null {
+  if (!data || typeof data !== "object") return null;
+  const m = data as Record<string, unknown>;
+  const at = typeof m.at === "string" ? m.at : "";
+  if (m.type === "read" && isIdList(m.ids) && at) return { type: "read", ids: m.ids, at };
+  if (m.type === "read-all" && at) return { type: "read-all", at };
+  if (m.type === "deleted" && isIdList(m.ids)) return { type: "deleted", ids: m.ids };
+  const item = m.item as Partial<Notification> | undefined;
+  if (m.type === "upsert" && item && typeof item.id === "string" && typeof item.kind === "string") {
+    return { type: "upsert", item: item as Notification };
+  }
+  return null;
+}
+
+/** Every open tab has its own socket: only the one being looked at pings. */
+function ping(quiet: QuietHours) {
+  if (document.visibilityState === "visible") playPing(quiet);
+}
+
 export const useNotificationStore = defineStore("notifications", () => {
   const unread = ref(0);
   const items = ref<Notification[]>([]);
@@ -40,6 +62,8 @@ export const useNotificationStore = defineStore("notifications", () => {
   const busy = ref<Record<string, boolean>>({});
 
   let bound = false;
+  // Bumped by load(): a loadMore() or head refresh started before it is stale.
+  let listGeneration = 0;
   let channel: BroadcastChannel | null = null;
   let countTimer: number | null = null;
   const fetching = new Map<string, Promise<void>>();
@@ -91,10 +115,12 @@ export const useNotificationStore = defineStore("notifications", () => {
   }
 
   async function load() {
+    const generation = ++listGeneration;
     loading.value = true;
     error.value = false;
     try {
       const page = await notificationService.list();
+      if (generation !== listGeneration) return;
       // Keep rows announced while the page was loading.
       const fresh = new Set(page.data.map((n) => n.id));
       const newest = page.data[0] ? sortKey(page.data[0]) : "";
@@ -104,9 +130,23 @@ export const useNotificationStore = defineStore("notifications", () => {
       hasMore.value = page.page.has_more;
       loaded.value = true;
     } catch {
-      error.value = true;
+      if (generation === listGeneration) error.value = true;
     } finally {
-      loading.value = false;
+      if (generation === listGeneration) loading.value = false;
+    }
+  }
+
+  /**
+   * Catch up on the newest rows without dropping the pages already scrolled
+   * through (tab shown again, socket reconnected).
+   */
+  async function refreshHead() {
+    const generation = listGeneration;
+    try {
+      const page = await notificationService.list();
+      if (generation === listGeneration) page.data.forEach(upsert);
+    } catch {
+      // The next visibility change or reconnect tries again.
     }
   }
 
@@ -116,9 +156,12 @@ export const useNotificationStore = defineStore("notifications", () => {
 
   async function loadMore() {
     if (!cursor.value || loadingMore.value) return;
+    const generation = listGeneration;
     loadingMore.value = true;
     try {
       const page = await notificationService.list({ cursor: cursor.value });
+      // The list was reloaded meanwhile: this page follows a cursor it no longer has.
+      if (generation !== listGeneration) return;
       const known = new Set(items.value.map((n) => n.id));
       items.value = [...items.value, ...page.data.filter((n) => !known.has(n.id))];
       cursor.value = page.page.next_cursor;
@@ -139,7 +182,7 @@ export const useNotificationStore = defineStore("notifications", () => {
         upsert(item);
         post({ type: "upsert", item });
         const isNews = !item.read_at && (!before || sortKey(item) !== sortKey(before));
-        if (isNews) playPing(quietHours.value);
+        if (isNews) ping(quietHours.value);
       } catch {
         // Gone already (dismissed, deleted post) or the service is degraded.
       } finally {
@@ -243,7 +286,7 @@ export const useNotificationStore = defineStore("notifications", () => {
   function onVisible() {
     if (document.visibilityState !== "visible") return;
     void refresh();
-    if (loaded.value) void load();
+    if (loaded.value) void refreshHead();
   }
 
   async function loadQuietHours() {
@@ -263,44 +306,34 @@ export const useNotificationStore = defineStore("notifications", () => {
         const id = frame.notification_id;
         refreshSoon();
         if (typeof id === "string" && (loaded.value || items.value.length)) void fetchOne(id);
-        else if (typeof id === "string") playPing(quietHours.value);
+        else if (typeof id === "string") ping(quietHours.value);
       }),
       // Not forwarded by the realtime bridge yet (follow-up); harmless until then.
       realtime.on("notification.read", (frame) => {
         if (frame.all) onSync({ type: "read-all", at: new Date().toISOString() });
-        else if (Array.isArray(frame.notification_ids))
-          onSync({ type: "read", ids: frame.notification_ids as string[], at: new Date().toISOString() });
+        else if (isIdList(frame.notification_ids))
+          onSync({ type: "read", ids: frame.notification_ids, at: new Date().toISOString() });
       }),
       realtime.on("notification.deleted", (frame) => {
-        if (Array.isArray(frame.notification_ids)) onSync({ type: "deleted", ids: frame.notification_ids as string[] });
+        if (isIdList(frame.notification_ids)) onSync({ type: "deleted", ids: frame.notification_ids });
       }),
       // Anything pushed while the socket was down is only recoverable over REST.
       realtime.on("_reconnected", () => {
         void refresh();
-        if (loaded.value) void load();
+        if (loaded.value) void refreshHead();
       }),
     );
     if (typeof BroadcastChannel !== "undefined") {
       channel = new BroadcastChannel(CHANNEL);
-      channel.onmessage = (event: MessageEvent<SyncMessage>) => onSync(event.data);
+      channel.onmessage = (event: MessageEvent<unknown>) => {
+        const message = parseSync(event.data);
+        if (message) onSync(message);
+      };
     }
     // The service worker hands a push to a focused window instead of the OS (sw.js).
     navigator.serviceWorker?.addEventListener("message", onWorkerMessage);
     document.addEventListener("visibilitychange", onVisible);
     void loadQuietHours();
-  }
-
-  function unbind() {
-    unsubs.splice(0).forEach((u) => u());
-    channel?.close();
-    channel = null;
-    navigator.serviceWorker?.removeEventListener("message", onWorkerMessage);
-    document.removeEventListener("visibilitychange", onVisible);
-    bound = false;
-  }
-
-  function clear() {
-    unread.value = 0;
   }
 
   return {
@@ -327,7 +360,5 @@ export const useNotificationStore = defineStore("notifications", () => {
     withBusy,
     onSync,
     bind,
-    unbind,
-    clear,
   };
 });

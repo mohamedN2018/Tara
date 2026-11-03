@@ -7,10 +7,14 @@ correlation_id propagated into events and traces.
 
 from __future__ import annotations
 
+import re
 import uuid
 
 REQUEST_ID_HEADER = "HTTP_X_REQUEST_ID"
 RESPONSE_HEADER = "X-Request-Id"
+# A client-supplied id ends up in logs, response headers and the outbox's
+# correlation_id column (120 chars), so anything else is replaced.
+_VALID_REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{1,100}$")
 
 
 def _new_request_id() -> str:
@@ -25,7 +29,7 @@ class RequestIDMiddleware:
 
     def __call__(self, request):
         incoming = request.META.get(REQUEST_ID_HEADER, "").strip()
-        request_id = incoming or _new_request_id()
+        request_id = incoming if _VALID_REQUEST_ID.match(incoming) else _new_request_id()
         request.request_id = request_id
 
         # Bind to logging context if tara_observability is installed.

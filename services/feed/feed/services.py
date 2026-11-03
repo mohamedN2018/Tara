@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import UTC, datetime
 
 from django.conf import settings
 from django.db import transaction
@@ -33,7 +34,7 @@ from django.utils.dateparse import parse_datetime
 
 from . import events
 from .clients import GraphUnavailable, Relationship, fanout_audience, relationship
-from .models import FeedItem
+from .models import FeedItem, PostState
 
 logger = logging.getLogger("tara.feed.services")
 
@@ -102,10 +103,63 @@ def _recipients(author_id: str, audience: str) -> list[tuple[str, str]]:
     return out
 
 
+def occurred_at(value) -> datetime:
+    """An event's ``occurred_at`` as an aware datetime (now, if unreadable)."""
+    try:
+        when = parse_datetime(value or "")
+    except (TypeError, ValueError):
+        when = None
+    if when is None:
+        return timezone.now()
+    return when.replace(tzinfo=UTC) if timezone.is_naive(when) else when
+
+
+def record_post_state(
+    post_id: str, when: datetime, *, deleted: bool = False, audience=None, excerpt=None
+) -> bool:
+    """Store a post's newest edit or delete. False when ``when`` is older than
+    what is stored: the event is stale and must change nothing."""
+    with transaction.atomic():
+        state, created = PostState.objects.select_for_update().get_or_create(
+            post_id=post_id,
+            defaults={
+                "occurred_at": when,
+                "deleted": deleted,
+                "audience": audience or "",
+                "excerpt": excerpt or "",
+            },
+        )
+        if created:
+            return True
+        if when < state.occurred_at:
+            return False
+        state.occurred_at, state.deleted = when, deleted
+        if audience is not None:
+            state.audience = audience
+        if excerpt is not None:
+            state.excerpt = excerpt
+        state.save()
+        return True
+
+
 def fan_out_post(payload: dict) -> int:
-    """Distribute a created post to recipient feeds. Returns count of new items."""
+    """Distribute a created post to recipient feeds. Returns count of new items.
+
+    Any stored state is newer than the creation (an edit or a delete processed
+    before a retried ``post.created``), so it wins over the payload.
+    """
     author_id = _norm(payload["author_id"])
     post_id = payload["post_id"]
+    state = PostState.objects.filter(post_id=post_id).first()
+    if state is not None:
+        if state.deleted:
+            logger.info("post deleted before its fan-out; skipped", extra={"post_id": post_id})
+            return 0
+        payload = {
+            **payload,
+            "audience": state.audience or payload.get("audience"),
+            "excerpt": state.excerpt,
+        }
     audience = payload.get("audience", "public")
     created_at = parse_datetime(payload.get("created_at") or "") or timezone.now()
 
@@ -171,8 +225,9 @@ def remove_follow_items(follower_id: str, author_id: str) -> int:
     return deleted
 
 
-def remove_post(post_id: str) -> None:
-    FeedItem.objects.filter(post_id=post_id).delete()
+def remove_post(post_id: str, when: datetime | None = None) -> None:
+    if record_post_state(post_id, when or timezone.now(), deleted=True):
+        FeedItem.objects.filter(post_id=post_id).delete()
 
 
 def _drop_rows_outside(post_id: str, audience: str) -> int:
@@ -201,6 +256,7 @@ def update_post_excerpt(
     excerpt: str,
     audience: str | None = None,
     media_ids: list | None = None,
+    when: datetime | None = None,
 ) -> None:
     """Follow an edit: drop the rows the new audience no longer reaches, refresh the rest.
 
@@ -210,6 +266,9 @@ def update_post_excerpt(
     carries them, else from the author's own item, which always keeps the full
     snapshot; with neither, they stay absent and the client hydrates the media.
     """
+    if not record_post_state(post_id, when or timezone.now(), audience=audience, excerpt=excerpt):
+        logger.info("stale post.updated ignored", extra={"post_id": post_id})
+        return
     if audience is not None:
         _drop_rows_outside(post_id, audience)
     items = list(FeedItem.objects.filter(post_id=post_id))

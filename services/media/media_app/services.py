@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import unicodedata
 from datetime import timedelta
+from urllib.parse import quote
 
 from django.conf import settings
 from django.db import transaction
@@ -12,7 +14,7 @@ from django.utils import timezone
 from tara_common.exceptions import Conflict, TaraAPIError
 
 from . import events, post_client, storage, validation
-from .models import MediaAsset, UploadSession
+from .models import MediaAsset, MediaVariant, UploadSession
 
 logger = logging.getLogger("tara.media.services")
 
@@ -179,7 +181,56 @@ def get_asset_for_viewer(viewer_id: str, media_id: str) -> MediaAsset:
     return asset
 
 
-def asset_payload(asset: MediaAsset, *, with_urls: bool = True) -> dict:
+# Shown in place in the app. Everything else (PDFs, audio files) is served as a
+# download, so it never renders as a page of the storage origin.
+INLINE_KINDS = frozenset({MediaAsset.Kind.IMAGE, MediaAsset.Kind.VIDEO})
+_EXTENSIONS = {
+    "application/pdf": "pdf",
+    "audio/mpeg": "mp3",
+    "audio/ogg": "ogg",
+    "audio/mp4": "m4a",
+    "audio/webm": "webm",
+    "audio/wav": "wav",
+}
+MAX_FILENAME = 120
+
+
+def download_filename(asset: MediaAsset, requested: str = "") -> str:
+    """``requested`` made safe to put in a header, with the extension of the
+    asset's real type; the asset id when nothing usable is left.
+
+    Path parts, control and format characters (bidi overrides included, so a
+    name cannot display as ``...fdp.exe``) and surrounding dots go.
+    """
+    ext = _EXTENSIONS.get(asset.mime, "bin")
+    name = unicodedata.normalize("NFC", requested or "").replace("\\", "/").rsplit("/", 1)[-1]
+    name = "".join(c for c in name if unicodedata.category(c)[0] not in ("C", "Z") or c == " ")
+    stem = name.strip().strip(".").rsplit(".", 1)[0].strip()
+    stem = stem[: MAX_FILENAME - len(ext) - 1].strip() or str(asset.id)
+    return f"{stem}.{ext}"
+
+
+def attachment_disposition(filename: str) -> str:
+    """``Content-Disposition: attachment`` with an ASCII fallback and the UTF-8
+    name (RFC 6266 / 5987), so Arabic names survive."""
+    fallback = "".join(c for c in filename if 32 <= ord(c) < 127 and c not in '"\\;%')
+    if fallback.rsplit(".", 1)[0].strip(" ._-") == "":
+        fallback = "download." + filename.rsplit(".", 1)[-1]
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"
+
+
+def asset_url(asset: MediaAsset, *, filename: str = "") -> str:
+    """The presigned GET URL of the asset's original, with its verified type."""
+    if asset.kind in INLINE_KINDS:
+        return storage.presign_get(asset.storage_key, content_type=asset.mime)
+    return storage.presign_get(
+        asset.storage_key,
+        content_type=asset.mime or "application/octet-stream",
+        disposition=attachment_disposition(download_filename(asset, filename)),
+    )
+
+
+def asset_payload(asset: MediaAsset, *, with_urls: bool = True, filename: str = "") -> dict:
     data = {
         "id": str(asset.id),
         "kind": asset.kind,
@@ -191,15 +242,17 @@ def asset_payload(asset: MediaAsset, *, with_urls: bool = True) -> dict:
     }
     if with_urls:
         data["url"] = (
-            storage.presign_get(asset.storage_key)
-            if asset.status == MediaAsset.Status.READY
-            else None
+            asset_url(asset, filename=filename) if asset.status == MediaAsset.Status.READY else None
         )
         for v in asset.variants.all():
             data["variants"].append(
                 {
                     "kind": v.kind,
-                    "url": storage.presign_get(v.storage_key),
+                    # Variants are made here: thumbnails are JPEG.
+                    "url": storage.presign_get(
+                        v.storage_key,
+                        content_type="image/jpeg" if v.kind == MediaVariant.Kind.THUMB else "",
+                    ),
                     "width": v.width,
                     "height": v.height,
                     "duration_ms": v.duration_ms,
@@ -212,7 +265,7 @@ def download_url(viewer_id: str, media_id: str) -> str:
     asset = get_asset_for_viewer(viewer_id, media_id)
     if asset.status != MediaAsset.Status.READY:
         raise TaraAPIError("Media is not ready.", code="conflict", http_status_code=409)
-    return storage.presign_get(asset.storage_key)
+    return asset_url(asset)
 
 
 # ---- internal: post attachment ------------------------------------------------------
@@ -245,23 +298,43 @@ def bind_to_post(owner_id: str, post_id: str, media_ids: list[str], *, restricte
     can only tighten: it never lifts a restriction. Narrowing an audience then
     always takes effect, and a late or reordered call for an older, wider
     audience cannot reopen the media; post's visibility check already lets
-    the wider audience in. Media of another owner, or deleted, are skipped.
+    the wider audience in.
+
+    One media belongs to one post. Media already bound to another post move
+    only when post says that post is not live (a post that failed after
+    binding, or a deleted one); otherwise, or when post cannot answer, they
+    are skipped and listed in ``attached_elsewhere``. Media of another owner,
+    or deleted, are skipped. Post is asked before any row is locked; call this
+    outside a transaction.
     """
+    media_ids = [str(m) for m in media_ids]
+    live = {"owner_id": owner_id, "deleted_at__isnull": True}
+    elsewhere = {
+        str(p)
+        for p in MediaAsset.objects.filter(id__in=media_ids, post_id__isnull=False, **live)
+        .exclude(post_id=post_id)
+        .values_list("post_id", flat=True)
+        .distinct()
+    }
+    # False only when post answered that the old post is not visible to its own author.
+    released = {p for p in elsewhere if post_client.post_is_live(owner_id, p) is False}
+    attached_elsewhere: set[str] = set()
     with transaction.atomic():
-        assets = list(
-            MediaAsset.objects.select_for_update().filter(
-                id__in=media_ids, owner_id=owner_id, deleted_at__isnull=True
-            )
-        )
+        assets = list(MediaAsset.objects.select_for_update().filter(id__in=media_ids, **live))
         for asset in assets:
-            if asset.post_id is not None and str(asset.post_id) == str(post_id):
+            current = str(asset.post_id) if asset.post_id else None
+            if current == str(post_id):
                 asset.restricted = asset.restricted or restricted
-            else:
+            elif current is None or current in released:
                 asset.post_id = post_id
                 asset.restricted = restricted
+            else:
+                attached_elsewhere.add(str(asset.id))
+                continue
             asset.save(update_fields=["post_id", "restricted", "updated_at"])
-    bound = {str(a.id) for a in assets}
+    bound = {str(a.id) for a in assets} - attached_elsewhere
     return {
         "bound": sorted(bound),
-        "skipped": sorted({str(m) for m in media_ids} - bound),
+        "skipped": sorted(set(media_ids) - bound),
+        "attached_elsewhere": sorted(attached_elsewhere),
     }

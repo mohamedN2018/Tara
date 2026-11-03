@@ -6,11 +6,13 @@ frames is rejected (``ImageTooLarge``), so a small file cannot make the worker
 allocate gigabytes. Still images are decoded and re-encoded, one frame. GIFs
 and animated WebPs are never decoded: their metadata blocks are removed at the
 byte level and the frames are copied as they are, so memory stays at the size
-of the file whatever the frame count.
+of the file whatever the frame count. HEIC/HEIF photos (iPhone) are decoded
+with pillow-heif under the same limits and stored as JPEG (``stored_mime``).
 """
 
 from __future__ import annotations
 
+import functools
 import io
 import warnings
 
@@ -24,8 +26,19 @@ _DECODES_AS = {
     "image/png": {"PNG"},
     "image/webp": {"WEBP"},
     "image/gif": {"GIF"},
+    "image/heic": {"HEIF"},
+    "image/heif": {"HEIF"},
 }
-_SAVE_AS = {"image/jpeg": "JPEG", "image/png": "PNG", "image/webp": "WEBP", "image/gif": "GIF"}
+_SAVE_AS = {
+    "image/jpeg": "JPEG",
+    "image/png": "PNG",
+    "image/webp": "WEBP",
+    "image/gif": "GIF",
+    # Browsers other than Safari cannot show HEIC, so the clean copy is a JPEG.
+    "image/heic": "JPEG",
+    "image/heif": "JPEG",
+}
+_FORMAT_MIME = {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp", "GIF": "image/gif"}
 # Info that rendering needs; everything else (exif, xmp, comments, text chunks) goes.
 _KEEP_INFO = ("transparency", "background", "loop", "duration")
 
@@ -42,10 +55,25 @@ def _limits() -> tuple[int, int, int]:
     )
 
 
+def stored_mime(mime: str) -> str:
+    """The type of the clean copy ``sanitize_image`` makes from a ``mime`` upload."""
+    return _FORMAT_MIME[_SAVE_AS[normalize_mime(mime)]]
+
+
+@functools.cache
+def _register_heif() -> None:
+    import pillow_heif
+
+    # Only the primary image: thumbnails, depth maps and auxiliary images are
+    # never decoded (they would cost memory and could carry other content).
+    pillow_heif.register_heif_opener(thumbnails=False, depth_images=False, aux_images=False)
+
+
 def _open(content: bytes):
     """Open (header only) and refuse anything over the limits before decoding."""
     from PIL import Image
 
+    _register_heif()
     max_pixels, max_frames, max_total = _limits()
     Image.MAX_IMAGE_PIXELS = max_pixels
     with warnings.catch_warnings():
@@ -74,7 +102,8 @@ def _scrub(image):
 def sanitize_image(content: bytes, mime: str) -> bytes:
     """A copy of the image with no metadata and the EXIF orientation applied.
 
-    The pixels are what viewers saw before; only the metadata goes. Raises
+    The pixels are what viewers saw before; only the metadata goes. The copy
+    is of type ``stored_mime(mime)`` (HEIC/HEIF: the primary image as JPEG). Raises
     ``ValueError`` (``ImageTooLarge`` included) for anything that is not a
     decodable image of the declared type within the limits.
     """

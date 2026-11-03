@@ -14,6 +14,7 @@ import {
   type NotificationKindInfo,
   type NotificationPrefs,
   type QuietHours,
+  withSwitch,
 } from "@/services/notification";
 import { useNotificationStore } from "@/stores/notifications";
 import { useToastStore } from "@/stores/toasts";
@@ -69,14 +70,17 @@ async function load() {
   }
 }
 
+// Only this one switch is sent, applied from the answer and rolled back on
+// failure: toggles in flight together never overwrite each other.
 async function toggle(kind: NotificationKindInfo, channel: NotificationChannel, enabled: boolean) {
-  const previous = prefs.value;
-  prefs.value = { ...previous, [kind.kind]: { ...previous[kind.kind], [channel]: enabled } };
+  const previous = prefs.value[kind.kind]?.[channel];
+  prefs.value = withSwitch(prefs.value, kind.kind, channel, enabled);
   try {
-    // The server merges: only this one switch is sent.
-    prefs.value = (await notificationService.updatePreferences({ prefs: { [kind.kind]: { [channel]: enabled } } })).prefs;
+    const saved = (await notificationService.updatePreferences({ prefs: { [kind.kind]: { [channel]: enabled } } })).prefs;
+    const stored = saved[kind.kind]?.[channel];
+    if (typeof stored === "boolean") prefs.value = withSwitch(prefs.value, kind.kind, channel, stored);
   } catch (e) {
-    prefs.value = previous;
+    prefs.value = withSwitch(prefs.value, kind.kind, channel, previous);
     toasts.error(e);
   }
 }

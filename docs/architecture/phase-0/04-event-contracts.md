@@ -118,8 +118,8 @@ A block ends every edge between the two accounts in the same transaction: graph 
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
 | `post.created` | post | author, audience, media_ids, hashtags, mentions | Feed (fan-out), Search, Notification (mentions) |
-| `post.updated` | post | post_id, author_id, audience (may change on edit), comment_policy (additive, v1), excerpt, new_mentions | Feed, Search |
-| `post.deleted` | post | — | Feed, Search |
+| `post.updated` | post | post_id, author_id, audience (may change on edit), comment_policy (additive, v1), excerpt, hashtags (the full list, additive, v1), new_mentions. Also emitted, with no new_mentions, when an overturned appeal restores a removed post | Feed, Search |
+| `post.deleted` | post | post_id. Also emitted when moderation removes a post. Feed and search keep a tombstone, so a retried older `post.created`/`post.updated` cannot bring it back. Post consumes its own event to restrict the post's media through media's bind (retried while media is down), so only the owner can fetch them | Feed, Search, Post |
 | `post.reacted` | post | reactor, reaction_type | Notification |
 | `post.unreacted` | post | post_id, reactor, reaction_type, author_id. Once per removed reaction | — (for later notification clean-up) |
 | `post.commented` | comment | post_id, author | Notification, Feed (signal) |
@@ -148,12 +148,15 @@ A block ends every edge between the two accounts in the same transaction: graph 
 ### Chat
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
-| `message.created` | message | conversation_id, sender, type | Realtime, Notification |
-| `message.read` | receipt | conversation_id, reader, up_to | Realtime |
-| `message.reacted` | reaction | message_id, reactor, type | Realtime, Notification |
-| `conversation.typing` | conversation | actor (ephemeral, Realtime-only) | Realtime |
-| `conversation.member.changed` | conversation | conversation_id, action, recipients[] | Realtime |
-| `user.presence.changed` | account | status, last_seen? (privacy-filtered) | Realtime |
+| `message.created` | message | conversation_id, message_id, sender, type, seq, recipients[] (active members), muted[], preview (first 140 characters of the body, for the notification text) | Realtime, Notification |
+| `message.read` | receipt | conversation_id, reader, up_to_message_id, up_to_seq, recipients[] (a DM: both members; a group: the reader and the senders the pointer passed). Only when the pointer moves forward | Realtime, Notification (clears the conversation's notifications) |
+| `message.delivered` | receipt | conversation_id, account, up_to_seq, recipients[] (as for `message.read`) | Realtime |
+| `message.edited` | message | conversation_id, message_id, editor, recipients[]. No body: clients refetch | Realtime |
+| `message.deleted` | message | conversation_id, message_id, scope (`everyone`: a tombstone stays; `moderation`: hidden until restored), recipients[]. Emitted once per removal | Realtime |
+| `message.reacted` | reaction | conversation_id, message_id, reactor, type (null when the reaction was removed), recipients[] | Realtime |
+| `conversation.typing` | conversation | actor (ephemeral, Realtime-only; never echoed to the typist's own sockets) | Realtime |
+| `conversation.member.changed` | conversation | conversation_id, action (`created`, `added`, `removed`, `renamed`, `role_changed`, `pinned`, `unpinned`, `blocked`), recipients[], revoked[] (additive, v1: accounts that just lost access; Realtime drops their live subscriptions). `blocked` is emitted by Chat when it applies `user.blocked`, once per shared DM or marketplace thread, with no recipients so the blocked side is not told | Realtime |
+| `user.presence.changed` | account | status, last_seen? (privacy-filtered). Not a bus event: Realtime pushes `presence.changed` frames only to DM peers and friends, and a block seen on the bus keeps the pair hidden even while Chat's copy of the block lags | Realtime |
 
 ### Marketplace
 | Event | Subject | Key payload | Consumers |
@@ -161,8 +164,13 @@ A block ends every edge between the two accounts in the same transaction: graph 
 | `listing.created` | listing | seller, category, price | Search, Moderation (queue) |
 | `listing.updated` | listing | changed | Search |
 | `listing.status.changed` | listing | from, to | Search, Notification |
-| `listing.reported` | report | listing_id, reporter, owner_id (the seller; only the owner may appeal; absent before 1.2), reason | Moderation |
+| `listing.reported` | report | listing_id, reporter, owner_id (the seller; only the owner may appeal; absent before 1.2), reason; once per reporter per listing | Moderation |
 | `marketplace.contact.requested` | listing | buyer, seller | Chat (create conversation) |
+| `listing.availability.changed` | listing | listing_id, seller_id, from, to (available/reserved/sold or null) | Search, Notification |
+| `marketplace.inquiry.created` | listing | inquiry_id, listing_id, seller_id, buyer_id (first inquiry per buyer per listing) | (none yet; 4.7 metrics) |
+| `marketplace.review.created` | review | review_id, listing_id, seller_id, buyer_id, rating | (none yet) |
+| `marketplace.review.reported` | review | review_id, listing_id, seller_id, reporter, owner_id (the review's author), reason; once per reporter per review | Moderation (`listing_review` target) |
+| `marketplace.review.status.changed` | review | review_id, seller_id, from, to (published/removed) | (none yet) |
 
 ### Notification
 | Event | Subject | Key payload | Consumers |

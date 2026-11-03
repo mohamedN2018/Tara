@@ -2,6 +2,9 @@ import { api } from "@/lib/api";
 import type { CursorPage, Post } from "@/types";
 
 export type CommentPolicy = "everyone" | "friends" | "off";
+/** Report endpoints allow 20 an hour: say so rather than "try again in a moment". */
+export const REPORT_ERRORS = { throttled: "errors.reportThrottled", rate_limited: "errors.reportThrottled" };
+
 export const COMMENT_POLICIES: CommentPolicy[] = ["everyone", "friends", "off"];
 
 export interface Comment {

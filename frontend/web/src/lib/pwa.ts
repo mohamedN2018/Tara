@@ -183,14 +183,30 @@ export async function disablePush(accountId: string): Promise<void> {
   await notificationService.unregisterWebPush(endpoint).catch(() => {});
 }
 
+/** Message previews left in the OS tray must not be read by the next account. */
+async function closeShownNotifications(): Promise<void> {
+  try {
+    const registration = await navigator.serviceWorker?.getRegistration();
+    (await registration?.getNotifications())?.forEach((n) => n.close());
+  } catch {
+    // No worker, or the browser keeps no list: nothing to close.
+  }
+}
+
 /**
  * Logout, on every path (button, expired session, another tab signing out).
  * Unsubscribes locally first, which works with no session at all, so the next
  * account on this browser never receives the previous account's pushes. The
  * account stays "wanted", so its push comes back on its next login here.
  * `remote` also tells the server, briefly, while the session is still valid.
+ * `clearTray` closes the notifications already shown (message previews); a boot
+ * with no session at all has no session ending here, and leaves them.
  */
-export async function releasePush({ remote = false }: { remote?: boolean } = {}): Promise<void> {
+export async function releasePush({
+  remote = false,
+  clearTray = true,
+}: { remote?: boolean; clearTray?: boolean } = {}): Promise<void> {
+  if (clearTray) await closeShownNotifications();
   const subscription = await currentSubscription();
   writeOwner(null);
   if (!subscription) return;

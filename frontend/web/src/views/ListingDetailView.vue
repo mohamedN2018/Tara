@@ -87,10 +87,8 @@ async function sendMessage() {
   try {
     const link = new URL(router.resolve(`/marketplace/${listing.value.id}`).href, window.location.origin).href;
     const conversationId = await marketplaceService.messageSeller(listing.value, message.value, link);
-    if (listing.value.viewer) {
-      listing.value.viewer.has_inquired = true;
-      listing.value.viewer.can_review = !listing.value.viewer.has_reviewed;
-    }
+    // `can_review` stays the server's: a review opens a day after the inquiry.
+    if (listing.value.viewer) listing.value.viewer.has_inquired = true;
     showMessage.value = false;
     router.push({ name: "messages", params: { id: conversationId } });
   } catch (e) {

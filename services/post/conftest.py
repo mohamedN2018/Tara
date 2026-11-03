@@ -65,6 +65,7 @@ class FakeMedia:
         self.assets: dict = {}
         self.binds: list[dict] = []
         self.calls: list[str] = []
+        self.elsewhere: set[str] = set()  # ids media says another post holds
         self.down = False
 
     def add(self, owner, *, kind="image", status="ready") -> str:
@@ -84,6 +85,8 @@ class FakeMedia:
         return {m: self.assets[m] for m in map(str, media_ids) if m in self.assets}
 
     def bind(self, owner_id, post_id, media_ids, *, restricted):
+        from posts import media_client
+
         self._available("bind")
         ids = [str(m) for m in media_ids]
         self.binds.append(
@@ -94,7 +97,11 @@ class FakeMedia:
                 "restricted": restricted,
             }
         )
-        return [m for m in ids if m not in self.assets or self.assets[m].owner_id != str(owner_id)]
+        owned = {m for m in ids if m in self.assets and self.assets[m].owner_id == str(owner_id)}
+        skipped = [m for m in ids if m in self.elsewhere or m not in owned]
+        return media_client.BindResult(
+            skipped=skipped, attached_elsewhere=[m for m in ids if m in self.elsewhere]
+        )
 
 
 @pytest.fixture(autouse=True)

@@ -1,5 +1,6 @@
 """WebSocket gateway tests using the in-memory channel layer."""
 
+import asyncio
 import uuid
 
 import pytest
@@ -62,6 +63,7 @@ async def test_typing_broadcasts_between_subscribers(token_for):
 
     await comm_a.send_json_to({"action": "subscribe", "conversation_id": conv_id})
     await comm_b.send_json_to({"action": "subscribe", "conversation_id": conv_id})
+    await asyncio.sleep(0.05)  # subscriptions on different sockets complete concurrently
     await comm_a.send_json_to({"action": "typing", "conversation_id": conv_id})
 
     received = await comm_b.receive_json_from()
@@ -151,3 +153,118 @@ def test_notification_read_and_deleted_frames_reach_only_the_recipient(monkeypat
         ("u1", {"event": "notification.read", "notification_ids": ["n1", "n2"], "all": False}),
         ("u1", {"event": "notification.deleted", "notification_ids": ["n3"]}),
     ]
+
+
+# ---- hardening (review) --------------------------------------------------------
+
+
+async def _open(account_id, token_for, **kwargs):
+    comm = WebsocketCommunicator(_app(), f"/ws/v1/?token={token_for(account_id)}", **kwargs)
+    assert (await comm.connect())[0]
+    assert (await comm.receive_json_from())["event"] == "connected"
+    return comm
+
+
+async def test_typing_is_not_echoed_to_the_typists_own_tabs(token_for):
+    conv_id = str(uuid.uuid4())
+    a, b = str(uuid.uuid4()), str(uuid.uuid4())
+    a1, a2, b1 = [await _open(x, token_for) for x in (a, a, b)]
+    for comm in (a1, a2, b1):
+        await comm.send_json_to({"action": "subscribe", "conversation_id": conv_id})
+    await asyncio.sleep(0.05)
+    await a1.send_json_to({"action": "typing", "conversation_id": conv_id})
+    assert (await b1.receive_json_from())["actor_id"] == a
+    assert await a1.receive_nothing(timeout=0.2)
+    assert await a2.receive_nothing(timeout=0.2)
+    for comm in (a1, a2, b1):
+        await comm.disconnect()
+
+
+async def test_revoked_member_stops_receiving_typing(token_for):
+    from asgiref.sync import sync_to_async
+
+    from realtime import bridge
+    from tara_events.envelope import EventEnvelope
+
+    conv_id = str(uuid.uuid4())
+    a, removed = str(uuid.uuid4()), str(uuid.uuid4())
+    comm_a, comm_removed = await _open(a, token_for), await _open(removed, token_for)
+    for comm in (comm_a, comm_removed):
+        await comm.send_json_to({"action": "subscribe", "conversation_id": conv_id})
+    await asyncio.sleep(0.05)
+    await sync_to_async(bridge.on_conversation_changed)(
+        EventEnvelope(
+            event_type="conversation.member.changed",
+            subject_id=conv_id,
+            producer="chat-service",
+            payload={
+                "conversation_id": conv_id,
+                "action": "removed",
+                "recipients": [a, removed],
+                "revoked": [removed],
+            },
+        )
+    )
+    assert (await comm_removed.receive_json_from())["event"] == "chat.conversation.changed"
+    assert (await comm_a.receive_json_from())["event"] == "chat.conversation.changed"
+    await comm_a.send_json_to({"action": "typing", "conversation_id": conv_id})
+    assert await comm_removed.receive_nothing(timeout=0.2)
+    await comm_a.disconnect()
+    await comm_removed.disconnect()
+
+
+async def test_oversized_frames_close_and_junk_frames_are_ignored(token_for):
+    comm = await _open(str(uuid.uuid4()), token_for)
+    await comm.send_to(text_data="{not json")
+    await comm.send_to(bytes_data=b"\x00\x01")
+    await comm.send_json_to({"action": "subscribe", "conversation_id": "../internal"})
+    await comm.send_json_to({"action": "ping"})
+    assert (await comm.receive_json_from())["event"] == "pong"  # still alive
+    await comm.send_to(text_data="x" * 20_000)
+    assert await comm.receive_output() == {"type": "websocket.close", "code": 1009}
+
+
+async def test_a_socket_that_floods_is_rate_limited(token_for, settings):
+    settings.WS_FRAME_BURST = 5
+    settings.WS_FRAMES_PER_SECOND = 0.001
+    comm = await _open(str(uuid.uuid4()), token_for)
+    for _ in range(20):
+        await comm.send_json_to({"action": "ping"})
+    pongs = 0
+    while not await comm.receive_nothing(timeout=0.2):
+        pongs += (await comm.receive_json_from())["event"] == "pong"
+    assert pongs == 5
+    await comm.disconnect()
+
+
+async def test_a_slow_dependency_does_not_stall_other_sockets(token_for, monkeypatch):
+    import time
+
+    def slow_member(conversation_id, account_id):
+        time.sleep(1.0)
+        return True
+
+    monkeypatch.setattr("realtime.chat_client.is_member", slow_member)
+    slow, other = (
+        await _open(str(uuid.uuid4()), token_for),
+        await _open(str(uuid.uuid4()), token_for),
+    )
+    await slow.send_json_to({"action": "subscribe", "conversation_id": str(uuid.uuid4())})
+    await asyncio.sleep(0.05)
+    started = time.monotonic()
+    await other.send_json_to({"action": "ping"})
+    assert (await other.receive_json_from(timeout=0.8))["event"] == "pong"
+    assert time.monotonic() - started < 0.8
+    await asyncio.sleep(1.0)
+    await slow.disconnect()
+    await other.disconnect()
+
+
+async def test_token_in_the_subprotocol_header_is_echoed_back(token_for):
+    account_id = str(uuid.uuid4())
+    token = token_for(account_id)
+    comm = WebsocketCommunicator(_app(), "/ws/v1/", subprotocols=[token])
+    connected, subprotocol = await comm.connect()
+    assert connected is True and subprotocol == token
+    assert (await comm.receive_json_from())["account_id"] == account_id
+    await comm.disconnect()

@@ -131,9 +131,15 @@ def accept_friend_request(actor_id: str, friendship_id: str) -> Friendship:
     if is_blocked(friendship.account_low_id, friendship.account_high_id):
         raise TaraAPIError("Request not found.", code="not_found", http_status_code=404)
     with transaction.atomic():
-        friendship.status = Friendship.Status.ACCEPTED
-        friendship.accepted_at = timezone.now()
-        friendship.save(update_fields=["status", "accepted_at"])
+        # Conditional, so only one of two concurrent accepts emits, and an accept
+        # racing a block() that deleted the request is a 404, not a 500.
+        accepted_at = timezone.now()
+        updated = Friendship.objects.filter(
+            id=friendship.id, status=Friendship.Status.PENDING
+        ).update(status=Friendship.Status.ACCEPTED, accepted_at=accepted_at)
+        if not updated:
+            raise TaraAPIError("Request not found.", code="not_found", http_status_code=404)
+        friendship.status, friendship.accepted_at = Friendship.Status.ACCEPTED, accepted_at
         events.emit(
             "friendship.accepted",
             subject_id=str(friendship.id),

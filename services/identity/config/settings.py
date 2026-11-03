@@ -126,7 +126,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # ---- DRF --------------------------------------------------------------------
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "tara_common.auth.JWTAuthentication",
+        "identity.authentication.SessionJWTAuthentication",
         "rest_framework.authentication.SessionAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],

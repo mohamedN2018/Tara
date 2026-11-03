@@ -39,7 +39,7 @@ def on_user_blocked(event: EventEnvelope) -> None:
 
 @on_event("post.deleted")
 def on_post_deleted(event: EventEnvelope) -> None:
-    services.remove_post(event.payload["post_id"])
+    services.remove_post(event.payload["post_id"], services.occurred_at(event.occurred_at))
 
 
 @on_event("post.updated")
@@ -47,7 +47,11 @@ def on_post_updated(event: EventEnvelope) -> None:
     """Narrowing the audience drops the rows it no longer reaches (no Graph call)."""
     p = event.payload
     services.update_post_excerpt(
-        p["post_id"], p.get("excerpt", ""), p.get("audience"), p.get("media_ids")
+        p["post_id"],
+        p.get("excerpt", ""),
+        p.get("audience"),
+        p.get("media_ids"),
+        when=services.occurred_at(event.occurred_at),
     )
 
 

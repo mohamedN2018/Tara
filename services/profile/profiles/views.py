@@ -125,16 +125,29 @@ class FieldPrivacyView(APIView):
         return data_response({"detail": "Field privacy updated."})
 
 
+# Per list. Every public profile read returns the whole list.
+MAX_PROFILE_ITEMS = 20
+
+
 class _OwnedListCreate(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
     related_name = ""
+    # Explicit: the cursor paginator's default (-created_at) is not a field here.
+    ordering: tuple[str, ...] = ("id",)
 
     def get_queryset(self):
         profile = _require_profile(self.request)
-        return getattr(profile, self.related_name).all()
+        return getattr(profile, self.related_name).order_by(*self.ordering)
 
     def perform_create(self, serializer):
-        serializer.save(profile=_require_profile(self.request))
+        profile = _require_profile(self.request)
+        if getattr(profile, self.related_name).count() >= MAX_PROFILE_ITEMS:
+            raise TaraAPIError(
+                f"A profile can list at most {MAX_PROFILE_ITEMS} of these.",
+                code="validation_error",
+                http_status_code=400,
+            )
+        serializer.save(profile=profile)
 
 
 class _OwnedDestroy(generics.DestroyAPIView):
@@ -149,6 +162,7 @@ class _OwnedDestroy(generics.DestroyAPIView):
 class LinksView(_OwnedListCreate):
     serializer_class = LinkSerializer
     related_name = "links"
+    ordering = ("position", "id")
 
 
 class LinkDetailView(_OwnedDestroy):

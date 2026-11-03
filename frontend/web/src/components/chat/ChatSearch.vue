@@ -27,7 +27,10 @@ async function run(cursor?: string) {
   const q = query.value.trim();
   tooShort.value = q.length > 0 && q.length < 2;
   if (q.length < 2) {
+    ++generation; // a search still in flight must not fill the cleared list
     results.value = [];
+    next.value = null;
+    loading.value = false;
     searched.value = false;
     return;
   }

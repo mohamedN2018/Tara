@@ -2,6 +2,7 @@
 
 import socket
 import threading
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -33,6 +34,21 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
         elif self.path == "/json":
             self._send(200, b"{}", "application/json")
+        elif self.path == "/badcharset":
+            self._send(200, PAGE, "text/html; charset=x-no-such-charset")
+        elif self.path == "/slow":
+            # Headers at once, then the body a byte at a time, never finishing.
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            try:
+                self.wfile.write(b"<title>slow</title>")
+                for _ in range(200):
+                    self.wfile.write(b" ")
+                    self.wfile.flush()
+                    time.sleep(0.05)
+            except OSError:
+                pass  # the client gave up
         elif self.path == "/huge":
             head = b"<title>huge</title>"
             self._send(200, head + b"x" * (5 * 1024 * 1024))
@@ -93,6 +109,8 @@ def _url(server, path):
         "::ffff:127.0.0.1",
         "::ffff:169.254.169.254",
         "2002:7f00:1::",  # 6to4 wrapping 127.0.0.1
+        "64:ff9b::a9fe:a9fe",  # NAT64 wrapping 169.254.169.254
+        "64:ff9b::a00:5",  # NAT64 wrapping 10.0.0.5
     ],
 )
 def test_non_public_addresses_are_refused(address):
@@ -218,6 +236,19 @@ def test_read_stops_at_the_byte_cap(server, local_is_public, monkeypatch):
     monkeypatch.setattr(linkpreview, "parse_html", spy)
     assert fetch_preview(_url(server, "/huge"))["title"] == "huge"
     assert sizes == [1024]
+
+
+def test_a_server_that_drips_bytes_hits_the_total_deadline(server, local_is_public, monkeypatch):
+    monkeypatch.setattr(linkpreview, "TOTAL_TIMEOUT", 0.5)
+    monkeypatch.setattr(linkpreview, "MAX_BYTES", 200)  # ~10 s of dripping without a deadline
+    started = time.monotonic()
+    assert fetch_preview(_url(server, "/slow")) is None
+    assert time.monotonic() - started < 3
+
+
+def test_an_unknown_charset_falls_back_to_utf8(server, local_is_public):
+    # Used to raise LookupError, failing the consumer until the event dead-lettered.
+    assert fetch_preview(_url(server, "/badcharset"))["title"] == "OG & title"
 
 
 def test_parser_cleans_and_caps_text():

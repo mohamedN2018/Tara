@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -241,8 +242,6 @@ class ConversationMuteView(APIView):
 
     @extend_schema(request=MuteSerializer, responses={200: None}, tags=["chat"])
     def post(self, request: Request, conversation_id: str) -> Response:
-        from django.utils import timezone
-
         serializer = MuteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         minutes = serializer.validated_data["minutes"]

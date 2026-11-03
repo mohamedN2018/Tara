@@ -12,6 +12,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib.auth.hashers import make_password
 from django.contrib.auth.password_validation import validate_password
 from django.core.cache import cache
@@ -27,6 +28,7 @@ from .events import emit_domain_event, emit_security_event
 from .models import (
     Account,
     Device,
+    EmailChangeRequest,
     EmailVerification,
     PasswordReset,
     UserSession,
@@ -83,11 +85,10 @@ def _validate_password(
 def _create_session_and_tokens(
     account: Account, *, ip_region: str, user_agent: str, platform: str = "web"
 ) -> IssuedTokens:
-    device, _ = Device.objects.get_or_create(
-        account=account,
-        platform=platform,
-        label=user_agent[:120],
-    )
+    # No unique constraint on these columns: two concurrent first logins can
+    # both create one, and get_or_create would then fail every later login.
+    lookup = {"account": account, "platform": platform, "label": user_agent[:120]}
+    device = Device.objects.filter(**lookup).first() or Device.objects.create(**lookup)
     session = UserSession.objects.create(
         account=account, device=device, ip_region=ip_region, user_agent=user_agent[:400]
     )
@@ -131,12 +132,13 @@ def register(
             token_hash=_hash(raw_token),
             expires_at=timezone.now() + EMAIL_VERIFICATION_TTL,
         )
-        emit_security_event(account, "account_registered", {"email": email}, ip_region=ip_region)
+        # No email here: security events outlive the account (SET_NULL on delete).
+        emit_security_event(account, "account_registered", {}, ip_region=ip_region)
         emit_domain_event(
             "account.registered",
             subject_id=str(account.id),
+            # No email on the bus: no consumer needs it (docs/.../04-event-contracts.md).
             payload={
-                "email": email,
                 "email_verified": False,
                 "language": language,
                 "display_name": display_name,
@@ -263,7 +265,7 @@ def verify_email(*, raw_token: str) -> Account:
         emit_domain_event(
             "account.verified",
             subject_id=str(account.id),
-            payload={"email": account.email},
+            payload={"email_verified": True},
             actor_id=str(account.id),
         )
     return account
@@ -286,6 +288,26 @@ def request_password_reset(*, email: str) -> None:
         transaction.on_commit(lambda: send_password_reset_email(email, raw_token))
 
 
+def _invalid_reset_token() -> TaraAPIError:
+    return TaraAPIError(
+        "Invalid or expired reset token.", code="validation_error", http_status_code=400
+    )
+
+
+def invalidate_account_recovery(account: Account) -> None:
+    """After a password reset or change, nothing issued earlier may still take over.
+
+    Unused reset links were issued for the old password, and a pending email
+    change may have been started by whoever knew it: confirming it would move
+    the account to their address. Call inside the password-change transaction.
+    """
+    now = timezone.now()
+    PasswordReset.objects.filter(account=account, consumed_at__isnull=True).update(consumed_at=now)
+    EmailChangeRequest.objects.filter(
+        account=account, consumed_at__isnull=True, cancelled_at__isnull=True
+    ).update(cancelled_at=now)
+
+
 def reset_password(*, raw_token: str, new_password: str) -> None:
     record = (
         PasswordReset.objects.select_related("account")
@@ -293,16 +315,21 @@ def reset_password(*, raw_token: str, new_password: str) -> None:
         .first()
     )
     if record is None or record.expires_at <= timezone.now():
-        raise TaraAPIError(
-            "Invalid or expired reset token.", code="validation_error", http_status_code=400
-        )
+        raise _invalid_reset_token()
     account = record.account
     _validate_password(new_password, account)
     with transaction.atomic():
+        # Lock the link so two concurrent submissions cannot both use it.
+        locked = (
+            PasswordReset.objects.select_for_update()
+            .filter(id=record.id, consumed_at__isnull=True)
+            .first()
+        )
+        if locked is None:
+            raise _invalid_reset_token()
         account.set_password(new_password)
-        account.save(update_fields=["password"])
-        record.consumed_at = timezone.now()
-        record.save(update_fields=["consumed_at"])
+        account.save(update_fields=["password", "updated_at"])
+        invalidate_account_recovery(account)
         # Security: invalidate every existing session on password change.
         for session in account.sessions.filter(revoked_at__isnull=True):
             token_engine.revoke_session(session)
@@ -310,7 +337,13 @@ def reset_password(*, raw_token: str, new_password: str) -> None:
 
 
 def list_sessions(account: Account):
-    return account.sessions.filter(revoked_at__isnull=True).order_by("-last_seen_at")
+    """Live sessions only: one unseen for a refresh-token lifetime cannot refresh again."""
+    cutoff = timezone.now() - timedelta(seconds=settings.REFRESH_TOKEN_TTL_SECONDS)
+    return (
+        account.sessions.filter(revoked_at__isnull=True, last_seen_at__gt=cutoff)
+        .select_related("device")
+        .order_by("-last_seen_at")
+    )
 
 
 def revoke_session_by_id(account: Account, session_id: str) -> None:

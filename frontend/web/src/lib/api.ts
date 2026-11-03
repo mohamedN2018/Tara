@@ -54,12 +54,15 @@ async function rotate(staleAccess: string | null): Promise<RefreshResult> {
       { refresh_token: refreshToken },
       { timeout: TIMEOUT_MS },
     );
+    // Logged out (or signed in again) while this was in flight: the answer
+    // belongs to a session that is over and must not bring it back.
+    if (tokenStore.refresh !== refreshToken) return tokenStore.access ? "ok" : "invalid";
     const t = resp.data.data;
     tokenStore.set(t.access_token, t.refresh_token);
     return "ok";
   } catch (error) {
     if ((error as AxiosError).response?.status === 401) {
-      tokenStore.clear();
+      if (tokenStore.refresh === refreshToken) tokenStore.clear();
       return "invalid";
     }
     return "unavailable";
@@ -119,7 +122,12 @@ export function apiError(error: unknown): ApiError {
   return { code: "request_failed", message: "Request failed." };
 }
 
+/** The HTTP status of a failed request; undefined when it never got an answer. */
+export function httpStatus(error: unknown): number | undefined {
+  return (error as AxiosError)?.response?.status;
+}
+
 /** True when a failure means the server rejected the credentials themselves. */
 export function isAuthFailure(error: unknown): boolean {
-  return (error as AxiosError)?.response?.status === 401;
+  return httpStatus(error) === 401;
 }

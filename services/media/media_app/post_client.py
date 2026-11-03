@@ -28,7 +28,8 @@ def _internal_token() -> str:
     )
 
 
-def can_view_post(viewer_id: str, post_id: str) -> bool:
+def _visible(viewer_id: str, post_id: str) -> bool | None:
+    """Post's answer, or None when it could not give one."""
     url = f"{settings.POST_INTERNAL_URL}/internal/v1/posts/{post_id}/visibility/"
 
     def _call() -> bool:
@@ -44,8 +45,22 @@ def can_view_post(viewer_id: str, post_id: str) -> bool:
     try:
         return _breaker.call(_call)
     except CircuitOpenError:
-        logger.warning("post circuit open; hiding restricted media")
-        return False
-    except Exception:  # noqa: BLE001 - fail closed
-        logger.warning("post visibility check failed; hiding restricted media", exc_info=True)
-        return False
+        logger.warning("post circuit open")
+        return None
+    except Exception:  # noqa: BLE001 - the callers decide, both fail closed
+        logger.warning("post visibility check failed", exc_info=True)
+        return None
+
+
+def can_view_post(viewer_id: str, post_id: str) -> bool:
+    """Whether restricted media of the post may be shown; no answer is "no"."""
+    return _visible(viewer_id, post_id) is True
+
+
+def post_is_live(owner_id: str, post_id: str) -> bool | None:
+    """Whether the owner's post still exists and is live (its author sees it).
+
+    False for a post that never committed, was deleted or was removed; None
+    when post could not answer, which callers treat as live.
+    """
+    return _visible(owner_id, post_id)

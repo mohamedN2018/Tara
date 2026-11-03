@@ -235,7 +235,7 @@ const navIcons = [
         <button
           class="icon-btn relative"
           :class="showMessages ? '!bg-brand-50 !text-brand-700 dark:!bg-brand-950/70 dark:!text-brand-300' : ''"
-          :aria-label="chatUnread.conversations > 0 ? t('messages.unreadBadge', { count: chatUnread.conversations }) : t('nav.messages')"
+          :aria-label="chatUnread.conversations > 0 ? t('messages.unreadBadge', chatUnread.conversations) : t('nav.messages')"
           aria-haspopup="menu"
           :aria-expanded="showMessages"
           @click="showMessages = !showMessages"
@@ -264,8 +264,7 @@ const navIcons = [
         <button
           class="icon-btn relative"
           :class="showNotifs ? '!bg-brand-50 !text-brand-700 dark:!bg-brand-950/70 dark:!text-brand-300' : ''"
-          :aria-label="t('nav.notifications')"
-          aria-haspopup="menu"
+          :aria-label="notifications.unread > 0 ? t('nav.notificationsUnread', notifications.unread) : t('nav.notifications')"
           :aria-expanded="showNotifs"
           @click="showNotifs = !showNotifs"
         >

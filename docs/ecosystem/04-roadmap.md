@@ -49,14 +49,23 @@ The current state of the code is described in the companion document [02-tara-au
 | 1.0d Caller-specific secret for identity's role API | Done | `ADMIN_IDENTITY_SECRET`, `iss=admin`, `aud=identity.roles`; the shared secret is rejected there |
 | 1.0e Ads-only serve-token secret | Done | `ADS_SERVE_TOKEN_SECRET`; old tokens are rejected immediately (no 30-minute grace window) |
 | 1.1 Social-core correctness | Done | Feed, search, graph and post parts; backfills `relabel_feed_reasons` and `reconcile_hashtags` |
-| 1.2 Moderation hardening | Done | Owner-only appeals, 409s, row locks, first-report race, report throttle, `owner_id` on `post.reported` and `listing.reported` |
+| 1.2 Moderation hardening | Done | Owner-only appeals, 409s, row locks, first-report race, report throttle, `owner_id` on `post.reported` and `listing.reported`; moderator appeal queue `GET /moderation/appeals/` |
 | 1.3 Comments v2 | Done | Flattened threads (`reply_to`), paged replies, edit/delete, comment reactions, per-post comment policy, comment reports (moderation consumes `comment.reported`) |
 | 1.4 Reaction and share lists | Done | `PostReactionCount`, who-reacted by type, who-shared, `post.unreacted` |
-| 1.5 Media privacy and upload safety | **Done** | Safety part: see the design note below. UX part: media grid, `?view=` viewer, HEIC in the browser. **Open:** heic2any needs `'unsafe-eval'`, which the production CSP does not allow, so HEIC fails there with a clear message; planned fix is server-side conversion (pillow-heif in media) |
+| 1.5 Media privacy and upload safety | **Done** | Safety part: see the design note below. UX part: media grid, `?view=` viewer. HEIC is converted to JPEG on the server (pillow-heif in media), so the strict CSP stays; files, audio and voice download as attachments under their own name |
 | 2.14–2.17 (most), 2.18 (part) Notifications v2 | Done | Kind registry and deep links, aggregation, inline actions, live list with cross-tab and cross-device sync, per-kind in-app/push prefs, sound, push lifecycle. Not built: quiet-hour deferral, device list, digest (2.19) |
 | Step 3 messenger (QTech port) | Partly done | Presence (multi-tab, last seen, peers only), seq read pointers and unread counts, archive, clear for me, edit/delete/forward, search, shared media, file/video attachments. Run `backfill_message_seq` once after deploy |
 | Step 4 marketplace (4.3, 4.4, parts of 4.6–4.8) | Partly done | Three price types, filters/sort/facets, Arabic-aware search, view counter, favorites, compare, inquiries, seller page and reviews (moderation consumes `marketplace.review.reported`). Not built: lat/lng radius (4.5) |
 | Account security (QTech port) | Done | Google sign-in and linking, per-email login throttle, change password and email, Telegram phone verification |
+| Hardening pass after wave B | Done | Six-area review with a failing-first test per fix. Highlights: account takeover through a pending email change after a password reset; identity rejects tokens of ended sessions at once; oversize `X-Request-Id` 500s everywhere; group history before joining; removed or blocked members keeping live subscriptions; presence after a block; stale events reviving deleted posts in feeds; link-preview slow-drip; ad budget overspend under concurrency; self-approval of ads; media re-bound from a live post; handles derived from emails. Open items are listed below |
+
+**Known open items after the hardening pass** (each needs a product decision, a new event, or a cross-service change):
+- Other services accept an access token until it expires (up to 15 minutes) after sign-out; only identity checks the session. Closing it needs a shared deny-list.
+- Marketplace review eligibility is a one-way inquiry; the two-way rule (4.8) needs chat reply events (4.7). Age and per-seller brakes are in place.
+- `message.reported` has no producer: reporting a private message needs an evidence-snapshot decision.
+- DLQ topology is shared by all services (1.0c broker migration).
+- Registration answers 409 for a taken email (enumeration, throttled).
+- Unread counts include messages deleted for everyone; presigned URLs live 15 minutes after access is lost; a sent push cannot be recalled.
 
 **Design as built for 1.5 (differs from the row below):** post media is restricted
 when the post's audience is not public. Post binds the media to the post through

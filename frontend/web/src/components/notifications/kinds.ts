@@ -17,9 +17,10 @@ import {
   UserPlus,
 } from "lucide-vue-next";
 
+import { sameOriginPath } from "@/lib/redirect";
 import type { Notification } from "@/types";
 
-export const KIND_ICONS: Record<string, LucideIcon> = {
+const KIND_ICONS: Record<string, LucideIcon> = {
   "post.reaction": Heart,
   "post.comment": MessageSquare,
   "comment.reply": MessageSquare,
@@ -76,16 +77,37 @@ export function notificationText(
     const statusKey = `market.statuses.${status}`;
     return t(key, { status: te(statusKey) ? t(statusKey) : status });
   }
-  if (n.kind === "message" && !n.body) return t("notifications.kinds.message_attachment", { name });
   const others = othersCount(n);
+  if (n.kind === "message" && others === 0) {
+    // One sender, several messages (`message_count`); or a preview that is blank:
+    // an attachment, or a message edited or deleted since.
+    const count = Number(n.data?.message_count ?? 1);
+    if (Number.isInteger(count) && count > 1) return t("notifications.kinds.message_many", { name, count }, count);
+    if (!n.body) return t("notifications.kinds.message_blank", { name });
+  }
   const grouped = `notifications.grouped.${segment}`;
   if (others > 0 && te(grouped)) return t(grouped, { name, count: others }, others);
   return t(key, { name, body: n.body });
 }
 
-/** Fallback when an old server response has no `url`. */
+/**
+ * Add the thread root to a reply's comment link (`?thread=`), so the post page
+ * can open that thread directly instead of searching for the reply.
+ */
+function withThread(path: string, n: Notification): string {
+  const root = n.data?.parent_id;
+  if (n.kind !== "comment.reply" || typeof root !== "string" || !root) return path;
+  const [base, query = ""] = path.split("?", 2);
+  const params = new URLSearchParams(query);
+  if (!params.has("comment") || params.has("thread")) return path;
+  params.set("thread", root);
+  return `${base}?${params}`;
+}
+
+/** The row's link: the server's `url` when it is same-origin, else built from the subject. */
 export function urlFor(n: Notification): string {
-  if (n.url && n.url.startsWith("/") && !n.url.startsWith("//")) return n.url;
+  const own = sameOriginPath(n.url);
+  if (own) return withThread(own, n);
   const [type, id] = (n.subject_ref || "").split(":");
   if (type === "post" && id) return `/posts/${id}`;
   if (type === "conversation" && id) return `/messages/${id}`;

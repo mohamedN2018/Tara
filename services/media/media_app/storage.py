@@ -15,9 +15,20 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import logging
 from dataclasses import dataclass
+from urllib.parse import urlencode
 
 from django.conf import settings
+
+logger = logging.getLogger("tara.media.storage")
+
+# Browsers write to ``staging/...`` (see ``services.sign_upload``). Completion
+# copies the verified object out and deletes it, but an abandoned upload, or a
+# PUT replayed after completion, leaves one there: the bucket expires them.
+STAGING_PREFIX = "staging/"
+STAGING_RULE_ID = "tara-expire-staging"
+STAGING_EXPIRY_DAYS = 1
 
 
 class ObjectChanged(Exception):
@@ -75,6 +86,39 @@ def ensure_bucket() -> None:
         client.head_bucket(Bucket=settings.S3_BUCKET)
     except Exception:  # noqa: BLE001 - create on first use in dev
         client.create_bucket(Bucket=settings.S3_BUCKET)
+    ensure_staging_expiry(client)
+
+
+def ensure_staging_expiry(client) -> None:
+    """Add (or keep) the bucket rule that deletes staging objects after a day.
+
+    Other lifecycle rules on the bucket are kept. A failure is logged, not
+    raised: the service works without it, staging objects just stay.
+    """
+    from botocore.exceptions import ClientError
+
+    rule = {
+        "ID": STAGING_RULE_ID,
+        "Filter": {"Prefix": STAGING_PREFIX},
+        "Status": "Enabled",
+        "Expiration": {"Days": STAGING_EXPIRY_DAYS},
+        "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": STAGING_EXPIRY_DAYS},
+    }
+    try:
+        try:
+            rules = client.get_bucket_lifecycle_configuration(Bucket=settings.S3_BUCKET)["Rules"]
+        except ClientError as exc:
+            if _error_code(exc) != "NoSuchLifecycleConfiguration":
+                raise
+            rules = []
+        if rule in rules:
+            return
+        others = [r for r in rules if r.get("ID") != STAGING_RULE_ID]
+        client.put_bucket_lifecycle_configuration(
+            Bucket=settings.S3_BUCKET, LifecycleConfiguration={"Rules": [*others, rule]}
+        )
+    except Exception:  # noqa: BLE001 - see the docstring
+        logger.warning("could not set the staging expiry rule", exc_info=True)
 
 
 def presign_put(storage_key: str, mime: str) -> str:
@@ -87,12 +131,26 @@ def presign_put(storage_key: str, mime: str) -> str:
     )
 
 
-def presign_get(storage_key: str) -> str:
+def presign_get(storage_key: str, *, content_type: str = "", disposition: str = "") -> str:
+    """A GET URL. ``content_type`` and ``disposition`` are signed into it and
+    override the stored object's ``Content-Type`` and ``Content-Disposition``."""
+    response = {}
+    if content_type:
+        response["ResponseContentType"] = content_type
+    if disposition:
+        response["ResponseContentDisposition"] = disposition
     if _backend() in ("fake", "memory"):
-        return f"{settings.S3_PUBLIC_BASE}/{settings.S3_BUCKET}/{storage_key}?fake-download=1"
+        query = urlencode(
+            {
+                "fake-download": 1,
+                **({"response-content-type": content_type} if content_type else {}),
+                **({"response-content-disposition": disposition} if disposition else {}),
+            }
+        )
+        return f"{settings.S3_PUBLIC_BASE}/{settings.S3_BUCKET}/{storage_key}?{query}"
     return _client(public=True).generate_presigned_url(
         "get_object",
-        Params={"Bucket": settings.S3_BUCKET, "Key": storage_key},
+        Params={"Bucket": settings.S3_BUCKET, "Key": storage_key, **response},
         ExpiresIn=settings.SIGNED_URL_TTL,
     )
 

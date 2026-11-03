@@ -3,8 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 import {
   applyReaction,
-  isSeen,
-  isSeenByOthers,
   mergeMessages,
   oldestFirst,
   reactionSummary,
@@ -75,44 +73,6 @@ describe("mergeMessages", () => {
   it("lets incoming data replace a stale copy", () => {
     const edited = { ...msg("m1", 1), body: "edited" };
     expect(mergeMessages([msg("m1", 1)], [edited])[0].body).toBe("edited");
-  });
-});
-
-describe("isSeen", () => {
-  const list = [msg("a", 1, "me"), msg("b", 2), msg("c", 3, "me"), msg("d", 4)];
-
-  it("is true when the receipt is at or after my latest message", () => {
-    expect(isSeen(list, "c", "me")).toBe(true);
-    expect(isSeen(list, "d", "me")).toBe(true);
-  });
-
-  it("is false when the receipt is before my latest message", () => {
-    expect(isSeen(list, "b", "me")).toBe(false);
-  });
-
-  it("is false without a receipt, an unknown id, or a message of mine", () => {
-    expect(isSeen(list, null, "me")).toBe(false);
-    expect(isSeen(list, "not-loaded", "me")).toBe(false);
-    expect(isSeen([msg("b", 2)], "b", "me")).toBe(false);
-  });
-});
-
-describe("isSeenByOthers", () => {
-  const list = [msg("a", 1, "me"), msg("b", 2, "peer"), msg("c", 3, "me")];
-  const state = (account_id: string, last_read_message_id: string | null) => ({
-    account_id,
-    role: "member",
-    last_read_message_id,
-  });
-
-  it("survives a reload: read state comes from the conversation", () => {
-    expect(isSeenByOthers(list, [state("peer", "c"), state("me", "c")], "me")).toBe(true);
-  });
-  it("ignores my own read state and older receipts", () => {
-    expect(isSeenByOthers(list, [state("peer", "b"), state("me", "c")], "me")).toBe(false);
-  });
-  it("is true when any group member has read it", () => {
-    expect(isSeenByOthers(list, [state("x", null), state("y", "c")], "me")).toBe(true);
   });
 });
 

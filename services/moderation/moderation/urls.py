@@ -23,6 +23,7 @@ urlpatterns = [
         views.CaseAppealView.as_view(),
         name="case-appeal",
     ),
+    path("moderation/appeals/", views.AppealsView.as_view(), name="appeals"),
     path(
         "moderation/appeals/<uuid:appeal_id>/resolve/",
         views.AppealResolveView.as_view(),

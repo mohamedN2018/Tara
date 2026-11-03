@@ -94,6 +94,19 @@ describe("refreshSession", () => {
   it("reports invalid when there is no refresh token at all", async () => {
     await expect(refreshSession(null)).resolves.toBe("invalid");
   });
+
+  it("a refresh that lands after logout does not bring the session back", async () => {
+    tokenStore.set(EXPIRED, "r1");
+    let answer: (value: unknown) => void = () => {};
+    vi.spyOn(axios, "post").mockReturnValue(new Promise((resolve) => (answer = resolve)) as never);
+    const pending = refreshSession(EXPIRED);
+    await Promise.resolve();
+    tokenStore.clear(); // logout while the request is in flight
+    answer(tokens(FRESH, "r2"));
+    await expect(pending).resolves.toBe("invalid");
+    expect(tokenStore.refresh).toBeNull();
+    expect(tokenStore.access).toBeNull();
+  });
 });
 
 describe("ensureFreshAccess", () => {

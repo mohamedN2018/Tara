@@ -13,7 +13,6 @@ from tara_common.exceptions import TaraAPIError
 from tara_common.responses import data_response
 
 from . import services
-from .models import ConversationMember
 
 
 def _require_internal(request: Request) -> None:
@@ -28,15 +27,19 @@ def _require_internal(request: Request) -> None:
 
 
 class MembershipView(APIView):
+    """Realtime's subscribe check: true for an active member, false across a
+    block in a two-person thread. Every caller is the same service, so the
+    per-IP API throttle would refuse subscriptions under load."""
+
     permission_classes = [AllowAny]
     authentication_classes: list = []
+    throttle_classes: list = []
 
     def get(self, request: Request, conversation_id: str, account_id: str) -> Response:
         _require_internal(request)
-        is_member = ConversationMember.objects.filter(
-            conversation_id=conversation_id, account_id=account_id, left_at__isnull=True
-        ).exists()
-        return data_response({"is_member": is_member})
+        return data_response(
+            {"is_member": services.may_subscribe(str(account_id), str(conversation_id))}
+        )
 
 
 class PresencePeersView(APIView):

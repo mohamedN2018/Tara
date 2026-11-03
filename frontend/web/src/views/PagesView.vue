@@ -172,7 +172,7 @@ onMounted(load);
           </div>
           <div>
             <label for="page-description" class="mb-1 block text-sm font-medium">{{ t("pages.description") }}</label>
-            <textarea id="page-description" v-model="form.description" class="input min-h-20" dir="auto" rows="3" />
+            <textarea id="page-description" v-model="form.description" class="input min-h-20" dir="auto" rows="3" maxlength="2000" />
           </div>
           <p v-if="createError" class="text-sm text-red-500">{{ createError }}</p>
           <div class="flex justify-end gap-2">

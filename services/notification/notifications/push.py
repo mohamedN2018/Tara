@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
@@ -64,7 +64,7 @@ def in_quiet_hours(quiet: dict | None, now: datetime | None = None) -> bool:
         local = now.astimezone(ZoneInfo(quiet.get("timezone") or "UTC"))
     except (KeyError, ValueError):
         local = now.astimezone(UTC)
-    current = _minutes(time.strftime(local.timetz(), "%H:%M"))
+    current = local.hour * 60 + local.minute
     start, end = _minutes(quiet["start"]), _minutes(quiet["end"])
     if start < end:
         return start <= current < end

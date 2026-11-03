@@ -24,6 +24,20 @@ export interface ModerationCase {
   updated_at: string;
 }
 
+export type AppealStatus = "open" | "upheld" | "overturned";
+
+/** A member's appeal against a moderation decision (moderators only). */
+export interface Appeal {
+  id: string;
+  case_id: string;
+  target_type: string;
+  target_id: string;
+  account_id: string;
+  text: string;
+  status: AppealStatus;
+  created_at: string;
+}
+
 export interface FeatureFlag {
   key: string;
   enabled: boolean;
@@ -84,6 +98,22 @@ export const adminService = {
   /** Resolve a case. action ∈ {dismiss, warn, remove, ...} (ModerationAction). */
   async actionCase(caseId: string, action: string, reason = ""): Promise<void> {
     await api.post(`/moderation/cases/${caseId}/action/`, { action, reason });
+  },
+
+  /** Appeals, oldest first (cursor-paginated). */
+  async appeals(status: AppealStatus = "open", cursor?: string | null): Promise<CursorPage<Appeal>> {
+    const { data } = await api.get<CursorPage<Appeal>>("/moderation/appeals/", {
+      params: cursor ? { status, cursor } : { status },
+    });
+    return {
+      data: Array.isArray(data?.data) ? data.data : [],
+      page: data?.page ?? { next_cursor: null, prev_cursor: null, has_more: false },
+    };
+  },
+
+  /** Uphold the decision, or overturn it. */
+  async resolveAppeal(appealId: string, status: Exclude<AppealStatus, "open">): Promise<void> {
+    await api.post(`/moderation/appeals/${appealId}/resolve/`, { status });
   },
 
   /** File a report from anywhere in the app (any authenticated user). */

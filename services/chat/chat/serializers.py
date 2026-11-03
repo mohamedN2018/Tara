@@ -114,8 +114,22 @@ class ConversationSerializer(serializers.ModelSerializer):
 
     def get_pinned_messages(self, obj: Conversation) -> list[dict]:
         pins = getattr(obj, "active_pins", None)
+        mine = self._mine(obj)
         if pins is None:
-            pins = obj.pins.filter(message__deleted_at__isnull=True).select_related("message")
+            pins = obj.pins.filter(
+                message__deleted_at__isnull=True, message__moderation_removed_at__isnull=True
+            ).select_related("message")
+            if mine is not None:
+                pins = pins.exclude(message__hidden_for__account_id=mine.account_id)
+        else:
+            pins = [p for p in pins if not getattr(p, "hidden_by_viewer", False)]
+        if mine is not None:
+            # Not what the viewer hid or cleared, nor what a group said before they joined.
+            since = mine.cleared_at
+            if obj.type == Conversation.Type.GROUP and (since is None or mine.joined_at > since):
+                since = mine.joined_at
+            if since is not None:
+                pins = [p for p in pins if p.message.created_at >= since]
         return [
             {
                 "id": str(p.message_id),
@@ -231,7 +245,13 @@ class MessageSerializer(serializers.ModelSerializer):
         target = obj.reply_to if obj.reply_to_id else None
         if target is None:
             return None
-        gone = target.deleted_at is not None or target.moderation_removed_at is not None
+        # `reply_visible` (services._with_message_state): false when the viewer
+        # cannot open the original, e.g. a group message from before they joined.
+        gone = (
+            target.deleted_at is not None
+            or target.moderation_removed_at is not None
+            or getattr(obj, "reply_visible", True) is False
+        )
         return {
             "id": str(target.id),
             "sender_id": str(target.sender_id),

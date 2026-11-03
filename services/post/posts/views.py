@@ -34,6 +34,7 @@ from .serializers import (
     SharerSerializer,
     VoteSerializer,
 )
+from .throttling import ReportThrottle
 
 
 def _me(request: Request) -> str:
@@ -104,6 +105,7 @@ class PostCreateView(APIView):
         return idempotent(IdempotencyRecord, request, handler)
 
 
+@method_decorator(transaction.non_atomic_requests, name="dispatch")  # reads; calls graph
 class PostBatchView(APIView):
     """Current content, counts and viewer state for a batch of posts.
 
@@ -154,6 +156,9 @@ class PostDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+# The visibility check may call graph, so it runs before the write transaction
+# that each write path opens itself (roadmap 3.3).
+@method_decorator(transaction.non_atomic_requests, name="dispatch")
 class ReactionView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -277,6 +282,7 @@ class CommentReactionView(APIView):
 @method_decorator(transaction.non_atomic_requests, name="dispatch")
 class CommentReportView(APIView):
     permission_classes = [IsAuthenticated]
+    throttle_classes = [*APIView.throttle_classes, ReportThrottle]
 
     @extend_schema(request=ReportSerializer, responses={202: None}, tags=["comments"])
     def post(self, request: Request, comment_id: str) -> Response:
@@ -287,6 +293,7 @@ class CommentReportView(APIView):
         return data_response({"detail": "reported"}, status=status.HTTP_202_ACCEPTED)
 
 
+@method_decorator(transaction.non_atomic_requests, name="dispatch")
 class ShareView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -316,6 +323,7 @@ class SharesView(APIView):
         return paginator.get_paginated_response(SharerSerializer(shares, many=True).data)
 
 
+@method_decorator(transaction.non_atomic_requests, name="dispatch")
 class VoteView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -364,8 +372,10 @@ class SavedListView(APIView):
         return data_response({"detail": "saved"}, status=status.HTTP_201_CREATED)
 
 
+@method_decorator(transaction.non_atomic_requests, name="dispatch")
 class ReportView(APIView):
     permission_classes = [IsAuthenticated]
+    throttle_classes = [*APIView.throttle_classes, ReportThrottle]
 
     @extend_schema(request=ReportSerializer, responses={202: None}, tags=["posts"])
     def post(self, request: Request, post_id: str) -> Response:

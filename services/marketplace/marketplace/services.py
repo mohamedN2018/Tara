@@ -208,14 +208,15 @@ def update_listing(seller_id: str, listing_id: str, data: dict) -> Listing:
             kind = infer_price_type(data["price"])
         else:
             kind = listing.price_type
-        free = kind == Listing.PriceType.FREE
+        # A free listing's stored 0 is not an asking price: leaving free starts unpriced.
+        keep = Listing.PriceType.FREE not in (kind, listing.price_type)
         pricing = resolve_pricing(
             price_type=kind,
-            price=data["price"] if "price" in data else (None if free else listing.price),
+            price=data["price"] if "price" in data else (listing.price if keep else None),
             sale_price=(
                 data["sale_price"]
                 if "sale_price" in data
-                else (None if free else listing.sale_price)
+                else (listing.sale_price if keep else None)
             ),
             currency=data.get("currency", listing.currency),
         )
@@ -306,9 +307,10 @@ def get_listing(viewer_id: str, listing_id: str) -> Listing:
 
 def viewer_state(viewer_id: str, listing: Listing) -> dict:
     own = str(listing.seller_id) == str(viewer_id)
-    inquired = (
-        not own and ListingInquiry.objects.filter(listing=listing, buyer_id=viewer_id).exists()
+    inquiry = (
+        None if own else ListingInquiry.objects.filter(listing=listing, buyer_id=viewer_id).first()
     )
+    inquired = inquiry is not None
     reviewed = (
         inquired and SellerReview.objects.filter(listing=listing, buyer_id=viewer_id).exists()
     )
@@ -316,7 +318,9 @@ def viewer_state(viewer_id: str, listing: Listing) -> dict:
         "is_owner": own,
         "is_saved": bool(getattr(listing, "is_saved", False)),
         "has_inquired": inquired,
-        "can_review": inquired and not reviewed,
+        "can_review": (
+            inquired and not reviewed and _review_refusal(viewer_id, listing, inquiry) is None
+        ),
         "has_reviewed": reviewed,
     }
 
@@ -475,6 +479,9 @@ def report_listing(reporter_id: str, listing_id: str, reason: str) -> ListingRep
     listing = get_listing(reporter_id, listing_id)
     if str(listing.seller_id) == str(reporter_id):
         raise _bad_request("You cannot report your own listing.", "own_listing")
+    earlier = ListingReport.objects.filter(listing=listing, reporter_id=reporter_id).first()
+    if earlier is not None:  # one report per reporter per listing reaches moderation
+        return earlier
     report = ListingReport.objects.create(listing=listing, reporter_id=reporter_id, reason=reason)
     events.emit(
         "listing.reported",
@@ -560,8 +567,12 @@ def _response_hint(last_active) -> str | None:
     return "inactive"
 
 
-def seller_summary(viewer_id: str, seller_id: str) -> dict:
-    if str(seller_id) in _blocked_ids(viewer_id):
+def _visible_seller(viewer_id: str, seller_id: str) -> tuple[SellerProfile, dict, set[str]]:
+    """The seller page rule, also used for the seller's reviews: 404 when the pair
+    is blocked, the seller is unknown, or (to anyone but the seller) nothing of
+    theirs is public. Returns the profile, listing stats and the viewer's blocks."""
+    blocked = _blocked_ids(viewer_id)
+    if str(seller_id) in blocked:
         raise _not_found("Seller")
     profile = SellerProfile.objects.filter(account_id=seller_id).first()
     public = Q(status__in=PUBLIC_STATUSES)
@@ -573,6 +584,11 @@ def seller_summary(viewer_id: str, seller_id: str) -> dict:
     )
     if profile is None or (not stats["public"] and str(seller_id) != str(viewer_id)):
         raise _not_found("Seller")
+    return profile, stats, blocked
+
+
+def seller_summary(viewer_id: str, seller_id: str) -> dict:
+    profile, stats, _ = _visible_seller(viewer_id, seller_id)
     return {
         "seller_id": str(seller_id),
         "member_since": profile.created_at,
@@ -585,27 +601,64 @@ def seller_summary(viewer_id: str, seller_id: str) -> dict:
 
 
 def _refresh_rating(seller_id: str) -> None:
+    # The profile row is locked before counting: two reviews committing at once
+    # would otherwise each store an aggregate that misses the other one.
+    profile, _ = SellerProfile.objects.select_for_update().get_or_create(account_id=seller_id)
     agg = SellerReview.objects.filter(
         seller_id=seller_id, status=SellerReview.Status.PUBLISHED
     ).aggregate(avg=Avg("rating"), n=Count("id"))
-    SellerProfile.objects.update_or_create(
-        account_id=seller_id,
-        defaults={"rating_avg": float(agg["avg"] or 0.0), "rating_count": agg["n"]},
-    )
+    profile.rating_avg = float(agg["avg"] or 0.0)
+    profile.rating_count = agg["n"]
+    profile.save(update_fields=["rating_avg", "rating_count"])
+
+
+def _review_refusal(buyer_id: str, listing: Listing, inquiry) -> TaraAPIError | None:
+    """Why ``buyer_id`` may not review ``listing`` now (None when they may).
+
+    Eligibility is an inquiry the buyer sent, which proves only a one-way contact
+    (roadmap 4.8 asks for a two-way one, which needs chat's seller-reply events).
+    Until then, two cheap brakes on rating inflation by fresh or sock-puppet
+    accounts: the inquiry must be a while old, and one buyer adds at most one
+    review per seller per window, however many of the seller's listings they asked about.
+    """
+    if inquiry is None:
+        return TaraAPIError(
+            "Only buyers who contacted the seller about this listing can review it.",
+            code="review_not_eligible",
+            http_status_code=403,
+        )
+    min_age = timedelta(seconds=settings.MARKETPLACE_REVIEW_MIN_INQUIRY_AGE_SECONDS)
+    if timezone.now() - inquiry.created_at < min_age:
+        return TaraAPIError(
+            "You can review this seller a while after contacting them.",
+            code="review_not_eligible_yet",
+            http_status_code=403,
+        )
+    window = timedelta(days=settings.MARKETPLACE_REVIEW_SELLER_WINDOW_DAYS)
+    if SellerReview.objects.filter(
+        seller_id=listing.seller_id, buyer_id=buyer_id, created_at__gte=timezone.now() - window
+    ).exists():
+        return TaraAPIError(
+            "You recently reviewed this seller.",
+            code="review_rate_limited",
+            http_status_code=429,
+        )
+    return None
 
 
 def create_review(buyer_id: str, listing_id: str, rating: int, body: str) -> SellerReview:
     listing = get_listing(buyer_id, listing_id)
     if str(listing.seller_id) == str(buyer_id):
         raise _bad_request("You cannot review your own listing.", "own_listing")
-    if not ListingInquiry.objects.filter(listing=listing, buyer_id=buyer_id).exists():
-        raise TaraAPIError(
-            "Only buyers who contacted the seller about this listing can review it.",
-            code="review_not_eligible",
-            http_status_code=403,
-        )
+    inquiry = ListingInquiry.objects.filter(listing=listing, buyer_id=buyer_id).first()
     if SellerReview.objects.filter(listing=listing, buyer_id=buyer_id).exists():
         raise Conflict("You already reviewed this listing.", code="already_reviewed")
+    # The profile lock serialises this seller's reviews, so two requests at once
+    # cannot both pass the per-seller window below.
+    SellerProfile.objects.select_for_update().get_or_create(account_id=listing.seller_id)
+    refusal = _review_refusal(buyer_id, listing, inquiry)
+    if refusal is not None:
+        raise refusal
     try:
         with transaction.atomic():
             review = SellerReview.objects.create(
@@ -634,9 +687,7 @@ def create_review(buyer_id: str, listing_id: str, rating: int, body: str) -> Sel
 
 
 def seller_reviews(viewer_id: str, seller_id: str) -> QuerySet:
-    blocked = _blocked_ids(viewer_id)
-    if str(seller_id) in blocked:
-        raise _not_found("Seller")
+    _, _, blocked = _visible_seller(viewer_id, seller_id)
     qs = SellerReview.objects.filter(
         seller_id=seller_id, status=SellerReview.Status.PUBLISHED
     ).select_related("listing")
@@ -706,11 +757,12 @@ def apply_moderation(listing_id: str, action: str) -> None:
     previous = listing.status
     if action == "remove":
         listing.status = S.REMOVED  # sellers cannot republish this
-    elif action == "reject":
+    elif action == "reject" and previous != S.REMOVED:
+        # A rejected listing can be republished; a removal stands until an appeal approves it.
         listing.status = S.REJECTED
     elif action == "approve" and previous in (S.PENDING, S.REMOVED):
         listing.status = S.ACTIVE  # review passed, or appeal overturned
-    else:
+    if listing.status == previous:  # unknown action, or a repeat of the last one
         return
     listing.save(update_fields=["status", "updated_at"])
     _emit_status(listing, previous, actor_id=listing.seller_id)

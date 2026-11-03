@@ -23,8 +23,21 @@ const props = withDefaults(
     canReply?: boolean;
     busy?: boolean;
     small?: boolean;
+    /** The comment a link pointed at, briefly marked after scrolling to it. */
+    highlighted?: boolean;
+    /** The server accepted this viewer's report. */
+    reported?: boolean;
   }>(),
-  { replyToName: null, canEdit: false, canDelete: false, canReply: true, busy: false, small: false },
+  {
+    replyToName: null,
+    canEdit: false,
+    canDelete: false,
+    canReply: true,
+    busy: false,
+    small: false,
+    highlighted: false,
+    reported: false,
+  },
 );
 const emit = defineEmits<{
   reply: [];
@@ -57,14 +70,12 @@ function saveEdit() {
 
 const reporting = ref(false);
 const reason = ref("");
-const reported = ref(false);
 function sendReport() {
   const value = reason.value.trim();
   if (!value) return;
   emit("report", value);
   reporting.value = false;
   reason.value = "";
-  reported.value = true;
 }
 
 function toggleLike() {
@@ -73,7 +84,13 @@ function toggleLike() {
 </script>
 
 <template>
-  <div class="flex items-start gap-2" :data-comment-id="comment.id">
+  <div
+    class="-m-1 flex items-start gap-2 rounded-2xl p-1 outline-none motion-safe:transition-colors motion-safe:duration-700"
+    :class="highlighted ? 'bg-brand-50 ring-2 ring-brand-400 dark:bg-brand-950/40' : ''"
+    :data-comment-id="comment.id"
+    :data-highlighted="highlighted || undefined"
+    tabindex="-1"
+  >
     <RouterLink :to="{ name: 'profile-by-id', params: { id: comment.author_id } }" :aria-label="name" class="shrink-0">
       <UserAvatar :name="name" :media-id="directory.avatarOf(comment.author_id)" :size="small ? 26 : 32" />
     </RouterLink>

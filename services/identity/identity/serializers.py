@@ -4,20 +4,31 @@ from rest_framework import serializers
 
 from .models import Account, UserSession
 
+LANGUAGES = ["en", "ar"]
+THEMES = ["light", "dark", "system"]
+# Must match RESERVED_HANDLES in services/profile/profiles/services.py, which
+# would otherwise give the account a numbered variant without saying so.
+RESERVED_HANDLES = frozenset({"lookup", "id", "me", "admin", "tara"})
+
 
 class RegisterSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(
         write_only=True, min_length=10, max_length=128, trim_whitespace=False
     )
-    language = serializers.ChoiceField(choices=["en", "ar"], default="en")
-    theme = serializers.ChoiceField(choices=["light", "dark", "system"], default="system")
+    language = serializers.ChoiceField(choices=LANGUAGES, default="en")
+    theme = serializers.ChoiceField(choices=THEMES, default="system")
     display_name = serializers.CharField(
         required=False, allow_blank=True, default="", max_length=120
     )
     handle = serializers.RegexField(
         r"^[a-zA-Z0-9_]{3,30}$", required=False, allow_blank=True, default=""
     )
+
+    def validate_handle(self, value: str) -> str:
+        if value.lower() in RESERVED_HANDLES:
+            raise serializers.ValidationError("This handle is reserved.", code="reserved_handle")
+        return value
 
 
 class ResendVerificationSerializer(serializers.Serializer):
@@ -74,6 +85,10 @@ class AccountSerializer(serializers.ModelSerializer):
 
 
 class AccountUpdateSerializer(serializers.ModelSerializer):
+    # The model columns are free text; only these values mean anything to clients.
+    language = serializers.ChoiceField(choices=LANGUAGES, required=False)
+    theme = serializers.ChoiceField(choices=THEMES, required=False)
+
     class Meta:
         model = Account
         fields = ["language", "theme"]
@@ -105,12 +120,22 @@ class SessionSerializer(serializers.ModelSerializer):
 class GoogleSignInSerializer(serializers.Serializer):
     credential = serializers.CharField(max_length=4096)
     # Only used when the sign-in creates the account.
-    language = serializers.ChoiceField(choices=["en", "ar"], default="en")
-    theme = serializers.ChoiceField(choices=["light", "dark", "system"], default="system")
+    language = serializers.ChoiceField(choices=LANGUAGES, default="en")
+    theme = serializers.ChoiceField(choices=THEMES, default="system")
 
 
 class GoogleLinkSerializer(serializers.Serializer):
     credential = serializers.CharField(max_length=4096)
+    # Required when the account has a password (checked in account_security).
+    password = serializers.CharField(
+        write_only=True, max_length=128, trim_whitespace=False, required=False, allow_blank=True
+    )
+
+
+class GoogleUnlinkSerializer(serializers.Serializer):
+    password = serializers.CharField(
+        write_only=True, max_length=128, trim_whitespace=False, required=False, allow_blank=True
+    )
 
 
 class ChangePasswordSerializer(serializers.Serializer):
