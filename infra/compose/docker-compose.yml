@@ -204,6 +204,8 @@ services:
       POSTGRES_HOST: postgres
       REDIS_URL: redis://redis:6379/0
       RABBITMQ_URL: ${RABBITMQ_URL}
+      EMAIL_HOST: mailpit
+      EMAIL_PORT: "1025"
       RUN_MIGRATIONS: "false"
       IDENTITY_JWT_KEY_DIR: /app/.keys
     volumes:
@@ -403,11 +405,6 @@ services:
       TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
       S3_ENDPOINT_URL: http://minio:9000
       RUN_MIGRATIONS: "true"
-      # All services share one default Celery queue on RabbitMQ, so the
-      # media-only `process_media` task was round-robined to workers that don't
-      # have it registered and dropped. Run media processing inline so uploads
-      # become "ready" reliably without depending on the shared-queue lottery.
-      CELERY_TASK_ALWAYS_EAGER: "true"
     ports:
       - "127.0.0.1:8003:8000"
     depends_on:

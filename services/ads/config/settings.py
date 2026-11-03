@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from tara_common.rate_limits import NUM_PROXIES
 from tara_observability.logging import build_logging_config
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -19,8 +20,8 @@ def env_list(name: str, default: str = "") -> list[str]:
 
 
 SECRET_KEY = os.getenv("ADS_SECRET_KEY", "dev-only-insecure-secret-change-me")
-DEBUG = env_bool("ADS_DEBUG", True)
-ALLOWED_HOSTS = env_list("ADS_ALLOWED_HOSTS", "*") or ["*"]
+DEBUG = env_bool("ADS_DEBUG", False)
+ALLOWED_HOSTS = env_list("ADS_ALLOWED_HOSTS", "localhost,127.0.0.1")
 SERVICE_NAME = "ads"
 
 INSTALLED_APPS = [
@@ -75,6 +76,7 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 20,
     "EXCEPTION_HANDLER": "tara_common.exceptions.tara_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "NUM_PROXIES": NUM_PROXIES,
     "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.ScopedRateThrottle"],
     "DEFAULT_THROTTLE_RATES": {"ad_events": "600/min"},
 }
@@ -105,6 +107,7 @@ TARA_OUTBOX_MODEL = "ads.OutboxEvent"
 TARA_EVENT_QUEUE = "ads.events"
 
 CELERY_BROKER_URL = RABBITMQ_URL or "memory://"
+CELERY_TASK_DEFAULT_QUEUE = f"{SERVICE_NAME}.tasks"
 CELERY_RESULT_BACKEND = None
 CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", not bool(RABBITMQ_URL))
 CELERY_BEAT_SCHEDULE = {"drain-outbox": {"task": "tara_events.publish_outbox", "schedule": 2.0}}

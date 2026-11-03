@@ -23,8 +23,8 @@ def env_list(name: str, default: str = "") -> list[str]:
 
 
 SECRET_KEY = os.getenv("REALTIME_SECRET_KEY", "dev-only-insecure-secret-change-me")
-DEBUG = env_bool("REALTIME_DEBUG", True)
-ALLOWED_HOSTS = env_list("REALTIME_ALLOWED_HOSTS", "*") or ["*"]
+DEBUG = env_bool("REALTIME_DEBUG", False)
+ALLOWED_HOSTS = env_list("REALTIME_ALLOWED_HOSTS", "localhost,127.0.0.1")
 SERVICE_NAME = "realtime"
 
 INSTALLED_APPS = [

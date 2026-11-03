@@ -1,79 +1,235 @@
 # =============================================================================
-# Tara — production stack for Dokploy (single domain, fully automated).
+# Tara — production stack for Dokploy (single domain).
 #
-# What is automatic:
-#   - Postgres creates every per-service database/role on first boot
-#     (infra/postgres/init).
-#   - Each web service waits for Postgres, generates JWT keys, runs
-#     makemigrations + migrate, then serves (entrypoint, RUN_MIGRATIONS=true).
-#   - MinIO bucket is created by minio-init.
-#   - Healthchecks + `restart: unless-stopped` make the stack self-heal; the
-#     nginx edge resolves backends at request time so a restarted container is
-#     picked up without a reload.
+# On first boot Postgres creates every per-service database/role, identity
+# generates its JWT keys, each service applies its committed migrations, and
+# media creates the private bucket. `restart: unless-stopped` + healthchecks
+# keep it running, and the nginx edge resolves backends at request time.
 #
-# Exposed to the internet: only the `web` container (nginx), via Dokploy's
-# Traefik on `${DOMAIN}`. Everything else is internal on the `tara` network.
+# Only the `web` container (nginx) is reachable from the internet, through
+# Dokploy's Traefik on ${DOMAIN}. Media is served through it at /tara-media/ via
+# presigned URLs; the bucket itself is private.
 #
-# Set env in Dokploy's "Environment" panel (or a .env file) — see
-# scripts/gen-dokploy-env.sh and docs/deploy/DOKPLOY.md.
+# Each service receives only the variables it needs. Generate them with
+# scripts/gen-dokploy-env.sh; see docs/deploy/DOKPLOY.md.
 # =============================================================================
 name: tara
 
-# ---- shared building blocks -------------------------------------------------
-x-svc-env: &svc-env
+x-logging: &logging
+  driver: json-file
+  options: {max-size: "10m", max-file: "3"}
+
+x-common-env: &common-env
+  TARA_ENV: production
   POSTGRES_HOST: postgres
   POSTGRES_PORT: "5432"
-  REDIS_URL: redis://redis:6379/0
-  RABBITMQ_URL: amqp://${RABBITMQ_USER:-tara}:${RABBITMQ_PASS}@rabbitmq:5672//
+  RABBITMQ_URL: amqp://${RABBITMQ_USER:-tara}:${RABBITMQ_PASS:?}@rabbitmq:5672//
   TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
   GRAPH_INTERNAL_URL: http://graph:8000
   ADS_INTERNAL_URL: http://ads:8000
-  EMAIL_HOST: mailpit
-  EMAIL_PORT: "1025"
-  TARA_STORAGE_BACKEND: s3
-  S3_ENDPOINT_URL: http://minio:9000
-  S3_PUBLIC_BASE: http://minio:9000
-  S3_BUCKET: ${S3_BUCKET:-tara-media}
-  S3_REGION: ${S3_REGION:-us-east-1}
-  S3_USE_SSL: "false"
-  AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-tara}
-  AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+  JWT_ISSUER: ${JWT_ISSUER:-tara-identity}
+  JWT_AUDIENCE: ${JWT_AUDIENCE:-tara}
+  INTERNAL_JWT_SECRET: ${INTERNAL_JWT_SECRET:?}
   SEARCH_USE_OPENSEARCH: "false"
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   LOG_FORMAT: json
+  TZ: ${TZ:-UTC}
+  WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+  TARA_NUM_PROXIES: "1"
 
-x-svc: &svc
+x-backing: &backing
   restart: unless-stopped
-  env_file: [.env]
+  logging: *logging
+  networks: [tara]
+
+x-app: &app
+  restart: unless-stopped
+  logging: *logging
   networks: [tara]
   depends_on:
     postgres: {condition: service_healthy}
     redis: {condition: service_healthy}
     rabbitmq: {condition: service_healthy}
 
-x-web: &web
-  <<: *svc
-  healthcheck:
-    test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz/"]
-    interval: 15s
-    timeout: 5s
-    retries: 12
-    start_period: 60s
+x-healthcheck: &healthcheck
+  test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz/"]
+  interval: 15s
+  timeout: 5s
+  retries: 12
+  start_period: 60s
+
+x-identity-env: &identity-env
+  <<: *common-env
+  REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/0
+  ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-}
+  IDENTITY_ALLOWED_HOSTS: ${IDENTITY_ALLOWED_HOSTS:-}
+  IDENTITY_CORS_ORIGINS: ${IDENTITY_CORS_ORIGINS:-}
+  IDENTITY_DB_NAME: ${IDENTITY_DB_NAME:-}
+  IDENTITY_DB_PASSWORD: ${IDENTITY_DB_PASSWORD:?}
+  IDENTITY_DB_USER: ${IDENTITY_DB_USER:-}
+  IDENTITY_DEBUG: ${IDENTITY_DEBUG:-}
+  IDENTITY_JWT_KEY_ID: ${IDENTITY_JWT_KEY_ID:-}
+  IDENTITY_SECRET_KEY: ${IDENTITY_SECRET_KEY:?}
+  REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-}
+  EMAIL_HOST: ${EMAIL_HOST:?set your SMTP host}
+  EMAIL_PORT: ${EMAIL_PORT:-587}
+  EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
+  EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
+  EMAIL_USE_TLS: ${EMAIL_USE_TLS:-true}
+  DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:?}
+  FRONTEND_BASE_URL: https://${DOMAIN:?}
+  IDENTITY_JWT_KEY_DIR: /app/.keys
+
+x-profile-env: &profile-env
+  <<: *common-env
+  REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/1
+  PROFILE_ALLOWED_HOSTS: ${PROFILE_ALLOWED_HOSTS:-}
+  PROFILE_DB_NAME: ${PROFILE_DB_NAME:-}
+  PROFILE_DB_PASSWORD: ${PROFILE_DB_PASSWORD:?}
+  PROFILE_DB_USER: ${PROFILE_DB_USER:-}
+  PROFILE_DEBUG: ${PROFILE_DEBUG:-}
+  PROFILE_SECRET_KEY: ${PROFILE_SECRET_KEY:?}
+
+x-graph-env: &graph-env
+  <<: *common-env
+  REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/2
+  GRAPH_ALLOWED_HOSTS: ${GRAPH_ALLOWED_HOSTS:-}
+  GRAPH_DB_NAME: ${GRAPH_DB_NAME:-}
+  GRAPH_DB_PASSWORD: ${GRAPH_DB_PASSWORD:?}
+  GRAPH_DB_USER: ${GRAPH_DB_USER:-}
+  GRAPH_DEBUG: ${GRAPH_DEBUG:-}
+  GRAPH_SECRET_KEY: ${GRAPH_SECRET_KEY:?}
+
+x-media-env: &media-env
+  <<: *common-env
+  REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/3
+  MEDIA_ALLOWED_HOSTS: ${MEDIA_ALLOWED_HOSTS:-}
+  MEDIA_DB_NAME: ${MEDIA_DB_NAME:-}
+  MEDIA_DB_PASSWORD: ${MEDIA_DB_PASSWORD:?}
+  MEDIA_DB_USER: ${MEDIA_DB_USER:-}
+  MEDIA_DEBUG: ${MEDIA_DEBUG:-}
+  MEDIA_SECRET_KEY: ${MEDIA_SECRET_KEY:?}
+  S3_BUCKET: ${S3_BUCKET:-}
+  S3_REGION: ${S3_REGION:-}
+  TARA_STORAGE_BACKEND: s3
+  S3_ENDPOINT_URL: http://minio:9000
+  S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-https://${DOMAIN:?}}
+  AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-tara}
+  AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?}
+
+x-post-env: &post-env
+  <<: *common-env
+  REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/4
+  POST_ALLOWED_HOSTS: ${POST_ALLOWED_HOSTS:-}
+  POST_DB_NAME: ${POST_DB_NAME:-}
+  POST_DB_PASSWORD: ${POST_DB_PASSWORD:?}
+  POST_DB_USER: ${POST_DB_USER:-}
+  POST_DEBUG: ${POST_DEBUG:-}
+  POST_SECRET_KEY: ${POST_SECRET_KEY:?}
+
+x-feed-env: &feed-env
+  <<: *common-env
+  REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/5
+  FEED_ALLOWED_HOSTS: ${FEED_ALLOWED_HOSTS:-}
+  FEED_DB_NAME: ${FEED_DB_NAME:-}
+  FEED_DB_PASSWORD: ${FEED_DB_PASSWORD:?}
+  FEED_DB_USER: ${FEED_DB_USER:-}
+  FEED_DEBUG: ${FEED_DEBUG:-}
+  FEED_SECRET_KEY: ${FEED_SECRET_KEY:?}
+
+x-chat-env: &chat-env
+  <<: *common-env
+  REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/6
+  CHAT_ALLOWED_HOSTS: ${CHAT_ALLOWED_HOSTS:-}
+  CHAT_DB_NAME: ${CHAT_DB_NAME:-}
+  CHAT_DB_PASSWORD: ${CHAT_DB_PASSWORD:?}
+  CHAT_DB_USER: ${CHAT_DB_USER:-}
+  CHAT_DEBUG: ${CHAT_DEBUG:-}
+  CHAT_SECRET_KEY: ${CHAT_SECRET_KEY:?}
+
+x-marketplace-env: &marketplace-env
+  <<: *common-env
+  REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/8
+  MARKETPLACE_ALLOWED_HOSTS: ${MARKETPLACE_ALLOWED_HOSTS:-}
+  MARKETPLACE_AUTO_APPROVE: ${MARKETPLACE_AUTO_APPROVE:-}
+  MARKETPLACE_DEBUG: ${MARKETPLACE_DEBUG:-}
+  MARKETPLACE_SECRET_KEY: ${MARKETPLACE_SECRET_KEY:?}
+  MARKET_DB_NAME: ${MARKET_DB_NAME:-}
+  MARKET_DB_PASSWORD: ${MARKET_DB_PASSWORD:?}
+  MARKET_DB_USER: ${MARKET_DB_USER:-}
+
+x-notification-env: &notification-env
+  <<: *common-env
+  REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/9
+  NOTIFICATION_ALLOWED_HOSTS: ${NOTIFICATION_ALLOWED_HOSTS:-}
+  NOTIFICATION_DEBUG: ${NOTIFICATION_DEBUG:-}
+  NOTIFICATION_SECRET_KEY: ${NOTIFICATION_SECRET_KEY:?}
+  NOTIF_DB_NAME: ${NOTIF_DB_NAME:-}
+  NOTIF_DB_PASSWORD: ${NOTIF_DB_PASSWORD:?}
+  NOTIF_DB_USER: ${NOTIF_DB_USER:-}
+
+x-search-env: &search-env
+  <<: *common-env
+  REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/10
+  SEARCH_ALLOWED_HOSTS: ${SEARCH_ALLOWED_HOSTS:-}
+  SEARCH_DB_NAME: ${SEARCH_DB_NAME:-}
+  SEARCH_DB_PASSWORD: ${SEARCH_DB_PASSWORD:?}
+  SEARCH_DB_USER: ${SEARCH_DB_USER:-}
+  SEARCH_DEBUG: ${SEARCH_DEBUG:-}
+  SEARCH_SECRET_KEY: ${SEARCH_SECRET_KEY:?}
+
+x-moderation-env: &moderation-env
+  <<: *common-env
+  REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/11
+  MODERATION_ALLOWED_HOSTS: ${MODERATION_ALLOWED_HOSTS:-}
+  MODERATION_DB_NAME: ${MODERATION_DB_NAME:-}
+  MODERATION_DB_PASSWORD: ${MODERATION_DB_PASSWORD:?}
+  MODERATION_DB_USER: ${MODERATION_DB_USER:-}
+  MODERATION_DEBUG: ${MODERATION_DEBUG:-}
+  MODERATION_SECRET_KEY: ${MODERATION_SECRET_KEY:?}
+
+x-admin-env: &admin-env
+  <<: *common-env
+  REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/12
+  ADMIN_ALLOWED_HOSTS: ${ADMIN_ALLOWED_HOSTS:-}
+  ADMIN_DB_NAME: ${ADMIN_DB_NAME:-}
+  ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:?}
+  ADMIN_DB_USER: ${ADMIN_DB_USER:-}
+  ADMIN_DEBUG: ${ADMIN_DEBUG:-}
+  ADMIN_SECRET_KEY: ${ADMIN_SECRET_KEY:?}
+
+x-ads-env: &ads-env
+  <<: *common-env
+  REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/13
+  ADS_ALLOWED_HOSTS: ${ADS_ALLOWED_HOSTS:-}
+  ADS_AUTO_APPROVE: ${ADS_AUTO_APPROVE:-}
+  ADS_DB_NAME: ${ADS_DB_NAME:-}
+  ADS_DB_PASSWORD: ${ADS_DB_PASSWORD:?}
+  ADS_DB_USER: ${ADS_DB_USER:-}
+  ADS_DEBUG: ${ADS_DEBUG:-}
+  ADS_SECRET_KEY: ${ADS_SECRET_KEY:?}
+
+x-realtime-env: &realtime-env
+  <<: *common-env
+  REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/7
+  REALTIME_ALLOWED_HOSTS: ${REALTIME_ALLOWED_HOSTS:-}
+  REALTIME_DEBUG: ${REALTIME_DEBUG:-}
+  REALTIME_SECRET_KEY: ${REALTIME_SECRET_KEY:?}
 
 services:
   # ======== backing services ================================================
   postgres:
+    <<: *backing
     image: postgres:16-alpine
-    restart: unless-stopped
-    networks: [tara]
-    env_file: [.env]
+    env_file: [.env]   # the init script reads every service's database settings
     environment:
       POSTGRES_USER: ${POSTGRES_SUPERUSER:-tara}
-      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?}
       POSTGRES_DB: postgres
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    mem_limit: 1g
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_SUPERUSER:-tara}"]
       interval: 10s
@@ -81,25 +237,25 @@ services:
       retries: 12
 
   redis:
+    <<: *backing
     image: redis:7-alpine
-    restart: unless-stopped
-    networks: [tara]
-    command: ["redis-server", "--appendonly", "yes"]
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?}"]
     volumes: [redisdata:/data]
+    mem_limit: 256m
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?}", "--no-auth-warning", "ping"]
       interval: 10s
       timeout: 5s
       retries: 12
 
   rabbitmq:
+    <<: *backing
     image: rabbitmq:3.13-management-alpine
-    restart: unless-stopped
-    networks: [tara]
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-tara}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:?}
     volumes: [rabbitmqdata:/var/lib/rabbitmq]
+    mem_limit: 512m
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 15s
@@ -107,280 +263,315 @@ services:
       retries: 12
 
   minio:
-    image: minio/minio:latest
-    restart: unless-stopped
-    networks: [tara]
+    <<: *backing
+    # Official minio/minio images are no longer published; pinned by digest.
+    image: cgr.dev/chainguard/minio@sha256:090010a3f73f6aa2dff606c61cd0de3640b22748abe19f4e48cce6dc9de7a53f
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-tara}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
     volumes: [miniodata:/data]
-
-  minio-init:
-    image: minio/mc
-    networks: [tara]
-    depends_on: [minio]
-    restart: "no"
-    entrypoint: >
-      /bin/sh -c "
-      until mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-tara} ${MINIO_ROOT_PASSWORD}; do echo waiting-for-minio; sleep 2; done;
-      mc mb -p local/${S3_BUCKET:-tara-media} || true;
-      mc anonymous set download local/${S3_BUCKET:-tara-media} || true;
-      echo minio-init-done"
-
-  mailpit:
-    image: axllent/mailpit:latest
-    restart: unless-stopped
-    networks: [tara]
-
-  # ======== web (HTTP) services =============================================
-  identity:
-    <<: *web
-    build: {context: ., dockerfile: services/identity/Dockerfile}
-    image: tara/identity
-    environment:
-      <<: *svc-env
-      IDENTITY_JWT_KEY_DIR: /app/.keys
-      RUN_MIGRATIONS: "true"
-    volumes: [identity-keys:/app/.keys]
-
-  profile:
-    <<: *web
-    build: {context: ., dockerfile: services/profile/Dockerfile}
-    image: tara/profile
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
-
-  graph:
-    <<: *web
-    build: {context: ., dockerfile: services/graph/Dockerfile}
-    image: tara/graph
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
-
-  media:
-    <<: *web
-    build: {context: ., dockerfile: services/media/Dockerfile}
-    image: tara/media
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
-
-  post:
-    <<: *web
-    build: {context: ., dockerfile: services/post/Dockerfile}
-    image: tara/post
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
-
-  feed:
-    <<: *web
-    build: {context: ., dockerfile: services/feed/Dockerfile}
-    image: tara/feed
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
-
-  chat:
-    <<: *web
-    build: {context: ., dockerfile: services/chat/Dockerfile}
-    image: tara/chat
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
-
-  marketplace:
-    <<: *web
-    build: {context: ., dockerfile: services/marketplace/Dockerfile}
-    image: tara/marketplace
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
-
-  notification:
-    <<: *web
-    build: {context: ., dockerfile: services/notification/Dockerfile}
-    image: tara/notification
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
-
-  search:
-    <<: *web
-    build: {context: ., dockerfile: services/search/Dockerfile}
-    image: tara/search
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
-
-  moderation:
-    <<: *web
-    build: {context: ., dockerfile: services/moderation/Dockerfile}
-    image: tara/moderation
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
-
-  admin:
-    <<: *web
-    build: {context: ., dockerfile: services/admin/Dockerfile}
-    image: tara/admin
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
-
-  ads:
-    <<: *web
-    build: {context: ., dockerfile: services/ads/Dockerfile}
-    image: tara/ads
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "true"}
-
-  # Realtime gateway: ASGI/WebSocket, no database (Redis + RabbitMQ only).
-  realtime:
-    <<: *svc
-    build: {context: ., dockerfile: services/realtime/Dockerfile}
-    image: tara/realtime
-    command: ["daphne", "-b", "0.0.0.0", "-p", "8000", "config.asgi:application"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    mem_limit: 512m
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz/"]
+      # The image has no shell or curl; media retries S3 and creates the bucket.
+      test: ["CMD", "minio", "--version"]
       interval: 15s
       timeout: 5s
       retries: 12
-      start_period: 40s
+
+  # ======== web (HTTP) services =============================================
+  identity:
+    <<: *app
+    build: {context: ., dockerfile: services/identity/Dockerfile}
+    image: tara/identity
+    environment: {<<: *identity-env, RUN_MIGRATIONS: "true"}
+    volumes: [identity-keys:/app/.keys]
+    mem_limit: 384m
+    healthcheck: *healthcheck
+
+  profile:
+    <<: *app
+    build: {context: ., dockerfile: services/profile/Dockerfile}
+    image: tara/profile
+    environment: {<<: *profile-env, RUN_MIGRATIONS: "true"}
+    mem_limit: 384m
+    healthcheck: *healthcheck
+
+  graph:
+    <<: *app
+    build: {context: ., dockerfile: services/graph/Dockerfile}
+    image: tara/graph
+    environment: {<<: *graph-env, RUN_MIGRATIONS: "true"}
+    mem_limit: 384m
+    healthcheck: *healthcheck
+
+  media:
+    <<: *app
+    build: {context: ., dockerfile: services/media/Dockerfile}
+    image: tara/media
+    environment: {<<: *media-env, RUN_MIGRATIONS: "true"}
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    mem_limit: 384m
+    healthcheck: *healthcheck
+
+  post:
+    <<: *app
+    build: {context: ., dockerfile: services/post/Dockerfile}
+    image: tara/post
+    environment: {<<: *post-env, RUN_MIGRATIONS: "true"}
+    mem_limit: 384m
+    healthcheck: *healthcheck
+
+  feed:
+    <<: *app
+    build: {context: ., dockerfile: services/feed/Dockerfile}
+    image: tara/feed
+    environment: {<<: *feed-env, RUN_MIGRATIONS: "true"}
+    mem_limit: 384m
+    healthcheck: *healthcheck
+
+  chat:
+    <<: *app
+    build: {context: ., dockerfile: services/chat/Dockerfile}
+    image: tara/chat
+    environment: {<<: *chat-env, RUN_MIGRATIONS: "true"}
+    mem_limit: 384m
+    healthcheck: *healthcheck
+
+  marketplace:
+    <<: *app
+    build: {context: ., dockerfile: services/marketplace/Dockerfile}
+    image: tara/marketplace
+    environment: {<<: *marketplace-env, RUN_MIGRATIONS: "true"}
+    mem_limit: 384m
+    healthcheck: *healthcheck
+
+  notification:
+    <<: *app
+    build: {context: ., dockerfile: services/notification/Dockerfile}
+    image: tara/notification
+    environment: {<<: *notification-env, RUN_MIGRATIONS: "true"}
+    mem_limit: 384m
+    healthcheck: *healthcheck
+
+  search:
+    <<: *app
+    build: {context: ., dockerfile: services/search/Dockerfile}
+    image: tara/search
+    environment: {<<: *search-env, RUN_MIGRATIONS: "true"}
+    mem_limit: 384m
+    healthcheck: *healthcheck
+
+  moderation:
+    <<: *app
+    build: {context: ., dockerfile: services/moderation/Dockerfile}
+    image: tara/moderation
+    environment: {<<: *moderation-env, RUN_MIGRATIONS: "true"}
+    mem_limit: 384m
+    healthcheck: *healthcheck
+
+  admin:
+    <<: *app
+    build: {context: ., dockerfile: services/admin/Dockerfile}
+    image: tara/admin
+    environment: {<<: *admin-env, RUN_MIGRATIONS: "true"}
+    mem_limit: 384m
+    healthcheck: *healthcheck
+
+  ads:
+    <<: *app
+    build: {context: ., dockerfile: services/ads/Dockerfile}
+    image: tara/ads
+    environment: {<<: *ads-env, RUN_MIGRATIONS: "true"}
+    mem_limit: 384m
+    healthcheck: *healthcheck
+
+  realtime:
+    <<: *app
+    build: {context: ., dockerfile: services/realtime/Dockerfile}
+    image: tara/realtime
+    command: ["daphne", "-b", "0.0.0.0", "-p", "8000", "config.asgi:application"]
+    environment: {<<: *realtime-env}
+    mem_limit: 256m
+    healthcheck: *healthcheck
 
   # ======== async workers (outbox relay: celery worker + embedded beat) =====
   identity-worker:
-    <<: *svc
+    <<: *app
     image: tara/identity
-    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *identity-env, RUN_MIGRATIONS: "false"}
+    volumes: [identity-keys:/app/.keys]
     depends_on: {identity: {condition: service_healthy}}
+    mem_limit: 256m
 
   profile-worker:
-    <<: *svc
+    <<: *app
     image: tara/profile
-    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *profile-env, RUN_MIGRATIONS: "false"}
     depends_on: {profile: {condition: service_healthy}}
+    mem_limit: 256m
 
   graph-worker:
-    <<: *svc
+    <<: *app
     image: tara/graph
-    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *graph-env, RUN_MIGRATIONS: "false"}
     depends_on: {graph: {condition: service_healthy}}
+    mem_limit: 256m
 
   media-worker:
-    <<: *svc
+    <<: *app
     image: tara/media
-    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *media-env, RUN_MIGRATIONS: "false"}
     depends_on: {media: {condition: service_healthy}}
+    mem_limit: 256m
 
   post-worker:
-    <<: *svc
+    <<: *app
     image: tara/post
-    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *post-env, RUN_MIGRATIONS: "false"}
     depends_on: {post: {condition: service_healthy}}
+    mem_limit: 256m
 
   feed-worker:
-    <<: *svc
+    <<: *app
     image: tara/feed
-    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *feed-env, RUN_MIGRATIONS: "false"}
     depends_on: {feed: {condition: service_healthy}}
+    mem_limit: 256m
 
   chat-worker:
-    <<: *svc
+    <<: *app
     image: tara/chat
-    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *chat-env, RUN_MIGRATIONS: "false"}
     depends_on: {chat: {condition: service_healthy}}
+    mem_limit: 256m
 
   marketplace-worker:
-    <<: *svc
+    <<: *app
     image: tara/marketplace
-    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *marketplace-env, RUN_MIGRATIONS: "false"}
     depends_on: {marketplace: {condition: service_healthy}}
+    mem_limit: 256m
 
   notification-worker:
-    <<: *svc
+    <<: *app
     image: tara/notification
-    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *notification-env, RUN_MIGRATIONS: "false"}
     depends_on: {notification: {condition: service_healthy}}
+    mem_limit: 256m
 
   moderation-worker:
-    <<: *svc
+    <<: *app
     image: tara/moderation
-    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *moderation-env, RUN_MIGRATIONS: "false"}
     depends_on: {moderation: {condition: service_healthy}}
+    mem_limit: 256m
 
   ads-worker:
-    <<: *svc
+    <<: *app
     image: tara/ads
-    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *ads-env, RUN_MIGRATIONS: "false"}
     depends_on: {ads: {condition: service_healthy}}
+    mem_limit: 256m
 
   # ======== event consumers (consume_events) ================================
   profile-consumer:
-    <<: *svc
+    <<: *app
     image: tara/profile
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    environment: {<<: *profile-env, RUN_MIGRATIONS: "false"}
     depends_on: {profile: {condition: service_healthy}}
+    mem_limit: 192m
 
   graph-consumer:
-    <<: *svc
+    <<: *app
     image: tara/graph
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    environment: {<<: *graph-env, RUN_MIGRATIONS: "false"}
     depends_on: {graph: {condition: service_healthy}}
+    mem_limit: 192m
 
   post-consumer:
-    <<: *svc
+    <<: *app
     image: tara/post
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    environment: {<<: *post-env, RUN_MIGRATIONS: "false"}
     depends_on: {post: {condition: service_healthy}}
+    mem_limit: 192m
 
   feed-consumer:
-    <<: *svc
+    <<: *app
     image: tara/feed
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    environment: {<<: *feed-env, RUN_MIGRATIONS: "false"}
     depends_on: {feed: {condition: service_healthy}}
+    mem_limit: 192m
 
   chat-consumer:
-    <<: *svc
+    <<: *app
     image: tara/chat
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    environment: {<<: *chat-env, RUN_MIGRATIONS: "false"}
     depends_on: {chat: {condition: service_healthy}}
+    mem_limit: 192m
 
   marketplace-consumer:
-    <<: *svc
+    <<: *app
     image: tara/marketplace
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    environment: {<<: *marketplace-env, RUN_MIGRATIONS: "false"}
     depends_on: {marketplace: {condition: service_healthy}}
+    mem_limit: 192m
 
   notification-consumer:
-    <<: *svc
+    <<: *app
     image: tara/notification
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    environment: {<<: *notification-env, RUN_MIGRATIONS: "false"}
     depends_on: {notification: {condition: service_healthy}}
+    mem_limit: 192m
 
   search-consumer:
-    <<: *svc
+    <<: *app
     image: tara/search
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    environment: {<<: *search-env, RUN_MIGRATIONS: "false"}
     depends_on: {search: {condition: service_healthy}}
+    mem_limit: 192m
 
   moderation-consumer:
-    <<: *svc
+    <<: *app
     image: tara/moderation
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    environment: {<<: *moderation-env, RUN_MIGRATIONS: "false"}
     depends_on: {moderation: {condition: service_healthy}}
+    mem_limit: 192m
 
   # Realtime event→socket bridge (no DB).
   realtime-bridge:
-    <<: *svc
+    <<: *app
     image: tara/realtime
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *svc-env, RUN_MIGRATIONS: "false"}
+    environment: {<<: *realtime-env}
     depends_on: {realtime: {condition: service_healthy}}
+    mem_limit: 192m
 
-  # ======== single-origin edge (SPA + API/WS reverse proxy) =================
+  # ======== single-origin edge (SPA + API/WS/media reverse proxy) ===========
   web:
     build:
       context: frontend/web
@@ -389,17 +580,23 @@ services:
         VITE_WS_URL: ""
     image: tara/web
     restart: unless-stopped
+    logging: *logging
     networks: [tara, dokploy-network]
     depends_on:
       - identity
       - realtime
+    mem_limit: 128m
     labels:
       - traefik.enable=true
       - traefik.docker.network=dokploy-network
-      - "traefik.http.routers.tara-web.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.tara-web.rule=Host(`${DOMAIN:?}`)"
       - traefik.http.routers.tara-web.entrypoints=websecure
       - traefik.http.routers.tara-web.tls.certresolver=letsencrypt
       - traefik.http.services.tara-web.loadbalancer.server.port=80
+      - "traefik.http.routers.tara-web-http.rule=Host(`${DOMAIN:?}`)"
+      - traefik.http.routers.tara-web-http.entrypoints=web
+      - traefik.http.routers.tara-web-http.middlewares=tara-https
+      - traefik.http.middlewares.tara-https.redirectscheme.scheme=https
 
 networks:
   tara:

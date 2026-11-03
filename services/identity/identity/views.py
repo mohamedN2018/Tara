@@ -24,6 +24,7 @@ from .serializers import (
     PasswordResetSerializer,
     RefreshSerializer,
     RegisterSerializer,
+    ResendVerificationSerializer,
     SessionSerializer,
     TokenResponseSerializer,
     VerifyEmailSerializer,
@@ -184,6 +185,22 @@ class VerifyEmailView(APIView):
         serializer.is_valid(raise_exception=True)
         account = services.verify_email(raw_token=serializer.validated_data["token"])
         return data_response(AccountSerializer(account).data)
+
+
+class ResendVerificationView(APIView):
+    permission_classes = [AllowAny]
+    throttle_scope = "auth_password"
+
+    @extend_schema(
+        request=ResendVerificationSerializer,
+        responses={202: OpenApiResponse(description="Sent if the account is awaiting it.")},
+        tags=["auth"],
+    )
+    def post(self, request: Request) -> Response:
+        serializer = ResendVerificationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        services.resend_verification(serializer.validated_data["email"])
+        return Response(status=status.HTTP_202_ACCEPTED)
 
 
 class PasswordForgotView(APIView):

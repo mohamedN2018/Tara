@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from tara_common.rate_limits import api_throttling
 from tara_observability.logging import build_logging_config
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -19,8 +20,8 @@ def env_list(name: str, default: str = "") -> list[str]:
 
 
 SECRET_KEY = os.getenv("MEDIA_SECRET_KEY", "dev-only-insecure-secret-change-me")
-DEBUG = env_bool("MEDIA_DEBUG", True)
-ALLOWED_HOSTS = env_list("MEDIA_ALLOWED_HOSTS", "*") or ["*"]
+DEBUG = env_bool("MEDIA_DEBUG", False)
+ALLOWED_HOSTS = env_list("MEDIA_ALLOWED_HOSTS", "localhost,127.0.0.1")
 SERVICE_NAME = "media"
 
 INSTALLED_APPS = [
@@ -69,6 +70,7 @@ CACHES = {
 }
 
 REST_FRAMEWORK = {
+    **api_throttling(),
     "DEFAULT_AUTHENTICATION_CLASSES": ["tara_common.auth.JWTAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_PAGINATION_CLASS": "tara_common.pagination.CursorPagination",
@@ -97,8 +99,11 @@ S3_ENDPOINT_URL = os.getenv("S3_ENDPOINT_URL", "http://minio:9000")
 S3_PUBLIC_BASE = os.getenv("S3_PUBLIC_BASE", "http://localhost:9000")
 S3_BUCKET = os.getenv("S3_BUCKET", "tara-media")
 S3_REGION = os.getenv("S3_REGION", "us-east-1")
-S3_ACCESS_KEY = os.getenv("MINIO_ROOT_USER", "tara")
-S3_SECRET_KEY = os.getenv("MINIO_ROOT_PASSWORD", "tara-dev-pass")
+S3_PUBLIC_ENDPOINT_URL = os.getenv("S3_PUBLIC_ENDPOINT_URL", "")
+S3_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY_ID") or os.getenv("MINIO_ROOT_USER", "tara")
+S3_SECRET_KEY = os.getenv("AWS_SECRET_ACCESS_KEY") or os.getenv(
+    "MINIO_ROOT_PASSWORD", "tara-dev-pass"
+)
 SIGNED_URL_TTL = int(os.getenv("SIGNED_URL_TTL", "900"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(200 * 1024 * 1024)))  # 200 MB
 
@@ -110,6 +115,7 @@ TARA_OUTBOX_MODEL = "media_app.OutboxEvent"
 TARA_EVENT_QUEUE = "media.events"
 
 CELERY_BROKER_URL = RABBITMQ_URL or "memory://"
+CELERY_TASK_DEFAULT_QUEUE = f"{SERVICE_NAME}.tasks"
 CELERY_RESULT_BACKEND = None
 CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", not bool(RABBITMQ_URL))
 CELERY_BEAT_SCHEDULE = {"drain-outbox": {"task": "tara_events.publish_outbox", "schedule": 2.0}}

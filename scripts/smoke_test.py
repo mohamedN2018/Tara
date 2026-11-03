@@ -142,13 +142,12 @@ def media(alice):
     status, body = call("POST", "/media/uploads/sign/", alice, payload)
     check("sign upload through the gateway", status == 201, body)
     signed = data(body)
-    upload_url = signed["upload_url"].replace("minio:9000", "127.0.0.1:9000")
-    status, body = call(
-        "PUT",
-        upload_url,
-        raw=png,
-        headers={"Host": "minio:9000", "Content-Type": "image/png"},
-    )
+    upload_url = signed["upload_url"]
+    headers = {"Content-Type": "image/png"}
+    if "minio:9000" in upload_url:  # dev signs for the internal host
+        upload_url = upload_url.replace("minio:9000", "127.0.0.1:9000")
+        headers["Host"] = "minio:9000"
+    status, body = call("PUT", upload_url, raw=png, headers=headers)
     check("upload to object storage", status == 200, body)
     media_id = signed["media_id"]
     status, body = call("POST", f"/media/uploads/{media_id}/complete/", alice, {})

@@ -7,6 +7,10 @@ set -euo pipefail
 
 python /app/scripts/wait_for_db.py
 
+if [ "${TARA_ENV:-}" = "production" ]; then
+  python manage.py check --deploy --fail-level ERROR
+fi
+
 if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
   echo "[identity] ensuring JWT signing keys"
   python manage.py ensure_jwt_keys

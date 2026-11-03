@@ -11,6 +11,7 @@ from pathlib import Path
 
 from identity.keys import load_keys
 
+from tara_common.rate_limits import NUM_PROXIES
 from tara_observability.logging import build_logging_config
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -27,8 +28,8 @@ def env_list(name: str, default: str = "") -> list[str]:
 
 # ---- Core -------------------------------------------------------------------
 SECRET_KEY = os.getenv("IDENTITY_SECRET_KEY", "dev-only-insecure-secret-change-me")
-DEBUG = env_bool("IDENTITY_DEBUG", True)
-ALLOWED_HOSTS = env_list("IDENTITY_ALLOWED_HOSTS", "*") or ["*"]
+DEBUG = env_bool("IDENTITY_DEBUG", False)
+ALLOWED_HOSTS = env_list("IDENTITY_ALLOWED_HOSTS", "localhost,127.0.0.1")
 SERVICE_NAME = "identity"
 
 INSTALLED_APPS = [
@@ -133,6 +134,7 @@ REST_FRAMEWORK = {
     "PAGE_SIZE": 20,
     "EXCEPTION_HANDLER": "tara_common.exceptions.tara_exception_handler",
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "NUM_PROXIES": NUM_PROXIES,
     "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.ScopedRateThrottle"],
     "DEFAULT_THROTTLE_RATES": {
         "auth_register": "10/hour",
@@ -178,6 +180,7 @@ TARA_OUTBOX_MODEL = "identity.OutboxEvent"
 
 # ---- Celery -----------------------------------------------------------------
 CELERY_BROKER_URL = RABBITMQ_URL or "memory://"
+CELERY_TASK_DEFAULT_QUEUE = f"{SERVICE_NAME}.tasks"
 CELERY_RESULT_BACKEND = None
 CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", not bool(RABBITMQ_URL))
 CELERY_BEAT_SCHEDULE = {
@@ -191,7 +194,10 @@ CELERY_BEAT_SCHEDULE = {
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = os.getenv("EMAIL_HOST", "127.0.0.1")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "1025"))
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", False)
+EMAIL_TIMEOUT = 15
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "no-reply@tara.local")
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173")
 

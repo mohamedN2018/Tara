@@ -13,6 +13,11 @@ urlpatterns = [
     path("auth/refresh/", views.RefreshView.as_view(), name="refresh"),
     path("auth/logout/", views.LogoutView.as_view(), name="logout"),
     path("auth/verify-email/", views.VerifyEmailView.as_view(), name="verify-email"),
+    path(
+        "auth/verify-email/resend/",
+        views.ResendVerificationView.as_view(),
+        name="verify-email-resend",
+    ),
     path("auth/password/forgot/", views.PasswordForgotView.as_view(), name="password-forgot"),
     path("auth/password/reset/", views.PasswordResetView.as_view(), name="password-reset"),
     # Sessions

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from tara_common.rate_limits import api_throttling
 from tara_observability.logging import build_logging_config
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -19,8 +20,8 @@ def env_list(name: str, default: str = "") -> list[str]:
 
 
 SECRET_KEY = os.getenv("ADMIN_SECRET_KEY", "dev-only-insecure-secret-change-me")
-DEBUG = env_bool("ADMIN_DEBUG", True)
-ALLOWED_HOSTS = env_list("ADMIN_ALLOWED_HOSTS", "*") or ["*"]
+DEBUG = env_bool("ADMIN_DEBUG", False)
+ALLOWED_HOSTS = env_list("ADMIN_ALLOWED_HOSTS", "localhost,127.0.0.1")
 SERVICE_NAME = "admin"
 
 INSTALLED_APPS = [
@@ -69,6 +70,7 @@ CACHES = {
 }
 
 REST_FRAMEWORK = {
+    **api_throttling(),
     "DEFAULT_AUTHENTICATION_CLASSES": ["tara_common.auth.JWTAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_PAGINATION_CLASS": "tara_common.pagination.CursorPagination",

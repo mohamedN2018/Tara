@@ -20,6 +20,10 @@ class RegisterSerializer(serializers.Serializer):
     )
 
 
+class ResendVerificationSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, trim_whitespace=False)

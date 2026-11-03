@@ -144,6 +144,22 @@ def register(
     return account
 
 
+def resend_verification(email: str) -> None:
+    """Send a new link. Silent for unknown or active accounts (no enumeration)."""
+    email = email.strip().lower()
+    account = Account.objects.filter(email=email, status=Account.Status.PENDING).first()
+    if account is None:
+        return
+    raw_token = secrets.token_urlsafe(32)
+    with transaction.atomic():
+        EmailVerification.objects.create(
+            account=account,
+            token_hash=_hash(raw_token),
+            expires_at=timezone.now() + EMAIL_VERIFICATION_TTL,
+        )
+        transaction.on_commit(lambda: send_verification_email(email, raw_token))
+
+
 def login(
     *,
     email: str,
