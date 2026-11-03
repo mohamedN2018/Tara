@@ -15,6 +15,8 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options) -> None:
+        import gatherings.handlers  # noqa: F401
+
         import posts.handlers  # noqa: F401 - registers @on_event handlers
         from posts.models import ProcessedEvent
         from tara_events.worker import run_worker

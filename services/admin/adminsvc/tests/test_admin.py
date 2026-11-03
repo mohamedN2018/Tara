@@ -9,7 +9,7 @@ from django.test import override_settings
 from django.urls import reverse
 
 from adminsvc import identity_client
-from adminsvc.models import AuditLog, FeatureFlag
+from adminsvc.models import AuditEntry, FeatureFlag
 from tara_common.checks import production_safety_check
 from tara_common.exceptions import TaraAPIError
 
@@ -101,8 +101,9 @@ def test_role_grant_and_revoke_go_through_identity_and_are_audited(client_for, i
 
     assert admin.delete(url, body, format="json").status_code == 200
     assert role not in identity.roles[target]
-    actions = set(AuditLog.objects.filter(target=target).values_list("action", flat=True))
-    assert actions == {"role.grant", "role.revoke"}
+    # Identity owns the decision, so its account.role.* events audit it (see
+    # test_audit.py); admin writing its own row too would double every entry.
+    assert not AuditEntry.objects.filter(target_id=target).exists()
 
 
 def test_retired_roles_are_rejected(client_for, identity):
@@ -160,7 +161,7 @@ def test_identity_outage_is_reported_not_swallowed(client_for, monkeypatch):
         reverse("adminsvc:roles"), {"account_id": _acct(), "role": "analyst"}, format="json"
     )
     assert resp.status_code == 503
-    assert not AuditLog.objects.exists()
+    assert not AuditEntry.objects.exists()
 
 
 SHARED_SECRET = "shared-internal-secret-every-service-holds-0123456789"
@@ -213,7 +214,7 @@ def test_identity_client_refuses_to_call_without_its_secret(client_for, monkeypa
     )
     assert resp.status_code == 503
     assert captured["calls"] == 0  # never falls back to the shared secret
-    assert not AuditLog.objects.exists()
+    assert not AuditEntry.objects.exists()
 
 
 @pytest.mark.parametrize("status", [401, 403])
@@ -224,7 +225,7 @@ def test_identity_refusing_the_service_token_is_a_503(client_for, monkeypatch, s
     )
     assert resp.status_code == 503
     assert resp.json()["error"]["code"] == "dependency_unavailable"
-    assert not AuditLog.objects.exists()
+    assert not AuditEntry.objects.exists()
 
 
 def test_admin_deploy_check_requires_the_admin_identity_secret(settings):
@@ -292,8 +293,12 @@ def test_health_poll_keeps_only_the_newest_snapshots(client_for, monkeypatch, se
     newest_before = set(
         ServiceHealthSnapshot.objects.order_by("-checked_at").values_list("id", flat=True)[:2]
     )
+    from adminsvc.tasks import poll_service_health
+
+    poll_service_health()  # the beat task polls; the API only reads (8.11)
     resp = client_for(_acct(), roles=["admin"]).get(reverse("adminsvc:service-health"))
     assert resp.status_code == 200
+    assert resp.json()["data"]["services"][0]["status"] == "unreachable"
     kept = ServiceHealthSnapshot.objects.filter(service="identity")
     assert kept.count() == 3
     assert kept.filter(status="unreachable").count() == 1  # this poll's row survives

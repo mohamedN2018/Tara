@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/gathering.reminder.v1.json",
+  "title": "gathering.reminder v1 payload",
+  "description": "A reminder window opened, sent exactly once per event and window. 24h: host, going and interested; 1h: host and going. Chunks of at most 500.",
+  "type": "object",
+  "properties": {
+    "gathering_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "host_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "window": {
+      "type": "string",
+      "enum": [
+        "24h",
+        "1h"
+      ]
+    },
+    "starts_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "recipients": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "maxItems": 500
+    },
+    "chunk": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "chunks": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "required": [
+    "gathering_id",
+    "host_id",
+    "window",
+    "starts_at",
+    "recipients",
+    "chunk",
+    "chunks"
+  ],
+  "additionalProperties": false
+}

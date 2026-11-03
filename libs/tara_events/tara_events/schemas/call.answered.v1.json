@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/call.answered.v1.json",
+  "title": "call.answered v1 payload",
+  "description": "`account` accepted the call (the first answer makes it active). Sent to every member. Ids and enums only (roadmap 3.7).",
+  "type": "object",
+  "properties": {
+    "call_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "conversation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "audio",
+        "video"
+      ]
+    },
+    "account": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "recipients": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "maxItems": 512
+    }
+  },
+  "required": [
+    "call_id",
+    "conversation_id",
+    "kind",
+    "account",
+    "recipients"
+  ],
+  "additionalProperties": false
+}

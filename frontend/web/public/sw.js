@@ -111,6 +111,11 @@ const TEXT = {
     "listing.inquiry": "لديك استفسار جديد عن إعلانك",
     "page.follow": "لصفحتك متابع جديد",
     "ad.review": "تمت مراجعة إعلانك",
+    "call.missed": "مكالمة فائتة",
+    ringVoice: "مكالمة صوتية واردة",
+    ringVideo: "مكالمة فيديو واردة",
+    missedVoice: "مكالمة صوتية فائتة",
+    missedVideo: "مكالمة فيديو فائتة",
   },
   en: {
     title: "Tara",
@@ -128,6 +133,11 @@ const TEXT = {
     "listing.inquiry": "Someone asked about your listing",
     "page.follow": "Your page has a new follower",
     "ad.review": "Your ad was reviewed",
+    "call.missed": "Missed call",
+    ringVoice: "Incoming voice call",
+    ringVideo: "Incoming video call",
+    missedVoice: "Missed voice call",
+    missedVideo: "Missed video call",
   },
 };
 
@@ -190,12 +200,81 @@ function safePath(url) {
   }
 }
 
+// ---- Calls (push-only ring path) ---------------------------------------------
+//
+// A ring is tagged "call:<id>". Answering, declining or the call ending sends
+// `call.clear` with the same tag (it closes the ring on every device); a missed
+// call replaces the ring with "Missed call" under the same tag.
+
+const CALL_KINDS = new Set(["call.ring", "call.clear", "call.missed"]);
+
+async function closeTagged(tag) {
+  if (!tag) return 0;
+  const shown = await self.registration.getNotifications({ tag });
+  shown.forEach((n) => n.close());
+  return shown.length;
+}
+
+async function handleCall(data) {
+  const tag = typeof data.tag === "string" && data.tag.startsWith("call:") ? data.tag : "";
+  if (!tag) return;
+  const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  windows.forEach((client) =>
+    client.postMessage({ type: "tara.call", kind: data.kind, call_id: data.call_id, conversation_id: data.conversation_id }),
+  );
+  if (data.kind === "call.clear") {
+    await closeTagged(tag);
+    return;
+  }
+  const lang = await language();
+  const text = TEXT[lang];
+  const video = data.call_kind === "video";
+  if (data.kind === "call.ring") {
+    // An open, focused Tara window rings in the page itself (CallOverlay).
+    const focused = windows.find((client) => client.focused && client.visibilityState === "visible");
+    if (focused) return;
+    await self.registration.showNotification(text.title, {
+      body: video ? text.ringVideo : text.ringVoice,
+      icon: "/icons/icon-192.png",
+      badge: "/icons/badge-96.png",
+      tag,
+      renotify: true,
+      requireInteraction: true,
+      vibrate: [400, 200, 400, 200, 400],
+      lang,
+      dir: lang === "ar" ? "rtl" : "ltr",
+      data: { url: safePath(data.url) },
+    });
+    return;
+  }
+  // Missed: replaces the ring under the same tag. A focused window already
+  // shows it live (the in-app "missed call" notification).
+  const focused = windows.find((client) => client.focused && client.visibilityState === "visible");
+  if (focused) {
+    await closeTagged(tag);
+    return;
+  }
+  await self.registration.showNotification(text.title, {
+    body: video ? text.missedVideo : text.missedVoice,
+    icon: "/icons/icon-192.png",
+    badge: "/icons/badge-96.png",
+    tag,
+    lang,
+    dir: lang === "ar" ? "rtl" : "ltr",
+    data: { url: safePath(data.url) },
+  });
+}
+
 self.addEventListener("push", (event) => {
   let data = {};
   try {
     data = event.data?.json() ?? {};
   } catch {
     // Show the generic text.
+  }
+  if (CALL_KINDS.has(data.kind)) {
+    event.waitUntil(handleCall(data));
+    return;
   }
   event.waitUntil(
     (async () => {

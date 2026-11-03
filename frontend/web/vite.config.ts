@@ -31,6 +31,8 @@ export default defineConfig({
         manualChunks(id) {
           if (!id.includes("node_modules")) return;
           if (id.includes("lucide")) return "icons";
+          // Calls only: fetched with the first call, never on page load.
+          if (id.includes("livekit-client") || id.includes("@livekit")) return "livekit";
           if (id.includes("/vue") || id.includes("pinia") || id.includes("@intlify") || id.includes("vue-i18n")) {
             return "vue";
           }

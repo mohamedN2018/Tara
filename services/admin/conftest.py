@@ -30,19 +30,25 @@ def _isolated_settings(settings):
     return settings
 
 
-def make_access_token(account_id: str, roles: list[str] | None = None) -> str:
+def make_access_token(
+    account_id: str, roles: list[str] | None = None, caps: list[str] | None = None
+) -> str:
+    """``caps=None`` leaves the claim out, like a token minted before 8.12."""
     now = int(time.time())
+    claims = {
+        "sub": str(account_id),
+        "type": "access",
+        "scope": "user",
+        "roles": roles or [],
+        "iss": "tara-identity",
+        "aud": "tara",
+        "iat": now,
+        "exp": now + 900,
+    }
+    if caps is not None:
+        claims["caps"] = caps
     return jwt.encode(
-        {
-            "sub": str(account_id),
-            "type": "access",
-            "scope": "user",
-            "roles": roles or [],
-            "iss": "tara-identity",
-            "aud": "tara",
-            "iat": now,
-            "exp": now + 900,
-        },
+        claims,
         _PRIVATE_PEM,
         algorithm="RS256",
         headers={"kid": "test-key"},
@@ -53,9 +59,10 @@ def make_access_token(account_id: str, roles: list[str] | None = None) -> str:
 def client_for():
     from rest_framework.test import APIClient
 
-    def _make(account_id: str, roles: list[str] | None = None):
+    def _make(account_id: str, roles: list[str] | None = None, caps: list[str] | None = None):
         c = APIClient()
-        c.credentials(HTTP_AUTHORIZATION=f"Bearer {make_access_token(account_id, roles)}")
+        token = make_access_token(account_id, roles, caps)
+        c.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
         return c
 
     return _make

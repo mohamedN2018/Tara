@@ -5,12 +5,15 @@
 import {
   AtSign,
   Bell,
+  CalendarDays,
   Flag,
   Heart,
   type LucideIcon,
   Megaphone,
   MessageCircle,
   MessageSquare,
+  Phone,
+  PhoneMissed,
   Share2,
   ShoppingBag,
   UserCheck,
@@ -30,10 +33,17 @@ const KIND_ICONS: Record<string, LucideIcon> = {
   "friend.accepted": UserCheck,
   follow: UserPlus,
   message: MessageCircle,
+  call: Phone,
+  "call.missed": PhoneMissed,
   "listing.status": ShoppingBag,
   "listing.inquiry": ShoppingBag,
   "page.follow": Flag,
   "ad.review": Megaphone,
+  "gathering.invite": CalendarDays,
+  "gathering.reminder": CalendarDays,
+  "gathering.update": CalendarDays,
+  "gathering.cancel": CalendarDays,
+  "gathering.rsvp": CalendarDays,
 };
 
 export const iconFor = (kind: string): LucideIcon => KIND_ICONS[kind] ?? Bell;
@@ -77,7 +87,16 @@ export function notificationText(
     const statusKey = `market.statuses.${status}`;
     return t(key, { status: te(statusKey) ? t(statusKey) : status });
   }
+  if (n.kind === "call.missed" && n.data?.call_kind === "video") {
+    return t("notifications.kinds.call_missed_video", { name });
+  }
+  if (n.kind === "gathering.reminder" && n.data?.window === "1h") {
+    return t("notifications.kinds.gathering_reminder_hour");
+  }
   const others = othersCount(n);
+  if (n.kind === "gathering.rsvp" && others === 0 && n.data?.status === "interested") {
+    return t("notifications.kinds.gathering_rsvp_interested", { name });
+  }
   if (n.kind === "message" && others === 0) {
     // One sender, several messages (`message_count`); or a preview that is blank:
     // an attachment, or a message edited or deleted since.
@@ -112,6 +131,7 @@ export function urlFor(n: Notification): string {
   if (type === "post" && id) return `/posts/${id}`;
   if (type === "conversation" && id) return `/messages/${id}`;
   if (type === "listing" && id) return `/marketplace/${id}`;
+  if (type === "gathering" && id) return `/events/${id}`;
   if (n.actor_id) return `/u/id/${n.actor_id}`;
   return "/notifications";
 }

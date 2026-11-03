@@ -28,6 +28,10 @@ def on_moderation_actioned(event: EventEnvelope) -> None:
         services.apply_moderation(p["target_id"], p.get("action", ""))
     elif p.get("target_type") == "comment":
         services.apply_comment_moderation(p["target_id"], p.get("action", ""))
+    elif p.get("target_type") == "gathering":
+        from gatherings.services import apply_moderation as apply_gathering_moderation
+
+        apply_gathering_moderation(p["target_id"], p.get("action", ""))
 
 
 @on_event("post.deleted")  # also emitted when moderation removes a post

@@ -92,6 +92,9 @@ Events are **never** published directly inside the business transaction. Instead
 | `account.suspended` | account | reason, until? | Profile, Graph, Post, Chat (restrict) |
 | `session.created` | session | device, ip_region | Notification (new-login alert), Security |
 | `session.revoked` | session | — | Realtime (drop sockets) |
+| `account.role.granted` | account | account_id, role; `actor_id` = the granting admin; `correlation_id` = admin's edge request id. Emitted only when a grant is new; behind `IDENTITY_EMIT_AUDIT_EVENTS` | Admin (audit log) |
+| `account.role.revoked` | account | account_id, role (as above) | Admin (audit log) |
+| `capability.matrix.changed` | role name | role, capability, state (`grant`/`revoke`/`default`), previous (same values). One event per changed cell; a no-op change emits nothing | Admin (audit log) |
 
 ### Profile & Pages
 | Event | Subject | Key payload | Consumers |
@@ -133,6 +136,22 @@ A block ends every edge between the two accounts in the same transaction: graph 
 | `user.mentioned` | post | recipient, actor, post_id, comment_id (only readers who can open the post) | Notification |
 | `post.reported` | post | post_id, reporter, reason, owner_id (the post author; additive, v1). Emitted once per reporter per post, and only when the reporter can see the post | Moderation |
 
+### Events (post service `gatherings` app, roadmap 1.13)
+Schemas: `libs/tara_events/tara_events/schemas/gathering.*.v1.json`. Ids, enums and times only: never the title, description, place or link. Recipient lists are chunked (at most 500 ids per event, with `chunk` and `chunks`); a consumer that only needs the event's state reads chunk 0. Every row is written in the same transaction as the state change. Partition key `gathering:<id>`.
+
+| Event | Subject | Key payload | Consumers |
+|-------|---------|-------------|-----------|
+| `gathering.created` | gathering | gathering_id, host_id, host_type, audience (`public`/`friends`/`invite_only`), status, location_type (`place`/`online`), starts_at, ends_at, capacity, cover_media_id | (search in 1.15) |
+| `gathering.updated` | gathering | as `gathering.created`, plus changed[] (edited fields), notify[] (the time or place fields among them) and recipients[] (going and interested, only when notify[] is not empty). Also emitted with changed=[`moderation_status`] when an overturned removal restores the event | Notification (`gathering.update` when notify[] is set) |
+| `gathering.cancelled` | gathering | as `gathering.created`, plus recipients[] (going and interested) | Notification (`gathering.cancel`) |
+| `gathering.deleted` | gathering | gathering_id, host_id, by (`moderation` when a moderator removed it; absent for the host's delete) | Notification (purges `gathering:<id>`) |
+| `gathering.rsvp` | gathering | gathering_id, host_id, account_id, status (`going`/`interested`/`not_going`, null when taken back), previous_status, going_count, interested_count. Only a real change | Notification (`gathering.rsvp` to the host, aggregated per event, for a new going or interested) |
+| `gathering.invited` | gathering | gathering_id, host_id, invitee_ids[] (newly invited friends only, at most 50) | Notification (`gathering.invite`) |
+| `gathering.reminder` | gathering | gathering_id, host_id, window (`24h`: host, going and interested; `1h`: host and going), starts_at, recipients[]. Once per event and window (`gathering_reminder_log`); a new start time re-arms both | Notification (`gathering.reminder`) |
+| `gathering.reported` | gathering | gathering_id, reporter, reason (an enum: spam, scam, hate, violence, nudity, harassment, false_information, other), owner_id (the host). Once per reporter per event, and only when the reporter can see it | Moderation (`gathering` target) |
+
+Post consumes `moderation.actioned` with `target_type=gathering` (`remove` hides the event everywhere and emits `gathering.deleted`; `approve` restores it) and `user.blocked` (the blocked side loses its RSVP and invite on the other's events), and `friendship.removed` (on friends-only events hosted by either side, the other side loses its RSVP and invite, freeing the seat; invite-only and public events are untouched; graph is re-checked first so a stale event after a re-friend drops nothing; no notification). An event's cover is bound in media to the event id, restricted, and media asks post's `/internal/v1/posts/<id>/visibility/` for it like for post media.
+
 ### Feed
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
@@ -158,6 +177,19 @@ A block ends every edge between the two accounts in the same transaction: graph 
 | `conversation.member.changed` | conversation | conversation_id, action (`created`, `added`, `removed`, `renamed`, `role_changed`, `pinned`, `unpinned`, `blocked`), recipients[], revoked[] (additive, v1: accounts that just lost access; Realtime drops their live subscriptions). `blocked` is emitted by Chat when it applies `user.blocked`, once per shared DM or marketplace thread, with no recipients so the blocked side is not told | Realtime |
 | `user.presence.changed` | account | status, last_seen? (privacy-filtered). Not a bus event: Realtime pushes `presence.changed` frames only to DM peers and friends, and a block seen on the bus keeps the pair hidden even while Chat's copy of the block lags | Realtime |
 
+### Calls (chat `calls` app, roadmap 3.7 / 3.8)
+Schemas: `libs/tara_events/tara_events/schemas/call.*.v1.json`. Ids and enums only. Every payload has `call_id`, `conversation_id` and `kind` (`audio`/`video`). Emitted only while calls are on (LiveKit key and secret set), in the same transaction as the state change.
+
+| Event | Subject | Key payload | Consumers |
+|-------|---------|-------------|-----------|
+| `call.started` | call | conversation_type, initiator, recipients[] (the callees to ring: active members except the caller; in a group never someone blocked either way with the caller), ring_expires_at | Realtime (`call.ringing` to every callee device, `call.updated` to the caller's other devices), Notification (push-only ring, tag `call:<id>`, no in-app row) |
+| `call.answered` | call | account (who accepted; a callee's first accept makes the call active), recipients[] (members and participants) | Realtime (`call.answered`), Notification (clears the ring on the answerer's other devices) |
+| `call.declined` | call | account, recipients[]. In a DM, `call.ended` (reason `declined`) follows in the same transaction | Realtime, Notification (clears the decliner's ring) |
+| `call.ended` | call | reason (`hangup`, `declined`, `left`, `lost`; `revoked` when only a removed member's seat ended, with just that account in recipients[]), duration_s, ringing[] (accounts whose ring must clear), recipients[] | Realtime (`call.ended`), Notification (clears the ring for ringing[]) |
+| `call.missed` | call | initiator, missed[] (accounts that never answered), final (true: nobody answered or the caller gave up; false: group members who missed a call that went on), reason (`timeout`, `cancelled`, `ended`), recipients[] | Realtime (`call.missed`), Notification (in-app `call.missed` row per missed account, and a push that replaces the ring) |
+
+The call-log line in the conversation is an ordinary `message.created` with `type=system` and a code as the body (`call:missed:<kind>`, `call:declined:<kind>`, `call:ended:<kind>:<seconds>`). Notification skips `system` messages, because a missed call already has its own kind.
+
 ### Marketplace
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
@@ -181,15 +213,16 @@ A block ends every edge between the two accounts in the same transaction: graph 
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
 | `report.created` | report | target_type, target_id | Moderation (own queue) |
-| `moderation.actioned` | case | target, action (remove/restrict/warn/shadow/dismiss/approve). An overturned appeal emits it again only with the inverse of the decision: `approve` for removed content (post/comment/message/listing), and only when no other case's removal of that target still stands. Overturning a warning, or a user or page decision, emits nothing (audit log only) | Post/Chat/Marketplace/Profile (enforce), Notification, Audit |
+| `moderation.actioned` | case | target, action (remove/restrict/warn/shadow/dismiss/approve). An overturned appeal emits it again only with the inverse of the decision: `approve` for removed content (post/comment/message/listing), and only when no other case's removal of that target still stands. Overturning a warning, or a user or page decision, emits nothing (audit log only). `appeal.resolved` records which appeal caused it | Post/Chat/Marketplace/Profile (enforce), Notification, Admin (audit log) |
 | `appeal.created` | appeal | case_id | Moderation |
+| `appeal.resolved` | appeal | appeal_id, case_id, target_type, status (`upheld`/`overturned`), reversal (`approve` or null). Never the appeal text. Behind `MODERATION_EMIT_AUDIT_EVENTS` | Admin (audit log) |
 
 ### Advertisement
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
 | `ad.impression.recorded` | ad | placement, viewer_bucket | Analytics, Billing ledger |
 | `ad.click.recorded` | ad | placement, viewer_bucket | Analytics, Billing ledger |
-| `ad.review.decided` | creative | decision | Ads (activate), Notification |
+| `ad.review.decided` | creative | decision; `actor_id` = the reviewer | Ads (activate), Notification, Admin (audit log) |
 
 > Impression/click events are **deduplicated** (event_id) and **rate-limited**
 > at ingest, and travel on the firehose topic, never the transactional path.

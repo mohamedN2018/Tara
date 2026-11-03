@@ -71,11 +71,22 @@ _KINDS = [
         window=timedelta(days=7),
         push_on_merge=True,
     ),
+    # Calls (3.7). `call` is the push-only ring: no rows, but its push setting
+    # silences ringing. `call.missed` is the in-app row; its own push is off by
+    # default because the ring push is replaced by a missed-call push instead.
+    Kind("call", "messages", in_app=False, push=True),
+    Kind("call.missed", "messages", push=False),
     Kind("listing.status", "marketplace"),
     # Registered ahead of their producers (consumer first, emission later).
     Kind("listing.inquiry", "marketplace", aggregate=PER_SUBJECT),
     Kind("page.follow", "pages", aggregate=PER_SUBJECT),
     Kind("ad.review", "ads"),
+    # Events (gatherings in post, 1.13). New RSVPs reach the host as one row per event.
+    Kind("gathering.invite", "social"),
+    Kind("gathering.reminder", "social"),
+    Kind("gathering.update", "social"),
+    Kind("gathering.cancel", "social"),
+    Kind("gathering.rsvp", "social", aggregate=PER_SUBJECT),
 ]
 
 KINDS: dict[str, Kind] = {k.name: k for k in _KINDS}
@@ -96,6 +107,8 @@ DATA_KEYS = frozenset(
         "message_id",
         "message_count",
         "message_type",
+        "call_id",
+        "call_kind",
         "request_id",
         "listing_id",
         "status",
@@ -103,6 +116,8 @@ DATA_KEYS = frozenset(
         "page_handle",
         "campaign_id",
         "decision",
+        "gathering_id",
+        "window",
     }
 )
 MAX_DATA_BYTES = 1024
@@ -191,6 +206,8 @@ def build_url(
         return f"{url}?comment={tid}" if target == "comment" and tid else url
     if subject == "conversation" and sid:
         return f"/messages/{sid}"
+    if subject == "gathering" and sid:
+        return f"/events/{sid}"
     if subject == "listing" and sid:
         return f"/marketplace/{sid}"
     if subject == "page" and sid:

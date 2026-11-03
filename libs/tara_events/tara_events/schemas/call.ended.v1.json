@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/call.ended.v1.json",
+  "title": "call.ended v1 payload",
+  "description": "A call ended, or (reason `revoked`) a removed member's seat ended, with only them as recipients. `ringing` lists accounts whose ring must clear. Ids and enums only (roadmap 3.7).",
+  "type": "object",
+  "properties": {
+    "call_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "conversation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "audio",
+        "video"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "hangup",
+        "declined",
+        "cancelled",
+        "timeout",
+        "left",
+        "lost",
+        "revoked",
+        "ended"
+      ]
+    },
+    "duration_s": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "ringing": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "maxItems": 512
+    },
+    "recipients": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "maxItems": 512
+    }
+  },
+  "required": [
+    "call_id",
+    "conversation_id",
+    "kind",
+    "reason",
+    "duration_s",
+    "ringing",
+    "recipients"
+  ],
+  "additionalProperties": false
+}

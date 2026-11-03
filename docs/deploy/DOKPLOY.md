@@ -164,6 +164,47 @@ Add a bucket lifecycle rule that deletes objects under `staging/` after one day.
 Uploads now land there first. If an upload is abandoned, its staging object is
 never served, but it does take up space.
 
+**Step 1 events (1.13 backend, 1.14 web).**
+
+- **New variables:** none. **New containers:** none. The post worker's
+  embedded beat gains `gatherings.tick` (every 5 minutes: reminders about
+  24 h and 1 h before an event, once each, and marking ended events).
+- **Order (roadmap 3.3, new event types):** deploy moderation and
+  notification first, so their queues bind `gathering.reported` and the
+  `gathering.*` notification events before post emits them. There is no
+  alternate exchange yet (1.0g), so an event published before those queues
+  are bound is dropped: on a fresh single deploy nothing is lost (no events
+  exist yet), but on an existing install deploy the consumers first.
+- **Migrations (additive, run at boot):** post `gatherings 0001_initial`.
+- **Edge:** `/api/v1/events` is routed to post (nginx in `frontend/web/nginx.conf`,
+  and the Traefik labels in `infra/compose/docker-compose.yml`).
+- **Recreate together:** `post`, `post-worker`, `post-consumer`, `moderation`,
+  `moderation-consumer`, `notification`, `notification-consumer` and `web`.
+
+**Step 8 foundations (8.1 audit, 8.11 monitoring, 8.12 capabilities).**
+
+- **New containers:** `admin-worker` (Celery with embedded beat: outbox relay,
+  health poll every 30 s, platform statistics every 5 min; 256 MB) and
+  `admin-consumer` (the unified audit log; 192 MB). Keep `admin-worker` at
+  one replica, because beat is embedded.
+- **New variables, all optional:** `IDENTITY_EMIT_AUDIT_EVENTS` and
+  `MODERATION_EMIT_AUDIT_EVENTS` (default `true`), and on admin
+  `ADMIN_HEALTH_POLL_SECONDS` (30), `ADMIN_STATS_POLL_SECONDS` (300),
+  `ADMIN_STATS_TIMEOUT` (5), `ADMIN_AUDIT_EXPORT_MAX_ROWS` (10000),
+  `ADMIN_AUDIT_EXPORT_RATE` (`10/min`) and `ADMIN_BFF_READY_URL`.
+- **Order (roadmap 3.3, new event types):** on an existing install, deploy
+  this release with both `*_EMIT_AUDIT_EVENTS=false`, so `admin-consumer`
+  declares its `admin.events` queue before anything emits, then set them to
+  `true` and redeploy identity and moderation. On a fresh install leave them on.
+- **Migrations (additive, run at boot):** identity `0004_rolecapability`,
+  admin `0003` (audit entries, statistics, outbox) and `0004`, which copies the
+  old admin audit rows into the new log once.
+- **Tokens:** access tokens now carry a sorted `caps` claim and no longer carry
+  the email. Tokens issued before the deploy still work for up to 15 minutes:
+  services derive their capabilities from their roles.
+- **Edge:** nginx now sets `X-Request-Id` itself and drops a client's
+  `X-Geo-Region`, so a client cannot choose what reaches the audit log.
+
 ### Backups
 
 `scripts/backup.sh` saves all databases, media and the JWT keys. Run it daily from
@@ -188,3 +229,73 @@ To restore, start `postgres` and `minio` on empty volumes, run
   `S3_PUBLIC_ENDPOINT_URL`.
 - **Kubernetes** manifests in `infra/k8s/` have never run on a cluster and need work
   first. See `docs/architecture/project-review-and-plan.md`.
+
+## 7. Calls (LiveKit)
+
+Voice and video calls (roadmap 3.7, 3.8) run on a `livekit` container
+(`livekit/livekit-server:v1.13.10`, config in `infra/livekit/livekit.yaml`, 512 MB).
+It starts only with `COMPOSE_PROFILES=calls`. Chat turns calls on only when
+`LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` are both set. With either one empty,
+every call endpoint answers `503 calls_unavailable` and the SPA hides its call
+buttons. `scripts/gen-dokploy-env.sh` generates the key and secret and sets the
+profile.
+
+**Variables** (names only, values in Dokploy). `LIVEKIT_API_KEY` and
+`LIVEKIT_API_SECRET` go to chat and livekit; the secret must be at least 32
+characters, and it signs join tokens and webhooks. `LIVEKIT_URL`
+(`wss://<domain>`) is what browsers connect to. `LIVEKIT_INTERNAL_URL`
+(`http://livekit:7880`) is what chat uses to kick participants and close rooms.
+The livekit container also reads `LIVEKIT_NODE_IP`, the server's public IP; if
+it is empty, LiveKit finds the IP over STUN at boot. It reads
+`LIVEKIT_TURN_DOMAIN` (default `DOMAIN`) and `LIVEKIT_TURN_ENABLED` (default
+`true`) as well. Optional chat settings, with their defaults:
+
+| Variable | Default |
+|---|---|
+| `CALL_RING_TIMEOUT_SECONDS` | 45 |
+| `CALL_TOKEN_TTL_SECONDS` | 600 (capped at 600) |
+| `CALL_MAX_PARTICIPANTS` | 16 |
+| `CALL_RECONCILE_AFTER_SECONDS` | 120 |
+| `CALL_START_RATE` | `20/min` |
+| `LIVEKIT_API_TIMEOUT` | 3 |
+
+**Ports.** Signalling uses no extra port: the `web` edge proxies `/rtc`
+(WebSocket) to `livekit:7880`, behind the same TLS as the site. Media goes
+straight to the host, so open these in the host firewall or cloud security group:
+
+| Port | Use |
+|---|---|
+| UDP 50000 | RTC media; every session is multiplexed on this one port |
+| TCP 7881 | RTC over TCP, the fallback when UDP is blocked |
+| UDP 3478 | TURN/UDP, a relay for clients behind strict NATs |
+
+**TURN.** LiveKit's built-in TURN server listens on UDP 3478 with
+`turn.domain = LIVEKIT_TURN_DOMAIN`. Join tokens give clients its address, so
+no TURN credentials ship in the bundle. The relay range (30000 to 40000) only
+carries traffic between the TURN server and the SFU inside the container, so
+you do not open it. TURN over TLS on 443 is deferred, because Traefik owns 443.
+Behind a strict NAT, with UDP 3478 blocked as well, signalling still connects
+but media does not. Test once from a phone on mobile data (roadmap 3.7).
+
+**Webhook.** LiveKit posts room events to
+`http://chat:8000/internal/v1/livekit/webhook/` on the internal network. The
+edge never routes `/internal/`, and chat checks the webhook's signature against
+the raw body (the official SDK's `WebhookReceiver`). Both gates apply. If an
+edge route to `/internal/` were ever added, the signature would still reject
+forged calls.
+
+**Upgrading an existing install.** The call events (`call.started`,
+`call.answered`, `call.declined`, `call.ended` and `call.missed`) are new
+(roadmap 3.3). Deploy this release once with `LIVEKIT_API_KEY` and
+`LIVEKIT_API_SECRET` empty, so that realtime-bridge and notification-consumer
+declare their bindings before anything emits. Then set the variables, add
+`calls` to `COMPOSE_PROFILES` and redeploy. Chat migration `calls/0001` is
+additive. The chat worker's beat runs `calls.sweep` every 5 s (unanswered calls
+become missed after 45 s) and `calls.reconcile` every 60 s (it asks LiveKit
+about quiet active calls).
+
+**Check it works:**
+1. `GET /api/v1/calls/config/` returns `enabled: true`.
+2. Start a call between two accounts. The browser opens a WebSocket to
+   `wss://<domain>/rtc`.
+3. If signalling connects but there is no audio, the media ports are closed.

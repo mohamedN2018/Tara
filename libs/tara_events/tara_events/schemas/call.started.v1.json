@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/call.started.v1.json",
+  "title": "call.started v1 payload",
+  "description": "A call started ringing. `recipients` are the callees to ring; the initiator's other devices learn it from `initiator`. Ids and enums only (roadmap 3.7).",
+  "type": "object",
+  "properties": {
+    "call_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "conversation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "audio",
+        "video"
+      ]
+    },
+    "conversation_type": {
+      "type": "string",
+      "enum": [
+        "dm",
+        "group",
+        "marketplace"
+      ]
+    },
+    "initiator": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "recipients": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "maxItems": 512
+    },
+    "ring_expires_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "call_id",
+    "conversation_id",
+    "kind",
+    "conversation_type",
+    "initiator",
+    "recipients",
+    "ring_expires_at"
+  ],
+  "additionalProperties": false
+}

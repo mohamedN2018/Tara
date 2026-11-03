@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/gathering.deleted.v1.json",
+  "title": "gathering.deleted v1 payload",
+  "description": "The host deleted the event (no by), or moderation removed it (by=moderation). Consumers drop it and its notifications.",
+  "type": "object",
+  "properties": {
+    "gathering_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "host_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "by": {
+      "type": "string",
+      "enum": [
+        "moderation"
+      ]
+    }
+  },
+  "required": [
+    "gathering_id",
+    "host_id"
+  ],
+  "additionalProperties": false
+}

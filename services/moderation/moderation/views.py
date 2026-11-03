@@ -1,4 +1,4 @@
-"""Moderation HTTP API. Queue/action endpoints require the moderator role (RBAC)."""
+"""Moderation HTTP API. Queue/action endpoints require moderation capabilities (8.12)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from rest_framework.views import APIView
 
 from tara_common.exceptions import TaraAPIError
 from tara_common.pagination import CursorPagination
-from tara_common.permissions import IsModerator
+from tara_common.permissions import HasCapability
 from tara_common.responses import data_response
 
 from . import services
@@ -45,7 +45,7 @@ def _paginate(request, queryset, serializer_cls, paginator_cls=CursorPagination)
 
 
 class ReportsView(APIView):
-    permission_classes = [IsModerator]
+    permission_classes = [HasCapability("moderation.case.view")]
 
     @extend_schema(responses={200: ReportSerializer(many=True)}, tags=["moderation"])
     def get(self, request: Request) -> Response:
@@ -83,7 +83,7 @@ class ManualReportView(APIView):
 
 
 class CasesView(APIView):
-    permission_classes = [IsModerator]
+    permission_classes = [HasCapability("moderation.case.view")]
 
     @extend_schema(responses={200: CaseSerializer(many=True)}, tags=["moderation"])
     def get(self, request: Request) -> Response:
@@ -96,7 +96,7 @@ class CasesView(APIView):
 
 
 class CaseAssignView(APIView):
-    permission_classes = [IsModerator]
+    permission_classes = [HasCapability("moderation.case.act")]
 
     @extend_schema(responses={200: CaseSerializer}, tags=["moderation"])
     def post(self, request: Request, case_id: str) -> Response:
@@ -104,7 +104,7 @@ class CaseAssignView(APIView):
 
 
 class CaseActionView(APIView):
-    permission_classes = [IsModerator]
+    permission_classes = [HasCapability("moderation.case.act")]
 
     @extend_schema(request=ActionSerializer, responses={200: None}, tags=["moderation"])
     def post(self, request: Request, case_id: str) -> Response:
@@ -133,7 +133,7 @@ class CaseAppealView(APIView):
 class AppealsView(APIView):
     """The appeal queue: without it a moderator has no way to find an appeal's id."""
 
-    permission_classes = [IsModerator]
+    permission_classes = [HasCapability("moderation.appeal.view")]
 
     @extend_schema(responses={200: AppealSerializer(many=True)}, tags=["moderation"])
     def get(self, request: Request) -> Response:
@@ -144,7 +144,7 @@ class AppealsView(APIView):
 
 
 class AppealResolveView(APIView):
-    permission_classes = [IsModerator]
+    permission_classes = [HasCapability("moderation.appeal.resolve")]
 
     @extend_schema(request=AppealResolveSerializer, responses={200: None}, tags=["moderation"])
     def post(self, request: Request, appeal_id: str) -> Response:

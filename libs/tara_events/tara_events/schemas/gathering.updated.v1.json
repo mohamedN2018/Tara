@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/gathering.updated.v1.json",
+  "title": "gathering.updated v1 payload",
+  "description": "The host edited an event, or an overturned removal restored it. changed lists the edited fields; notify is the subset the people coming are told about (time or place), and only then are recipients (going and interested, never anyone blocked with the host) set, in chunks of at most 500.",
+  "type": "object",
+  "properties": {
+    "gathering_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "host_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "host_type": {
+      "type": "string",
+      "enum": [
+        "user",
+        "page"
+      ]
+    },
+    "audience": {
+      "type": "string",
+      "enum": [
+        "public",
+        "friends",
+        "invite_only"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "scheduled",
+        "cancelled",
+        "ended"
+      ]
+    },
+    "location_type": {
+      "type": "string",
+      "enum": [
+        "place",
+        "online"
+      ]
+    },
+    "starts_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ends_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "capacity": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
+    "cover_media_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "changed": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "title",
+          "description",
+          "starts_at",
+          "ends_at",
+          "timezone",
+          "location_type",
+          "location",
+          "online_url",
+          "cover_media_id",
+          "audience",
+          "capacity",
+          "moderation_status"
+        ]
+      }
+    },
+    "notify": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "title",
+          "description",
+          "starts_at",
+          "ends_at",
+          "timezone",
+          "location_type",
+          "location",
+          "online_url",
+          "cover_media_id",
+          "audience",
+          "capacity",
+          "moderation_status"
+        ]
+      }
+    },
+    "recipients": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "maxItems": 500
+    },
+    "chunk": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "chunks": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "required": [
+    "gathering_id",
+    "host_id",
+    "host_type",
+    "audience",
+    "status",
+    "location_type",
+    "starts_at",
+    "ends_at",
+    "capacity",
+    "cover_media_id",
+    "changed",
+    "notify",
+    "recipients",
+    "chunk",
+    "chunks"
+  ],
+  "additionalProperties": false
+}

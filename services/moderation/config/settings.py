@@ -102,6 +102,9 @@ TARA_EVENT_BROKER_URL = RABBITMQ_URL
 TARA_EVENT_EXCHANGE = os.getenv("TARA_EVENT_EXCHANGE", "tara.events")
 TARA_OUTBOX_MODEL = "moderation.OutboxEvent"
 TARA_EVENT_QUEUE = "moderation.events"
+# Emit appeal.resolved for admin's audit log. Roadmap 3.3 deploy order: ship
+# admin-consumer first with this off, then turn it on.
+MODERATION_EMIT_AUDIT_EVENTS = env_bool("MODERATION_EMIT_AUDIT_EVENTS", True)
 
 CELERY_BROKER_URL = RABBITMQ_URL or "memory://"
 CELERY_TASK_DEFAULT_QUEUE = f"{SERVICE_NAME}.tasks"

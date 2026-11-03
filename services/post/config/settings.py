@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "django_prometheus",
     "posts",
+    "gatherings",
 ]
 
 MIDDLEWARE = [
@@ -117,6 +118,8 @@ CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", not bool(RABBITM
 CELERY_BEAT_SCHEDULE = {
     "drain-outbox": {"task": "tara_events.publish_outbox", "schedule": 2.0},
     "purge-events": {"task": "tara_events.purge_events", "schedule": 3600.0},
+    # Event reminders (about 24 h and 1 h before; once each) and marking ended events.
+    "gatherings-tick": {"task": "gatherings.tick", "schedule": 300.0},
 }
 
 CORS_ALLOWED_ORIGINS = env_list("POST_CORS_ORIGINS", "http://localhost:5173")

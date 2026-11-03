@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/call.missed.v1.json",
+  "title": "call.missed v1 payload",
+  "description": "`missed` accounts never answered. `final`: the whole call was missed (nobody answered, or the caller gave up); otherwise group members who missed a call that went on. Ids and enums only (roadmap 3.7).",
+  "type": "object",
+  "properties": {
+    "call_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "conversation_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "audio",
+        "video"
+      ]
+    },
+    "initiator": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "missed": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "maxItems": 512
+    },
+    "final": {
+      "type": "boolean"
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "timeout",
+        "cancelled",
+        "ended"
+      ]
+    },
+    "recipients": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "maxItems": 512
+    }
+  },
+  "required": [
+    "call_id",
+    "conversation_id",
+    "kind",
+    "initiator",
+    "missed",
+    "final",
+    "reason",
+    "recipients"
+  ],
+  "additionalProperties": false
+}

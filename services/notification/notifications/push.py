@@ -23,6 +23,8 @@ from .models import Notification, NotificationDeliveryLog, NotificationPreferenc
 logger = logging.getLogger("tara.notification.push")
 
 TTL_SECONDS = 24 * 60 * 60
+# A ring delivered late is worse than none: the call is over by then.
+CALL_TTL_SECONDS = 60
 GONE_STATUSES = {404, 410}  # The browser dropped this subscription.
 MAX_SUBSCRIPTIONS_PER_ACCOUNT = 10
 
@@ -101,7 +103,9 @@ def _payload(notification: Notification, pref: NotificationPreference | None = N
     )
 
 
-def _send(token: PushDeviceToken, data: str) -> bool:
+def _send(
+    token: PushDeviceToken, data: str, *, ttl: int = TTL_SECONDS, headers: dict | None = None
+) -> bool:
     """True if the push service took it; False if the subscription is gone."""
     try:
         webpush(
@@ -109,8 +113,9 @@ def _send(token: PushDeviceToken, data: str) -> bool:
             data=data,
             vapid_private_key=settings.VAPID_PRIVATE_KEY,
             vapid_claims={"sub": settings.VAPID_SUBJECT},
-            ttl=TTL_SECONDS,
+            ttl=ttl,
             timeout=10,
+            headers=headers,
         )
     except WebPushException as exc:
         status = exc.response.status_code if exc.response is not None else None
@@ -168,3 +173,41 @@ def deliver(notification_id: str) -> str:
     status = "sent" if delivered else "expired"
     _log(notification, status)
     return status
+
+
+def deliver_call(recipient_id: str, data: dict) -> str:
+    """The push-only call path (roadmap 3.7): no notification row, no in-app list.
+
+    ``data`` rings (``call.ring``), clears (``call.clear``) or replaces the ring
+    with a missed call (``call.missed``). Every one carries ``tag: call:<id>``,
+    so a browser replaces the ringing notification instead of stacking another.
+    The ``call`` kind's push preference and quiet hours apply; the short TTL and
+    high urgency keep a ring from arriving after the call is over.
+    """
+    if not configured():
+        return "disabled"
+    tokens = list(
+        PushDeviceToken.objects.filter(
+            account_id=recipient_id, platform="web", subscription__isnull=False
+        )
+    )
+    if not tokens:
+        return "no_subscribers"
+    pref = NotificationPreference.objects.filter(account_id=recipient_id).first()
+    if not registry.channel_enabled(pref.prefs if pref else {}, "call", "push"):
+        return "muted"
+    if pref and in_quiet_hours(pref.quiet_hours):
+        return "quiet"
+    body = json.dumps(data)
+    delivered = 0
+    retry: RetryablePushError | None = None
+    for token in tokens:
+        try:
+            delivered += _send(token, body, ttl=CALL_TTL_SECONDS, headers={"Urgency": "high"})
+        except RetryablePushError as exc:
+            retry = exc
+        except WebPushException:
+            logger.info("call push refused by the push service")
+    if retry is not None:
+        raise retry
+    return "sent" if delivered else "expired"

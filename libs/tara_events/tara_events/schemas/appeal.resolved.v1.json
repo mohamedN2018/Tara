@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/appeal.resolved.v1.json",
+  "title": "appeal.resolved v1 payload",
+  "description": "A moderator resolved an appeal. Ids and enums only: never the appeal text.",
+  "type": "object",
+  "properties": {
+    "appeal_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "case_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "target_type": {
+      "type": "string",
+      "maxLength": 20
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "upheld",
+        "overturned"
+      ]
+    },
+    "reversal": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "approve",
+        null
+      ]
+    }
+  },
+  "required": [
+    "appeal_id",
+    "case_id",
+    "target_type",
+    "status",
+    "reversal"
+  ],
+  "additionalProperties": false
+}

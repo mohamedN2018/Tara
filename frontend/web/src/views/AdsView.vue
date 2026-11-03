@@ -23,7 +23,7 @@ const saving = ref(false);
 const formError = ref("");
 const form = ref({ name: "", budget: "", currency: "USD" });
 
-const isReviewer = computed(() => auth.roles.some((r) => r === "admin" || r === "ad_reviewer"));
+const isReviewer = computed(() => auth.can("ads.review"));
 
 async function load() {
   loading.value = true;

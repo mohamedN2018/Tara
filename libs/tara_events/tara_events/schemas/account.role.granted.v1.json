@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/account.role.granted.v1.json",
+  "title": "account.role.granted v1 payload",
+  "description": "Identity granted a platform role (new grants only). actor_id is the admin; correlation_id is admin's edge request id.",
+  "type": "object",
+  "properties": {
+    "account_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "admin",
+        "moderator",
+        "ad_reviewer",
+        "analyst"
+      ]
+    }
+  },
+  "required": [
+    "account_id",
+    "role"
+  ],
+  "additionalProperties": false
+}

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import F
 
@@ -28,6 +29,7 @@ ACTIONS_BY_TARGET: dict[str, frozenset[str]] = {
     "message": _CONTENT_ACTIONS,
     "listing": _CONTENT_ACTIONS,
     "listing_review": _CONTENT_ACTIONS,
+    "gathering": _CONTENT_ACTIONS,  # an event (post service, 1.13)
     "page": frozenset({"remove", "restrict", "warn", "dismiss"}),
     "user": frozenset({"restrict", "shadow", "warn", "dismiss"}),
 }
@@ -51,6 +53,7 @@ REVERSALS: dict[tuple[str, str], str] = {
         "message",
         "listing",
         "listing_review",
+        "gathering",
     )
 }
 
@@ -357,6 +360,22 @@ def resolve_appeal(appeal_id: str, moderator_id: str, status: str) -> Appeal:
                 },
                 actor_id=str(moderator_id),
             )
+        # An upheld appeal, or an overturn with nothing to reverse, emits no
+        # moderation.actioned, so without this event the decision is invisible
+        # outside moderation. Ids and enums only: never the appeal's text.
+        if settings.MODERATION_EMIT_AUDIT_EVENTS:
+            events.emit(
+                "appeal.resolved",
+                subject_id=str(appeal.id),
+                payload={
+                    "appeal_id": str(appeal.id),
+                    "case_id": str(case.id),
+                    "target_type": case.target_type,
+                    "status": status,
+                    "reversal": reversal,
+                },
+                actor_id=str(moderator_id),
+            )
     return appeal
 
 
@@ -368,6 +387,7 @@ _REPORT_EVENT_TARGETS = {
     "listing.reported": ("listing", "listing_id"),
     "message.reported": ("message", "message_id"),
     "marketplace.review.reported": ("listing_review", "review_id"),
+    "gathering.reported": ("gathering", "gathering_id"),
 }
 
 

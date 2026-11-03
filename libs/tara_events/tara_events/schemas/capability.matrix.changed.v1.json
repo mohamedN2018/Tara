@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/capability.matrix.changed.v1.json",
+  "title": "capability.matrix.changed v1 payload",
+  "description": "One role x capability cell changed. subject_id is the role name.",
+  "type": "object",
+  "properties": {
+    "role": {
+      "type": "string",
+      "enum": [
+        "admin",
+        "moderator",
+        "ad_reviewer",
+        "analyst"
+      ]
+    },
+    "capability": {
+      "type": "string",
+      "pattern": "^[a-z_]+(\\.[a-z_]+)+$",
+      "maxLength": 80
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "grant",
+        "revoke",
+        "default"
+      ]
+    },
+    "previous": {
+      "type": "string",
+      "enum": [
+        "grant",
+        "revoke",
+        "default"
+      ]
+    }
+  },
+  "required": [
+    "role",
+    "capability",
+    "state",
+    "previous"
+  ],
+  "additionalProperties": false
+}

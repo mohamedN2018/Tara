@@ -164,7 +164,7 @@ AUTH_LOGIN_TARGET_RATE=10/min
 # Google sign-in: paste the OAuth web client id (public) to turn it on.
 GOOGLE_CLIENT_ID=
 # Telegram phone verification: set the bot token and username to turn it on,
-# then run `python manage.py set_telegram_webhook` in the identity container.
+# then run 'python manage.py set_telegram_webhook' in the identity container.
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_BOT_USERNAME=
 TELEGRAM_WEBHOOK_SECRET=$(secret)
@@ -173,10 +173,26 @@ MARKETPLACE_AUTO_APPROVE=false
 ADS_AUTO_APPROVE=false
 # No ads serve until payment verification exists; ads refuses to boot with it on.
 ADS_SERVING_ENABLED=false
+# Audit events for admin's log (8.1). Upgrading an existing install: deploy once
+# with both false (admin-consumer declares its queue), then set them to true.
+IDENTITY_EMIT_AUDIT_EVENTS=true
+MODERATION_EMIT_AUDIT_EVENTS=true
 # Web Push. Keep these keys: replacing them invalidates every browser subscription.
 VAPID_PUBLIC_KEY=${VAPID_PUBLIC}
 VAPID_PRIVATE_KEY=${VAPID_PRIVATE}
 VAPID_SUBJECT=mailto:admin@${DOMAIN}
+# ---- Calls (LiveKit, roadmap 3.7) ------------------------------------------
+# Open TCP 7881, UDP 50000 and UDP 3478 on the host firewall before deploying
+# (docs/deploy/DOKPLOY.md, "Calls (LiveKit)"). Calls off: empty the key and the
+# secret, and remove "calls" from COMPOSE_PROFILES (it starts the livekit container).
+COMPOSE_PROFILES=calls
+LIVEKIT_API_KEY=API$(openssl rand -hex 6)
+LIVEKIT_API_SECRET=$(secret)
+LIVEKIT_URL=wss://${DOMAIN}
+LIVEKIT_INTERNAL_URL=http://livekit:7880
+# The server's public IP; empty lets LiveKit find it over STUN.
+LIVEKIT_NODE_IP=
+LIVEKIT_TURN_DOMAIN=${DOMAIN}
 WEB_CONCURRENCY=2
 LOG_LEVEL=INFO
 EOF

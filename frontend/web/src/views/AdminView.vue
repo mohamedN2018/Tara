@@ -3,6 +3,7 @@ import { Activity, Scale, ShieldAlert } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
+import AdminNav from "@/components/admin/AdminNav.vue";
 import FeatureFlagsPanel from "@/components/admin/FeatureFlagsPanel.vue";
 import RolesPanel from "@/components/admin/RolesPanel.vue";
 import AppShell from "@/components/layout/AppShell.vue";
@@ -17,7 +18,12 @@ import { useToastStore } from "@/stores/toasts";
 const { t, te } = useI18n();
 const toasts = useToastStore();
 const auth = useAuthStore();
-const isAdmin = computed(() => auth.roles.includes("admin"));
+// Each panel needs its own capability; the server enforces the same keys.
+const canMonitor = computed(() => auth.can("admin.monitor.view"));
+const canViewCases = computed(() => auth.can("moderation.case.view"));
+const canActOnCases = computed(() => auth.can("moderation.case.act"));
+const canViewAppeals = computed(() => auth.can("moderation.appeal.view"));
+const canResolveAppeals = computed(() => auth.can("moderation.appeal.resolve"));
 
 const health = ref<HealthOverview | null>(null);
 const cases = ref<ModerationCase[]>([]);
@@ -41,15 +47,19 @@ async function load() {
   try {
     appealsError.value = false;
     const [overview, queue, appealPage] = await Promise.all([
-      adminService.health().catch(() => null),
-      adminService.cases().catch(() => {
-        casesError.value = true;
-        return [];
-      }),
-      adminService.appeals("open").catch(() => {
-        appealsError.value = true;
-        return null;
-      }),
+      canMonitor.value ? adminService.health().catch(() => null) : null,
+      canViewCases.value
+        ? adminService.cases().catch(() => {
+            casesError.value = true;
+            return [];
+          })
+        : [],
+      canViewAppeals.value
+        ? adminService.appeals("open").catch(() => {
+            appealsError.value = true;
+            return null;
+          })
+        : null,
     ]);
     health.value = overview;
     cases.value = queue;
@@ -109,11 +119,12 @@ onMounted(load);
 <template>
   <AppShell>
     <h1 class="mb-4 text-xl font-bold">{{ t("nav.admin") }}</h1>
+    <AdminNav />
 
     <LoadingSkeleton v-if="loading" :rows="2" />
     <template v-else>
       <!-- Service health overview -->
-      <section class="card mb-6 p-4">
+      <section v-if="canMonitor" class="card mb-6 p-4">
         <h2 class="mb-3 flex items-center gap-2 font-semibold">
           <Activity class="h-5 w-5 text-brand-600 dark:text-brand-300" /> {{ t("admin.serviceHealth") }}
           <span
@@ -147,59 +158,63 @@ onMounted(load);
         <EmptyState v-else>{{ t("admin.healthUnavailable") }}</EmptyState>
       </section>
 
-      <template v-if="isAdmin">
-        <RolesPanel />
-        <FeatureFlagsPanel />
-      </template>
+      <RolesPanel v-if="auth.can('admin.roles.manage')" />
+      <FeatureFlagsPanel v-if="auth.can('admin.flags.manage')" />
 
       <!-- Moderation queue (cases) -->
-      <h2 class="mb-2 flex items-center gap-2 font-semibold">
-        <ShieldAlert class="h-5 w-5 text-brand-600 dark:text-brand-300" /> {{ t("admin.moderationQueue") }}
-      </h2>
-      <ErrorState v-if="casesError" @retry="load" />
-      <EmptyState v-else-if="cases.length === 0">{{ t("admin.queueEmpty") }}</EmptyState>
-      <ul v-else class="space-y-2">
-        <li v-for="c in cases" :key="c.id" class="card flex items-center gap-3 p-3">
-          <span class="min-w-0 flex-1">
-            <span class="block text-sm font-medium">
-              {{ enumLabel("targets", c.target_type) }} · {{ t("admin.reportsCount", c.report_count) }} · {{ enumLabel("states", c.state) }}
+      <template v-if="canViewCases">
+        <h2 class="mb-2 flex items-center gap-2 font-semibold">
+          <ShieldAlert class="h-5 w-5 text-brand-600 dark:text-brand-300" /> {{ t("admin.moderationQueue") }}
+        </h2>
+        <ErrorState v-if="casesError" @retry="load" />
+        <EmptyState v-else-if="cases.length === 0">{{ t("admin.queueEmpty") }}</EmptyState>
+        <ul v-else class="space-y-2">
+          <li v-for="c in cases" :key="c.id" class="card flex items-center gap-3 p-3">
+            <span class="min-w-0 flex-1">
+              <span class="block text-sm font-medium">
+                {{ enumLabel("targets", c.target_type) }} · {{ t("admin.reportsCount", c.report_count) }} · {{ enumLabel("states", c.state) }}
+              </span>
+              <span class="block truncate text-xs text-gray-500 dark:text-gray-400">{{ c.target_id }}</span>
             </span>
-            <span class="block truncate text-xs text-gray-500 dark:text-gray-400">{{ c.target_id }}</span>
-          </span>
-          <button class="btn-ghost text-sm" :disabled="acting === c.id" @click="act(c.id, 'dismiss')">{{ t("admin.dismiss") }}</button>
-          <button class="btn-primary text-sm" :disabled="acting === c.id" @click="act(c.id, 'remove')">{{ t("admin.remove") }}</button>
-        </li>
-      </ul>
+            <template v-if="canActOnCases">
+              <button class="btn-ghost text-sm" :disabled="acting === c.id" @click="act(c.id, 'dismiss')">{{ t("admin.dismiss") }}</button>
+              <button class="btn-primary text-sm" :disabled="acting === c.id" @click="act(c.id, 'remove')">{{ t("admin.remove") }}</button>
+            </template>
+          </li>
+        </ul>
+      </template>
 
       <!-- Appeals against moderation decisions -->
-      <h2 class="mb-2 mt-6 flex items-center gap-2 font-semibold">
-        <Scale class="h-5 w-5 text-brand-600 dark:text-brand-300" aria-hidden="true" /> {{ t("admin.appeals.title") }}
-      </h2>
-      <ErrorState v-if="appealsError" @retry="load" />
-      <EmptyState v-else-if="appeals.length === 0">{{ t("admin.appeals.empty") }}</EmptyState>
-      <ul v-else class="space-y-2" data-testid="appeals">
-        <li v-for="a in appeals" :key="a.id" class="card space-y-2 p-3">
-          <p class="text-sm font-medium">
-            {{ enumLabel("targets", a.target_type) }} ·
-            <time :datetime="a.created_at">{{ relativeTime(a.created_at) }}</time>
-          </p>
-          <p class="truncate text-xs text-gray-500 dark:text-gray-400" dir="ltr">{{ a.target_id }}</p>
-          <p class="whitespace-pre-wrap break-words text-sm" dir="auto">{{ a.text }}</p>
-          <div class="flex justify-end gap-2">
-            <button class="btn-ghost text-sm" :disabled="acting === a.id" @click="resolveAppeal(a.id, 'upheld')">
-              {{ t("admin.appeals.uphold") }}
-            </button>
-            <button class="btn-primary text-sm" :disabled="acting === a.id" @click="resolveAppeal(a.id, 'overturned')">
-              {{ t("admin.appeals.overturn") }}
-            </button>
-          </div>
-        </li>
-      </ul>
-      <div v-if="appealsCursor && !appealsError" class="mt-2 flex justify-center">
-        <button class="btn-ghost text-sm" :disabled="loadingMoreAppeals" @click="moreAppeals">
-          {{ loadingMoreAppeals ? t("states.loading") : t("feed.loadMore") }}
-        </button>
-      </div>
+      <template v-if="canViewAppeals">
+        <h2 class="mb-2 mt-6 flex items-center gap-2 font-semibold">
+          <Scale class="h-5 w-5 text-brand-600 dark:text-brand-300" aria-hidden="true" /> {{ t("admin.appeals.title") }}
+        </h2>
+        <ErrorState v-if="appealsError" @retry="load" />
+        <EmptyState v-else-if="appeals.length === 0">{{ t("admin.appeals.empty") }}</EmptyState>
+        <ul v-else class="space-y-2" data-testid="appeals">
+          <li v-for="a in appeals" :key="a.id" class="card space-y-2 p-3">
+            <p class="text-sm font-medium">
+              {{ enumLabel("targets", a.target_type) }} ·
+              <time :datetime="a.created_at">{{ relativeTime(a.created_at) }}</time>
+            </p>
+            <p class="truncate text-xs text-gray-500 dark:text-gray-400" dir="ltr">{{ a.target_id }}</p>
+            <p class="whitespace-pre-wrap break-words text-sm" dir="auto">{{ a.text }}</p>
+            <div v-if="canResolveAppeals" class="flex justify-end gap-2">
+              <button class="btn-ghost text-sm" :disabled="acting === a.id" @click="resolveAppeal(a.id, 'upheld')">
+                {{ t("admin.appeals.uphold") }}
+              </button>
+              <button class="btn-primary text-sm" :disabled="acting === a.id" @click="resolveAppeal(a.id, 'overturned')">
+                {{ t("admin.appeals.overturn") }}
+              </button>
+            </div>
+          </li>
+        </ul>
+        <div v-if="appealsCursor && !appealsError" class="mt-2 flex justify-center">
+          <button class="btn-ghost text-sm" :disabled="loadingMoreAppeals" @click="moreAppeals">
+            {{ loadingMoreAppeals ? t("states.loading") : t("feed.loadMore") }}
+          </button>
+        </div>
+      </template>
     </template>
   </AppShell>
 </template>

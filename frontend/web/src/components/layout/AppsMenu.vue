@@ -2,6 +2,7 @@
 import {
   Bell,
   Bookmark,
+  CalendarDays,
   Flag,
   Home,
   LayoutGrid,
@@ -48,6 +49,7 @@ const links = computed<AppLink[]>(() => {
     { to: "/messages", icon: MessageCircle, label: "nav.messages" },
     { to: "/marketplace", icon: Store, label: "nav.marketplace" },
     { to: "/pages", icon: Flag, label: "nav.pages" },
+    { to: "/events", icon: CalendarDays, label: "nav.events" },
     { to: "/ads", icon: Megaphone, label: "nav.ads" },
     { to: "/saved", icon: Bookmark, label: "nav.saved" },
     { to: "/notifications", icon: Bell, label: "nav.notifications" },

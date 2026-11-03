@@ -31,3 +31,8 @@ def on_listing_review_reported(e: EventEnvelope) -> None:
 @on_event("message.reported")
 def on_message_reported(e: EventEnvelope) -> None:
     services.ingest_report_event("message.reported", e.payload)
+
+
+@on_event("gathering.reported")
+def on_gathering_reported(e: EventEnvelope) -> None:
+    services.ingest_report_event("gathering.reported", e.payload)

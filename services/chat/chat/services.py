@@ -315,6 +315,7 @@ def remove_member(actor_id: str, conversation_id: str, account_id: str) -> None:
                 successor.role = ConversationMember.Role.ADMIN
                 successor.save(update_fields=["role"])
         _emit_changed(conversation, actor_id, "removed", revoked=[account_id])
+        _revoke_calls(conversation, [account_id])
 
 
 def set_member_role(actor_id: str, conversation_id: str, account_id: str, role: str) -> None:
@@ -493,6 +494,15 @@ def revoke_pair_subscriptions(a: str, b: str) -> None:
     shared threads. No refresh frame: the blocked side is not told."""
     for conversation in _pair_conversations(str(a), str(b)):
         _emit_changed(conversation, None, "blocked", revoked=[a, b], notify=False)
+        _revoke_calls(conversation, [a, b])
+
+
+def _revoke_calls(conversation: Conversation, accounts) -> None:
+    """Accounts that lost access leave the conversation's live call: a removed
+    member is kicked from the LiveKit room, a block ends a DM call (3.7, 3.8)."""
+    from calls import services as calls  # calls builds on this module
+
+    calls.revoke_access(conversation, [str(a) for a in accounts])
 
 
 # ---- messages ---------------------------------------------------------------
@@ -652,9 +662,15 @@ def _record_message(
     """
     with transaction.atomic():
         conversation = Conversation.objects.select_for_update().get(id=conversation_id)
+        # Server-written system messages (call logs) name a sender who may have
+        # left since, and their codes are not searchable text.
+        system = message_type == Message.Type.SYSTEM
         # Membership changes take the same lock: someone removed after the
         # caller's check must not get a message in.
-        if not conversation.members.filter(account_id=actor_id, left_at__isnull=True).exists():
+        if (
+            not system
+            and not conversation.members.filter(account_id=actor_id, left_at__isnull=True).exists()
+        ):
             raise TaraAPIError("Conversation not found.", code="not_found", http_status_code=404)
         seq = conversation.last_seq + 1 if conversation.seq_ready else None
         message = Message.objects.create(
@@ -662,7 +678,7 @@ def _record_message(
             sender_id=actor_id,
             type=message_type,
             body=body,
-            body_norm=text.normalize(body),
+            body_norm="" if system else text.normalize(body),
             seq=seq,
             reply_to_id=reply_to_id,
             forwarded_from_message_id=forwarded_from,

@@ -6,6 +6,7 @@ psycopg[binary]>=3.1
 PyJWT[crypto]>=2.8
 cryptography>=42
 requests>=2.31
+celery>=5.3
 redis>=5.0,<6
 django-cors-headers>=4.3
 django-prometheus>=2.3

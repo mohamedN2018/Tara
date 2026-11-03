@@ -23,15 +23,34 @@ const routes: RouteRecordRaw[] = [
   { path: "/pages/:handle", name: "page", component: () => import("@/views/PageDetailView.vue"), meta: { auth: true } },
   { path: "/ads", name: "ads", component: () => import("@/views/AdsView.vue"), meta: { auth: true } },
   { path: "/ads/campaigns/:id", name: "ad-campaign", component: () => import("@/views/AdCampaignView.vue"), meta: { auth: true } },
-  { path: "/ads/review", name: "ad-review", component: () => import("@/views/AdReviewView.vue"), meta: { auth: true, roles: ["admin", "ad_reviewer"] } },
+  { path: "/ads/review", name: "ad-review", component: () => import("@/views/AdReviewView.vue"), meta: { auth: true, caps: ["ads.review"] } },
   { path: "/saved", name: "saved", component: () => import("@/views/SavedView.vue"), meta: { auth: true } },
   { path: "/posts/:id", name: "post", component: () => import("@/views/PostDetailView.vue"), meta: { auth: true } },
+  { path: "/events", name: "events", component: () => import("@/views/EventsView.vue"), meta: { auth: true } },
+  { path: "/events/new", name: "event-new", component: () => import("@/views/EventFormView.vue"), meta: { auth: true } },
+  { path: "/events/:id/edit", name: "event-edit", component: () => import("@/views/EventFormView.vue"), meta: { auth: true } },
+  { path: "/events/:id", name: "event", component: () => import("@/views/EventDetailView.vue"), meta: { auth: true } },
   { path: "/notifications", name: "notifications", component: () => import("@/views/NotificationsView.vue"), meta: { auth: true } },
   { path: "/search", name: "search", component: () => import("@/views/SearchView.vue"), meta: { auth: true } },
   { path: "/settings", name: "settings", component: () => import("@/views/SettingsView.vue"), meta: { auth: true } },
   { path: "/admin", name: "admin", component: () => import("@/views/AdminView.vue"), meta: { auth: true, staff: true } },
+  { path: "/admin/capabilities", name: "admin-capabilities", component: () => import("@/views/AdminCapabilitiesView.vue"), meta: { auth: true, staff: true, caps: ["admin.capabilities.manage"] } },
+  { path: "/admin/audit", name: "admin-audit", component: () => import("@/views/AdminAuditView.vue"), meta: { auth: true, staff: true, caps: ["admin.audit.view"] } },
+  { path: "/admin/monitor", name: "admin-monitor", component: () => import("@/views/AdminMonitorView.vue"), meta: { auth: true, staff: true, caps: ["admin.monitor.view"] } },
   { path: "/:pathMatch(.*)*", name: "not-found", component: () => import("@/views/NotFoundView.vue") },
 ];
+
+/** Staff gates of a route: `staff` needs any console capability, `caps` any one of the listed keys. */
+export function staffAccessAllowed(
+  meta: { staff?: unknown; caps?: unknown; roles?: unknown },
+  auth: { isStaff: boolean; roles: string[]; canAny: (caps: readonly string[]) => boolean },
+): boolean {
+  if (meta.staff && !auth.isStaff) return false;
+  const caps = meta.caps as string[] | undefined;
+  if (caps && !auth.canAny(caps)) return false;
+  const roles = meta.roles as string[] | undefined;
+  return !roles || roles.some((role) => auth.roles.includes(role));
+}
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -49,11 +68,7 @@ router.beforeEach(async (to) => {
   if (to.meta.guest && auth.isAuthenticated) {
     return { name: "home" };
   }
-  if (to.meta.staff && !auth.isStaff) {
-    return { name: "home" };
-  }
-  const roles = to.meta.roles as string[] | undefined;
-  if (roles && !roles.some((role) => auth.roles.includes(role))) {
+  if (!staffAccessAllowed(to.meta, auth)) {
     return { name: "home" };
   }
   return true;

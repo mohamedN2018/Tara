@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/gathering.rsvp.v1.json",
+  "title": "gathering.rsvp v1 payload",
+  "description": "An account set (status) or took back (status null) its answer. Counters are the event's after the change.",
+  "type": "object",
+  "properties": {
+    "gathering_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "host_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "account_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "status": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "going",
+        "interested",
+        "not_going",
+        null
+      ]
+    },
+    "previous_status": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "going",
+        "interested",
+        "not_going",
+        null
+      ]
+    },
+    "going_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "interested_count": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "gathering_id",
+    "host_id",
+    "account_id",
+    "status",
+    "previous_status",
+    "going_count",
+    "interested_count"
+  ],
+  "additionalProperties": false
+}

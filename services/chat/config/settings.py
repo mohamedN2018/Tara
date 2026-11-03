@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     "django_prometheus",
     "django.contrib.postgres",
     "chat",
+    "calls",
 ]
 
 MIDDLEWARE = [
@@ -98,6 +99,19 @@ TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-s
 MEDIA_INTERNAL_URL = os.getenv("MEDIA_INTERNAL_URL", "http://media:8000")
 MEDIA_CALL_TIMEOUT = float(os.getenv("MEDIA_CALL_TIMEOUT", "2.0"))
 
+# Calls on LiveKit (roadmap 3.7). Off unless the key, the secret and the public
+# URL are all set: the API then answers 503 calls_unavailable.
+LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY", "")
+LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "")
+LIVEKIT_URL = os.getenv("LIVEKIT_URL", "")  # the ws(s) URL browsers connect to
+LIVEKIT_INTERNAL_URL = os.getenv("LIVEKIT_INTERNAL_URL", "http://livekit:7880")
+LIVEKIT_API_TIMEOUT = float(os.getenv("LIVEKIT_API_TIMEOUT", "3.0"))
+CALL_TOKEN_TTL_SECONDS = min(int(os.getenv("CALL_TOKEN_TTL_SECONDS", "600")), 600)
+CALL_RING_TIMEOUT_SECONDS = int(os.getenv("CALL_RING_TIMEOUT_SECONDS", "45"))
+CALL_MAX_PARTICIPANTS = int(os.getenv("CALL_MAX_PARTICIPANTS", "16"))
+CALL_RECONCILE_AFTER_SECONDS = int(os.getenv("CALL_RECONCILE_AFTER_SECONDS", "120"))
+CALL_START_RATE = os.getenv("CALL_START_RATE", "20/min")
+
 # Message lifecycle windows (seconds).
 CHAT_EDIT_WINDOW_SECONDS = int(os.getenv("CHAT_EDIT_WINDOW_SECONDS", "900"))
 CHAT_DELETE_WINDOW_SECONDS = int(os.getenv("CHAT_DELETE_WINDOW_SECONDS", "3600"))
@@ -119,6 +133,9 @@ CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", not bool(RABBITM
 CELERY_BEAT_SCHEDULE = {
     "drain-outbox": {"task": "tara_events.publish_outbox", "schedule": 2.0},
     "purge-events": {"task": "tara_events.purge_events", "schedule": 3600.0},
+    # Ring timeouts become missed calls; quiet live calls are checked with LiveKit.
+    "calls-sweep": {"task": "calls.sweep", "schedule": 5.0},
+    "calls-reconcile": {"task": "calls.reconcile", "schedule": 60.0},
 }
 
 CORS_ALLOWED_ORIGINS = env_list("CHAT_CORS_ORIGINS", "http://localhost:5173")

@@ -43,6 +43,8 @@ jmespath==1.1.0
 jsonschema-specifications==2025.9.1
 jsonschema==4.26.0
 kombu==5.6.2
+livekit-api==1.2.2
+livekit-protocol==1.1.27
 msgpack==1.2.4
 multidict==7.2.1
 opensearch-protobufs==1.2.0
@@ -74,6 +76,7 @@ six==1.17.0
 sqlparse==0.6.1
 Twisted==26.10.0
 txaio==26.6.1
+types-protobuf==7.35.1.20260906
 typing_extensions==4.16.0
 tzdata==2026.6
 tzlocal==5.4.5

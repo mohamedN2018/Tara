@@ -70,8 +70,13 @@ CACHES = {
     }
 }
 
+_throttling = api_throttling()
 REST_FRAMEWORK = {
-    **api_throttling(),
+    **_throttling,
+    "DEFAULT_THROTTLE_RATES": {
+        **_throttling["DEFAULT_THROTTLE_RATES"],
+        "audit_export": os.getenv("ADMIN_AUDIT_EXPORT_RATE", "10/min"),
+    },
     "DEFAULT_AUTHENTICATION_CLASSES": ["tara_common.auth.JWTAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_PAGINATION_CLASS": "tara_common.pagination.CursorPagination",
@@ -82,7 +87,7 @@ REST_FRAMEWORK = {
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Tara Admin API",
-    "DESCRIPTION": "Feature flags, configuration, roles, service-health overview.",
+    "DESCRIPTION": "Feature flags, roles, capability matrix, audit log, monitoring.",
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
     "SCHEMA_PATH_PREFIX": "/api/v1",
@@ -102,7 +107,7 @@ ADMIN_IDENTITY_SECRET = os.getenv(
 IDENTITY_INTERNAL_URL = os.getenv("IDENTITY_INTERNAL_URL", "http://identity:8000")
 IDENTITY_CALL_TIMEOUT = float(os.getenv("IDENTITY_CALL_TIMEOUT", "3"))
 
-# Services whose /readyz the health overview polls.
+# Services whose /readyz the beat task polls (every HEALTH_POLL_SECONDS).
 HEALTH_TARGETS = {
     "identity": "http://identity:8000/readyz/",
     "profile": "http://profile:8000/readyz/",
@@ -115,13 +120,56 @@ HEALTH_TARGETS = {
     "notification": "http://notification:8000/readyz/",
     "search": "http://search:8000/readyz/",
     "moderation": "http://moderation:8000/readyz/",
+    "ads": "http://ads:8000/readyz/",
+    "realtime": "http://realtime:8000/readyz/",
+    "admin": "http://admin:8000/readyz/",
+    "bff": os.getenv("ADMIN_BFF_READY_URL", "http://bff:8090/readyz"),
 }
 HEALTH_TIMEOUT = float(os.getenv("ADMIN_HEALTH_TIMEOUT", "2.0"))
+HEALTH_POLL_SECONDS = float(os.getenv("ADMIN_HEALTH_POLL_SECONDS", "30"))
 # Health snapshots kept per service; older ones are deleted on each poll.
 HEALTH_SNAPSHOTS_KEPT = int(os.getenv("ADMIN_HEALTH_SNAPSHOTS_KEPT", "500"))
 
-# No event publishing/consuming from Admin in this phase.
-TARA_EVENT_PUBLISHER = "null"
+# Platform statistics (8.11): each owner counts its own rows at
+# /internal/v1/stats/ (shared internal secret, audience <service>-internal).
+STATS_TARGETS = {
+    "identity": "http://identity:8000",
+    "post": "http://post:8000",
+    "chat": "http://chat:8000",
+    "marketplace": "http://marketplace:8000",
+    "moderation": "http://moderation:8000",
+}
+STATS_TIMEOUT = float(os.getenv("ADMIN_STATS_TIMEOUT", "5.0"))
+STATS_POLL_SECONDS = float(os.getenv("ADMIN_STATS_POLL_SECONDS", "300"))
+
+# The audit CSV export streams at most this many rows (newest first).
+ADMIN_AUDIT_EXPORT_MAX_ROWS = int(os.getenv("ADMIN_AUDIT_EXPORT_MAX_ROWS", "10000"))
+
+# Events: admin consumes audit-worthy events (queue admin.events). Its outbox
+# exists for the shared relay and purge tasks; admin emits nothing yet.
+RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")
+TARA_EVENT_PUBLISHER = "rabbitmq" if RABBITMQ_URL else "null"
+TARA_EVENT_BROKER_URL = RABBITMQ_URL
+TARA_EVENT_EXCHANGE = os.getenv("TARA_EVENT_EXCHANGE", "tara.events")
+TARA_OUTBOX_MODEL = "adminsvc.OutboxEvent"
+TARA_EVENT_QUEUE = "admin.events"
+
+CELERY_BROKER_URL = RABBITMQ_URL or "memory://"
+CELERY_TASK_DEFAULT_QUEUE = f"{SERVICE_NAME}.tasks"
+CELERY_RESULT_BACKEND = None
+CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", not bool(RABBITMQ_URL))
+CELERY_BEAT_SCHEDULE = {
+    "drain-outbox": {"task": "tara_events.publish_outbox", "schedule": 2.0},
+    "purge-events": {"task": "tara_events.purge_events", "schedule": 3600.0},
+    "poll-service-health": {
+        "task": "adminsvc.poll_service_health",
+        "schedule": HEALTH_POLL_SECONDS,
+    },
+    "poll-platform-stats": {
+        "task": "adminsvc.poll_platform_stats",
+        "schedule": STATS_POLL_SECONDS,
+    },
+}
 
 CORS_ALLOWED_ORIGINS = env_list("ADMIN_CORS_ORIGINS", "http://localhost:5173")
 CORS_ALLOW_CREDENTIALS = True

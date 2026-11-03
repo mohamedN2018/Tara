@@ -11,12 +11,12 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from tara_common.pagination import CursorPagination
+from tara_common.permissions import HasCapability
 from tara_common.responses import data_response
 from tara_resilience.idempotency import idempotent
 
 from . import serve_tokens, services
 from .models import Campaign, IdempotencyRecord
-from .permissions import IsAdReviewer
 from .serializers import (
     AdSetCreateSerializer,
     AdSetDetailSerializer,
@@ -111,7 +111,7 @@ class CreativesView(APIView):
 
 
 class ReviewQueueView(APIView):
-    permission_classes = [IsAdReviewer]
+    permission_classes = [HasCapability("ads.review")]
 
     @extend_schema(responses={200: ReviewQueueSerializer(many=True)}, tags=["ads"])
     def get(self, request: Request) -> Response:
@@ -121,7 +121,7 @@ class ReviewQueueView(APIView):
 
 
 class ReviewView(APIView):
-    permission_classes = [IsAdReviewer]
+    permission_classes = [HasCapability("ads.review")]
 
     @extend_schema(request=ReviewSerializer, responses={200: CreativeSerializer}, tags=["ads"])
     def post(self, request: Request, creative_id: str) -> Response:

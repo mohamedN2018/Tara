@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from tara_common.middleware import current_request_id
 from tara_events.envelope import EventEnvelope
 from tara_events.outbox import record_event
 
@@ -27,5 +28,7 @@ def emit(
             subject_id=str(subject_id),
             producer=PRODUCER,
             actor_id=str(actor_id) if actor_id else None,
+            # The edge's request id, for admin's audit log (None outside requests).
+            correlation_id=current_request_id(),
         ),
     )

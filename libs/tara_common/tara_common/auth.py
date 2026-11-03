@@ -25,6 +25,8 @@ from django.core.exceptions import ImproperlyConfigured
 from jwt import PyJWKClient
 from rest_framework import authentication, exceptions
 
+from .capabilities import capabilities_from_claims
+
 
 class VerificationUnavailable(exceptions.APIException):
     """The issuer's JWKS cannot be fetched: says nothing about the token itself."""
@@ -55,6 +57,9 @@ class TokenUser:
         # RBAC roles (e.g. "moderator", "admin"); Identity owns them and embeds
         # them in the access token. Empty for ordinary users.
         self.roles = set(claims.get("roles", []) or [])
+        # Namespaced capability keys (``caps``); derived from ``roles`` for a
+        # token minted before identity added the claim.
+        self.capabilities = capabilities_from_claims(claims)
 
     def __str__(self) -> str:  # pragma: no cover - debug aid
         return f"TokenUser(id={self.id})"

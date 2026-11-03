@@ -7,6 +7,7 @@ correlation_id propagated into events and traces.
 
 from __future__ import annotations
 
+import contextvars
 import re
 import uuid
 
@@ -17,8 +18,23 @@ RESPONSE_HEADER = "X-Request-Id"
 _VALID_REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{1,100}$")
 
 
+_current: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "tara_request_id", default=None
+)
+
+
 def _new_request_id() -> str:
     return f"req_{uuid.uuid4().hex}"
+
+
+def current_request_id() -> str | None:
+    """The id of the request being handled, for an event's ``correlation_id``.
+
+    None outside a request (consumers, beat tasks). The edge sets the inbound
+    header (nginx ``$request_id``; Traefik strips a client's), so a client
+    cannot choose what lands in the audit log.
+    """
+    return _current.get()
 
 
 class RequestIDMiddleware:
@@ -40,6 +56,10 @@ class RequestIDMiddleware:
         except Exception:  # noqa: S110,BLE001 - observability must never break requests
             pass
 
-        response = self.get_response(request)
+        token = _current.set(request_id)
+        try:
+            response = self.get_response(request)
+        finally:
+            _current.reset(token)
         response[RESPONSE_HEADER] = request_id
         return response

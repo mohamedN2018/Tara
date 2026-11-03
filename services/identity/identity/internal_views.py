@@ -17,7 +17,7 @@ import logging
 
 import jwt
 from django.conf import settings
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Q
 from rest_framework import serializers
 from rest_framework.permissions import AllowAny
@@ -25,12 +25,13 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from tara_common import capabilities as registry
 from tara_common.auth import verify_internal_token
 from tara_common.exceptions import TaraAPIError
 from tara_common.responses import data_response
 
-from .events import emit_security_event
-from .models import Account, AccountRole
+from .events import emit_domain_event, emit_security_event
+from .models import Account, AccountRole, RoleCapability
 from .tokens import bridged_roles, roles_for
 
 logger = logging.getLogger("tara.identity.internal")
@@ -110,6 +111,26 @@ def _get_account(account_id) -> Account:
     return account
 
 
+def _emit_audit_event(
+    request: Request, event_type: str, *, subject_id: str, payload: dict, actor_id
+) -> None:
+    """Record an audit-worthy decision on the outbox (inside the caller's transaction).
+
+    The correlation id is admin's request id: admin forwards it, and the edge,
+    not the client, set it on admin's request. ``IDENTITY_EMIT_AUDIT_EVENTS``
+    is the emission flag of roadmap 3.3: admin's consumer ships one release first.
+    """
+    if not getattr(settings, "IDENTITY_EMIT_AUDIT_EVENTS", True):
+        return
+    emit_domain_event(
+        event_type,
+        subject_id=subject_id,
+        payload=payload,
+        actor_id=str(actor_id) if actor_id else None,
+        correlation_id=getattr(request, "request_id", None),
+    )
+
+
 class _RoleSerializer(serializers.Serializer):
     role = serializers.ChoiceField(choices=AccountRole.Role.values)
     actor_id = serializers.UUIDField()
@@ -166,6 +187,13 @@ class AccountRolesView(_InternalView):
                 emit_security_event(
                     account, "role_granted", {"role": role, "granted_by": str(actor)}
                 )
+                _emit_audit_event(
+                    request,
+                    "account.role.granted",
+                    subject_id=str(account.id),
+                    payload={"account_id": str(account.id), "role": role},
+                    actor_id=actor,
+                )
         return data_response(_account_data(account), status=201)
 
     def delete(self, request: Request, account_id: str) -> Response:
@@ -179,4 +207,124 @@ class AccountRolesView(_InternalView):
                 emit_security_event(
                     account, "role_revoked", {"role": role, "revoked_by": str(actor)}
                 )
+                _emit_audit_event(
+                    request,
+                    "account.role.revoked",
+                    subject_id=str(account.id),
+                    payload={"account_id": str(account.id), "role": role},
+                    actor_id=actor,
+                )
         return data_response(_account_data(account))
+
+
+# ---- capability matrix (roadmap 8.12) ---------------------------------------
+
+CAPABILITY_STATES = ("grant", "revoke", "default")
+MAX_MATRIX_CHANGES = 200
+MATRIX_LOCK_KEY = 0x7A_7243_4150  # any constant unique within identity_db
+
+
+def matrix_data() -> dict:
+    """Everything the matrix editor needs: registry, defaults, overrides, effective."""
+    rows = list(RoleCapability.objects.order_by("role", "capability"))
+    overrides = {(row.role, row.capability): row.granted for row in rows}
+    return {
+        "capabilities": [
+            {"key": c.key, "namespace": c.namespace} for c in registry.CAPABILITIES.values()
+        ],
+        "roles": list(registry.ROLES),
+        "locked_roles": sorted(registry.LOCKED_ROLES),
+        "defaults": {
+            role: sorted(registry.DEFAULT_ROLE_CAPABILITIES.get(role, ()))
+            for role in registry.ROLES
+        },
+        "overrides": [
+            {
+                "role": row.role,
+                "capability": row.capability,
+                "granted": row.granted,
+                "updated_by": str(row.updated_by) if row.updated_by else None,
+                "updated_at": row.updated_at.isoformat(),
+            }
+            for row in rows
+        ],
+        "effective": {
+            role: sorted(registry.role_capabilities(role, overrides)) for role in registry.ROLES
+        },
+        "implies": {key: sorted(implied) for key, implied in registry.IMPLIES.items()},
+    }
+
+
+class _CapabilityChangeSerializer(serializers.Serializer):
+    role = serializers.ChoiceField(choices=list(registry.ROLES))
+    capability = serializers.ChoiceField(choices=list(registry.CAPABILITIES))
+    state = serializers.ChoiceField(choices=CAPABILITY_STATES)
+
+    def validate_role(self, role: str) -> str:
+        if role in registry.LOCKED_ROLES:
+            raise serializers.ValidationError("This role always holds every capability.")
+        return role
+
+
+class _MatrixUpdateSerializer(serializers.Serializer):
+    actor_id = serializers.UUIDField()
+    changes = _CapabilityChangeSerializer(many=True, allow_empty=False)
+
+    def validate_changes(self, changes: list[dict]) -> list[dict]:
+        if len(changes) > MAX_MATRIX_CHANGES:
+            raise serializers.ValidationError(f"At most {MAX_MATRIX_CHANGES} changes at once.")
+        cells = [(c["role"], c["capability"]) for c in changes]
+        if len(set(cells)) != len(cells):
+            raise serializers.ValidationError("Each cell may appear once.")
+        return changes
+
+
+class CapabilityMatrixView(_InternalView):
+    """GET the role x capability matrix; PUT a batch of cell changes.
+
+    Setting a cell to the state it already has is a no-op, so the same batch
+    sent twice emits nothing the second time. Each real change emits one
+    ``capability.matrix.changed`` in the same transaction. Tokens pick the new
+    matrix up at their next refresh (at most the access-token TTL later).
+    """
+
+    def get(self, request: Request) -> Response:
+        return data_response(matrix_data())
+
+    def put(self, request: Request) -> Response:
+        serializer = _MatrixUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        actor = serializer.validated_data["actor_id"]
+        with transaction.atomic():
+            # Serialise editors (row locks cannot cover cells that have no row
+            # yet), so each event's "previous" is what really was.
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_xact_lock(%s)", [MATRIX_LOCK_KEY])
+            current = {
+                (row.role, row.capability): row
+                for row in RoleCapability.objects.select_for_update()
+            }
+            for change in serializer.validated_data["changes"]:
+                role, key, state = change["role"], change["capability"], change["state"]
+                row = current.get((role, key))
+                previous = "default" if row is None else ("grant" if row.granted else "revoke")
+                if state == previous:
+                    continue
+                if state == "default":
+                    row.delete()
+                elif row is None:
+                    RoleCapability.objects.create(
+                        role=role, capability=key, granted=state == "grant", updated_by=actor
+                    )
+                else:
+                    row.granted = state == "grant"
+                    row.updated_by = actor
+                    row.save(update_fields=["granted", "updated_by", "updated_at"])
+                _emit_audit_event(
+                    request,
+                    "capability.matrix.changed",
+                    subject_id=role,
+                    payload={"role": role, "capability": key, "state": state, "previous": previous},
+                    actor_id=actor,
+                )
+        return data_response(matrix_data())

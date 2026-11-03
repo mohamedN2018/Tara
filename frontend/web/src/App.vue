@@ -3,10 +3,12 @@ import { onMounted, onUnmounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 
+import CallOverlay from "@/components/calls/CallOverlay.vue";
 import OfflineState from "@/components/states/OfflineState.vue";
 import Toaster from "@/components/common/Toaster.vue";
 import { realtime } from "@/lib/ws";
 import { useAuthStore } from "@/stores/auth";
+import { useCallStore } from "@/stores/calls";
 import { useDirectoryStore } from "@/stores/directory";
 import { useToastStore } from "@/stores/toasts";
 import { useUiStore } from "@/stores/ui";
@@ -17,6 +19,7 @@ const ui = useUiStore();
 const auth = useAuthStore();
 const directory = useDirectoryStore();
 const toasts = useToastStore();
+const calls = useCallStore();
 
 const unsubs: Array<() => void> = [];
 
@@ -65,6 +68,9 @@ onMounted(() => {
       const convoId = f.conversation_id as string | undefined;
       // Don't toast for the conversation the user is already reading.
       if (convoId && route.path === `/messages/${convoId}`) return;
+      // Call logs are system messages whose body is a code; a missed call has
+      // its own notification (and toast) already.
+      if (f.type === "system") return;
       const preview = (f.preview as string) || t("toasts.newMessage");
       toasts.push({ text: preview, icon: "message", to: convoId ? `/messages/${convoId}` : "/messages" });
     }),
@@ -74,6 +80,16 @@ onMounted(() => {
 watch(
   () => [auth.account?.id, auth.profile?.display_name],
   seedSelf,
+);
+
+// Calls listen app-wide (a ring must reach any page) once someone is signed in.
+watch(
+  () => auth.account?.id,
+  (id, previous) => {
+    if (previous && id !== previous) void calls.reset();
+    if (id) calls.bind();
+  },
+  { immediate: true },
 );
 
 onUnmounted(() => {
@@ -93,4 +109,5 @@ onUnmounted(() => {
     </KeepAlive>
   </RouterView>
   <Toaster />
+  <CallOverlay v-if="auth.account" />
 </template>

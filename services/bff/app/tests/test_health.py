@@ -66,3 +66,39 @@ def test_jwks_fetch_is_bounded_by_the_upstream_timeout(monkeypatch):
 
     monkeypatch.setattr(auth, "_client", None)
     assert auth._jwk_client().timeout == settings.upstream_timeout_seconds
+
+
+def test_whoami_takes_the_email_from_me_not_from_the_token(monkeypatch):
+    """Access tokens no longer carry the email (roadmap 8.12)."""
+    from app import main
+    from app.auth import current_claims
+
+    class _Resp:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"data": {"id": "acc-1", "email": "owner@example.com"}}
+
+    class _Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url, headers):
+            return _Resp()
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", _Client)
+    app.dependency_overrides[current_claims] = lambda: {"sub": "acc-1", "scope": "user"}
+    try:
+        resp = client.get("/bff/v1/whoami", headers={"Authorization": "Bearer t"})
+    finally:
+        app.dependency_overrides.clear()
+    assert resp.status_code == 200
+    assert resp.json()["data"]["email"] == "owner@example.com"
+    assert resp.json()["data"]["degraded"] is False

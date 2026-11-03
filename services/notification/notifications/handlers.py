@@ -164,6 +164,8 @@ def on_user_blocked(e: EventEnvelope) -> None:
 @on_event("message.created")
 def on_message_created(e: EventEnvelope) -> None:
     p = e.payload
+    if p.get("type") == "system":
+        return  # call logs: a missed call has its own kind (`call.missed`)
     sender = p.get("sender")
     muted = {str(m) for m in p.get("muted", [])}
     conversation_id = p["conversation_id"]
@@ -224,3 +226,187 @@ def on_listing_status(e: EventEnvelope) -> None:
         body=f"your listing is now {p.get('to')}",
         data={"listing_id": p["listing_id"], "status": p.get("to")},
     )
+
+
+# ---- events (gatherings, post service 1.13) ---------------------------------------
+# Payloads carry ids and enums only; the client words each kind and links to
+# /events/<id> (registry.build_url). Recipient lists arrive in chunks.
+
+
+def _gathering(p: dict) -> tuple[str, dict]:
+    gathering_id = p["gathering_id"]
+    return f"gathering:{gathering_id}", {"gathering_id": gathering_id}
+
+
+@on_event("gathering.invited")
+def on_gathering_invited(e: EventEnvelope) -> None:
+    p = e.payload
+    ref, data = _gathering(p)
+    for invitee in p.get("invitee_ids", []):
+        notify(
+            invitee,
+            "gathering.invite",
+            actor_id=p.get("host_id"),
+            subject_ref=ref,
+            body="invited you to an event",
+            data=data,
+        )
+
+
+@on_event("gathering.reminder")
+def on_gathering_reminder(e: EventEnvelope) -> None:
+    """No actor: the host gets the reminder too."""
+    p = e.payload
+    ref, data = _gathering(p)
+    for recipient in p.get("recipients", []):
+        notify(
+            recipient,
+            "gathering.reminder",
+            subject_ref=ref,
+            body="an event you're going to starts soon",
+            data={**data, "window": p.get("window")},
+        )
+
+
+@on_event("gathering.updated")
+def on_gathering_updated(e: EventEnvelope) -> None:
+    """Only a change of time or place (``notify``) is news to the people coming."""
+    p = e.payload
+    if not p.get("notify"):
+        return
+    ref, data = _gathering(p)
+    for recipient in p.get("recipients", []):
+        notify(
+            recipient,
+            "gathering.update",
+            actor_id=p.get("host_id"),
+            subject_ref=ref,
+            body="changed the time or place of an event",
+            data=data,
+        )
+
+
+@on_event("gathering.cancelled")
+def on_gathering_cancelled(e: EventEnvelope) -> None:
+    p = e.payload
+    ref, data = _gathering(p)
+    for recipient in p.get("recipients", []):
+        notify(
+            recipient,
+            "gathering.cancel",
+            actor_id=p.get("host_id"),
+            subject_ref=ref,
+            body="cancelled an event",
+            data=data,
+        )
+
+
+@on_event("gathering.rsvp")
+def on_gathering_rsvp(e: EventEnvelope) -> None:
+    """The host hears about new going and interested answers, grouped per event.
+    Switching between the two, or saying no, is not news."""
+    p = e.payload
+    if p.get("status") not in ("going", "interested"):
+        return
+    if p.get("previous_status") in ("going", "interested"):
+        return
+    ref, data = _gathering(p)
+    notify(
+        p["host_id"],
+        "gathering.rsvp",
+        actor_id=p.get("account_id"),
+        subject_ref=ref,
+        body="responded to your event",
+        data={**data, "status": p.get("status")},
+    )
+
+
+@on_event("gathering.deleted")
+def on_gathering_deleted(e: EventEnvelope) -> None:
+    """Deleted by the host or removed by moderation: its notifications go too."""
+    gathering_id = e.payload.get("gathering_id") or e.subject_id
+    if gathering_id:
+        services.purge_subject(f"gathering:{gathering_id}")
+
+
+# ---- calls (roadmap 3.7): a push-only ring path, plus an in-app missed call ----------
+
+
+def _call_push(recipient, push_kind: str, p: dict, **extra) -> None:
+    """Queue one push-only call message (no notification row) after commit."""
+    from urllib.parse import quote
+
+    from django.db import transaction
+
+    from . import tasks
+
+    conversation_id = str(p.get("conversation_id") or "")
+    data = {
+        "kind": push_kind,
+        "tag": f"call:{p.get('call_id')}",
+        "call_id": str(p.get("call_id")),
+        "conversation_id": conversation_id,
+        "url": f"/messages/{quote(conversation_id, safe='')}",
+        **extra,
+    }
+    recipient_id = str(recipient)
+
+    def queue() -> None:
+        try:
+            tasks.deliver_call_push.delay(recipient_id, data)
+        except Exception:  # noqa: BLE001 - a ring is best effort
+            services.logger.warning("could not queue a call push", exc_info=True)
+
+    transaction.on_commit(queue)
+
+
+@on_event("call.started")
+def on_call_started(e: EventEnvelope) -> None:
+    """Ring every callee's browsers. No in-app row: ringing is not list spam."""
+    p = e.payload
+    for recipient in p.get("recipients") or []:
+        _call_push(recipient, "call.ring", p, call_kind=p.get("kind"), body="")
+
+
+@on_event("call.answered")
+def on_call_answered(e: EventEnvelope) -> None:
+    """Answered on one device: the ring on the answerer's other devices clears."""
+    p = e.payload
+    if p.get("account"):
+        _call_push(p["account"], "call.clear", p, reason="answered")
+
+
+@on_event("call.declined")
+def on_call_declined(e: EventEnvelope) -> None:
+    p = e.payload
+    if p.get("account"):
+        _call_push(p["account"], "call.clear", p, reason="declined")
+
+
+@on_event("call.ended")
+def on_call_ended(e: EventEnvelope) -> None:
+    """Only those still ringing have something to clear."""
+    p = e.payload
+    for recipient in p.get("ringing") or []:
+        _call_push(recipient, "call.clear", p, reason="ended")
+
+
+@on_event("call.missed")
+def on_call_missed(e: EventEnvelope) -> None:
+    """An in-app "missed call" row, and the ring replaced by a missed-call push."""
+    p = e.payload
+    conversation_id = p.get("conversation_id")
+    for recipient in p.get("missed") or []:
+        notify(
+            recipient,
+            "call.missed",
+            actor_id=p.get("initiator"),
+            subject_ref=f"conversation:{conversation_id}",
+            group_key=f"call:{p.get('call_id')}",
+            data={
+                "conversation_id": conversation_id,
+                "call_id": p.get("call_id"),
+                "call_kind": p.get("kind"),
+            },
+        )
+        _call_push(recipient, "call.missed", p, call_kind=p.get("kind"), body="")

@@ -3,9 +3,11 @@ import { computed, ref } from "vue";
 
 import { api, apiError, isAuthFailure } from "@/lib/api";
 import { releasePush, resumePush } from "@/lib/pwa";
+import { capabilitiesFromClaims, opensConsole } from "@/lib/capabilities";
 import { jwtClaims, tokenStore } from "@/lib/tokens";
 import { realtime } from "@/lib/ws";
 import { identityService } from "@/services/identity";
+import { useCallStore } from "@/stores/calls";
 import { useDirectoryStore } from "@/stores/directory";
 import type { Account, Profile, Tokens } from "@/types";
 
@@ -43,7 +45,11 @@ export const useAuthStore = defineStore("auth", () => {
 
   const isAuthenticated = computed(() => !!account.value);
   const roles = ref<string[]>([]);
-  const isStaff = computed(() => roles.value.some((r) => r === "admin" || r === "moderator"));
+  // Staff capabilities (`caps` claim; derived from `roles` for older tokens).
+  const capabilities = ref<Set<string>>(new Set());
+  const isStaff = computed(() => opensConsole(capabilities.value));
+  const can = (cap: string) => capabilities.value.has(cap);
+  const canAny = (caps: readonly string[]) => caps.some(can);
 
   // RBAC roles live in the access-token JWT (not in /me/). Decode them locally.
   function decodeRoles(token: string | null): string[] {
@@ -66,6 +72,7 @@ export const useAuthStore = defineStore("auth", () => {
   function applyTokens(t: Tokens) {
     tokenStore.set(t.access_token, t.refresh_token);
     roles.value = decodeRoles(t.access_token);
+    capabilities.value = capabilitiesFromClaims(jwtClaims(t.access_token));
   }
 
   // login returns the tokens directly (flat). The account is fetched from /me/.
@@ -134,6 +141,7 @@ export const useAuthStore = defineStore("auth", () => {
       try {
         await loadAccount();
         roles.value = decodeRoles(tokenStore.access);
+        capabilities.value = capabilitiesFromClaims(jwtClaims(tokenStore.access));
         await loadProfile();
         realtime.connect();
       } catch (e) {
@@ -159,6 +167,8 @@ export const useAuthStore = defineStore("auth", () => {
    * `remote: false` skips revoking a session the server already rejected.
    */
   async function logout({ remote = true }: { remote?: boolean } = {}) {
+    // Hang up and release the camera, microphone and room before the session goes.
+    await useCallStore().reset().catch(() => {});
     // Every logout path: unsubscribe this browser locally first (works without a
     // session), so the next account here never gets this account's pushes.
     await releasePush({ remote }).catch(() => {});
@@ -182,6 +192,9 @@ export const useAuthStore = defineStore("auth", () => {
     sessionUnavailable,
     isAuthenticated,
     roles,
+    capabilities,
+    can,
+    canAny,
     isStaff,
     login,
     loginWithGoogle,

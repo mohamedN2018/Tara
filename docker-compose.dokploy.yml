@@ -72,6 +72,8 @@ x-identity-env: &identity-env
   IDENTITY_SECRET_KEY: ${IDENTITY_SECRET_KEY:?}
   # Identity and admin only: identity's role API refuses INTERNAL_JWT_SECRET (1.0d).
   ADMIN_IDENTITY_SECRET: ${ADMIN_IDENTITY_SECRET:?}
+  # Role and capability-matrix events for admin's audit log (8.1, deploy note).
+  IDENTITY_EMIT_AUDIT_EVENTS: ${IDENTITY_EMIT_AUDIT_EVENTS:-true}
   REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-}
   EMAIL_HOST: ${EMAIL_HOST:?set your SMTP host}
   EMAIL_PORT: ${EMAIL_PORT:-587}
@@ -154,6 +156,12 @@ x-chat-env: &chat-env
   CHAT_DB_USER: ${CHAT_DB_USER:-}
   CHAT_DEBUG: ${CHAT_DEBUG:-}
   CHAT_SECRET_KEY: ${CHAT_SECRET_KEY:?}
+  # Calls (roadmap 3.7). Empty key or secret: every call endpoint answers 503
+  # calls_unavailable and the SPA hides the call buttons.
+  LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+  LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+  LIVEKIT_URL: ${LIVEKIT_URL:-}
+  LIVEKIT_INTERNAL_URL: ${LIVEKIT_INTERNAL_URL:-http://livekit:7880}
 
 x-marketplace-env: &marketplace-env
   <<: *common-env
@@ -198,6 +206,8 @@ x-moderation-env: &moderation-env
   MODERATION_DB_USER: ${MODERATION_DB_USER:-}
   MODERATION_DEBUG: ${MODERATION_DEBUG:-}
   MODERATION_SECRET_KEY: ${MODERATION_SECRET_KEY:?}
+  # appeal.resolved for admin's audit log (8.1, deploy note).
+  MODERATION_EMIT_AUDIT_EVENTS: ${MODERATION_EMIT_AUDIT_EVENTS:-true}
 
 x-admin-env: &admin-env
   <<: *common-env
@@ -418,6 +428,38 @@ services:
     mem_limit: 256m
     healthcheck: *healthcheck
 
+  # ======== calls: LiveKit SFU (roadmap 3.7), third-party, not a Tara service ==
+  # Starts only with COMPOSE_PROFILES=calls (gen-dokploy-env.sh sets it with the
+  # keys), so a deployment without keys never runs an SFU. Signalling is proxied
+  # by the web edge at /rtc; media goes straight to the host on the ports below,
+  # which the host firewall must open (docs/deploy/DOKPLOY.md, "Calls (LiveKit)").
+  livekit:
+    image: livekit/livekit-server:v1.13.10
+    profiles: ["calls"]
+    restart: unless-stopped
+    logging: *logging
+    networks: [tara]
+    command: ["--config", "/etc/livekit.yaml"]
+    environment:
+      # `:-`, not `:?`: compose interpolates services of inactive profiles too,
+      # and a deployment without calls must still come up.
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-}: ${LIVEKIT_API_SECRET:-}"
+      LIVEKIT_WEBHOOK_API_KEY: ${LIVEKIT_API_KEY:-}
+      # The public IP browsers reach. Empty: LiveKit finds it over STUN.
+      NODE_IP: ${LIVEKIT_NODE_IP:-}
+      LIVEKIT_RTC_USE_EXTERNAL_IP: "true"
+      # TURN/UDP on 3478 for strict NATs (TURN over TLS on 443 is deferred).
+      LIVEKIT_TURN_ENABLED: ${LIVEKIT_TURN_ENABLED:-true}
+      LIVEKIT_TURN_DOMAIN: ${LIVEKIT_TURN_DOMAIN:-${DOMAIN:?}}
+      LIVEKIT_TURN_UDP_PORT: "3478"
+    volumes:
+      - ./infra/livekit/livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7881:7881"           # RTC over TCP (fallback)
+      - "50000:50000/udp"     # RTC media (single-port UDP mux)
+      - "3478:3478/udp"       # TURN/UDP
+    mem_limit: 512m
+
   # ======== async workers (outbox relay: celery worker + embedded beat) =====
   identity-worker:
     <<: *app
@@ -500,6 +542,15 @@ services:
     depends_on: {moderation: {condition: service_healthy}}
     mem_limit: 256m
 
+  # Outbox relay, service-health poll (30 s) and platform statistics (5 min).
+  admin-worker:
+    <<: *app
+    image: tara/admin
+    command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
+    environment: {<<: *admin-env, RUN_MIGRATIONS: "false"}
+    depends_on: {admin: {condition: service_healthy}}
+    mem_limit: 256m
+
   ads-worker:
     <<: *app
     image: tara/ads
@@ -579,6 +630,15 @@ services:
     command: ["python", "manage.py", "consume_events"]
     environment: {<<: *moderation-env, RUN_MIGRATIONS: "false"}
     depends_on: {moderation: {condition: service_healthy}}
+    mem_limit: 192m
+
+  # Unified audit log (8.1): role, capability, moderation and ad decisions.
+  admin-consumer:
+    <<: *app
+    image: tara/admin
+    command: ["python", "manage.py", "consume_events"]
+    environment: {<<: *admin-env, RUN_MIGRATIONS: "false"}
+    depends_on: {admin: {condition: service_healthy}}
     mem_limit: 192m
 
   # Realtime event→socket bridge (no DB).

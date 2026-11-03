@@ -189,6 +189,9 @@ TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-s
 ADMIN_IDENTITY_SECRET = os.getenv(
     "ADMIN_IDENTITY_SECRET", "dev-only-admin-identity-secret-change-me"
 )
+# Emit account.role.granted/revoked and capability.matrix.changed for admin's
+# audit log. Roadmap 3.3 deploy order: ship admin-consumer first with this off.
+IDENTITY_EMIT_AUDIT_EVENTS = env_bool("IDENTITY_EMIT_AUDIT_EVENTS", True)
 
 # ---- Events / outbox (ADR-003) ----------------------------------------------
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")

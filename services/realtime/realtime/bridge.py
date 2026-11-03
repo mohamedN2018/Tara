@@ -227,3 +227,76 @@ def on_feed_item_added(event: EventEnvelope) -> None:
     recipients = p.get("recipients") or ([p["recipient"]] if p.get("recipient") else [])
     for recipient in recipients:
         _push_to_user(recipient, data)
+
+
+# ---- calls (roadmap 3.7, 3.8) ------------------------------------------------------
+# Frames carry ids and enums only. They go to user groups, so every tab and
+# device of a callee rings, and every one of them clears on answer or end.
+
+
+def _call_frame(event_name: str, p: dict, **extra) -> dict:
+    return {
+        "event": event_name,
+        "call_id": p.get("call_id"),
+        "conversation_id": p.get("conversation_id"),
+        **extra,
+    }
+
+
+@on_event("call.started")
+def on_call_started(event: EventEnvelope) -> None:
+    """Callees ring; the caller's other devices learn a call is live (rejoin banner)."""
+    p = event.payload
+    ringing = _call_frame(
+        "call.ringing",
+        p,
+        conversation_type=p.get("conversation_type"),
+        kind=p.get("kind"),
+        initiator=p.get("initiator"),
+        expires_at=p.get("ring_expires_at"),
+    )
+    callees = [str(r) for r in p.get("recipients") or []]
+    for recipient in callees:
+        _push_to_user(recipient, ringing)
+    initiator = p.get("initiator")
+    if initiator and str(initiator) not in callees:
+        _push_to_user(str(initiator), _call_frame("call.updated", p, state="ringing"))
+
+
+@on_event("call.answered")
+def on_call_answered(event: EventEnvelope) -> None:
+    p = event.payload
+    frame = _call_frame("call.answered", p, account=p.get("account"))
+    for recipient in p.get("recipients") or []:
+        _push_to_user(recipient, frame)
+
+
+@on_event("call.declined")
+def on_call_declined(event: EventEnvelope) -> None:
+    p = event.payload
+    frame = _call_frame("call.declined", p, account=p.get("account"))
+    for recipient in p.get("recipients") or []:
+        _push_to_user(recipient, frame)
+
+
+@on_event("call.ended")
+def on_call_ended(event: EventEnvelope) -> None:
+    p = event.payload
+    frame = _call_frame(
+        "call.ended", p, reason=p.get("reason"), duration_s=int(p.get("duration_s") or 0)
+    )
+    for recipient in p.get("recipients") or []:
+        _push_to_user(recipient, frame)
+
+
+@on_event("call.missed")
+def on_call_missed(event: EventEnvelope) -> None:
+    p = event.payload
+    frame = _call_frame(
+        "call.missed",
+        p,
+        final=bool(p.get("final")),
+        missed=[str(m) for m in p.get("missed") or []][:256],
+    )
+    for recipient in p.get("recipients") or []:
+        _push_to_user(recipient, frame)

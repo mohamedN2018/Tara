@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/gathering.invited.v1.json",
+  "title": "gathering.invited v1 payload",
+  "description": "The host invited friends (checked through graph). invitee_ids: the newly invited only, at most 50.",
+  "type": "object",
+  "properties": {
+    "gathering_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "host_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "invitee_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "minItems": 1,
+      "maxItems": 50
+    }
+  },
+  "required": [
+    "gathering_id",
+    "host_id",
+    "invitee_ids"
+  ],
+  "additionalProperties": false
+}

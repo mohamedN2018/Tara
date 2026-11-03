@@ -467,7 +467,7 @@ services:
       retries: 10
     labels:
       - traefik.enable=true
-      - "traefik.http.routers.post.rule=PathPrefix(`/api/v1/posts`) || PathPrefix(`/api/v1/comments`) || PathPrefix(`/api/v1/saved`)"
+      - "traefik.http.routers.post.rule=PathPrefix(`/api/v1/posts`) || PathPrefix(`/api/v1/comments`) || PathPrefix(`/api/v1/saved`) || PathPrefix(`/api/v1/events`)"
       - traefik.http.routers.post.entrypoints=web
       - traefik.http.services.post.loadbalancer.server.port=8000
 
@@ -589,7 +589,7 @@ services:
       retries: 10
     labels:
       - traefik.enable=true
-      - "traefik.http.routers.chat.rule=PathPrefix(`/api/v1/conversations`) || PathPrefix(`/api/v1/messages`)"
+      - "traefik.http.routers.chat.rule=PathPrefix(`/api/v1/conversations`) || PathPrefix(`/api/v1/messages`) || PathPrefix(`/api/v1/calls`)"
       - traefik.http.routers.chat.entrypoints=web
       - traefik.http.services.chat.loadbalancer.server.port=8000
 
@@ -666,6 +666,31 @@ services:
     depends_on:
       realtime: {condition: service_healthy}
       rabbitmq: {condition: service_healthy}
+
+  # ---- LiveKit SFU for calls (roadmap 3.7) — third-party, not a Tara service --
+  # Signalling goes through the edge at /rtc (LIVEKIT_URL=ws://localhost:8080).
+  # Media uses TCP 7881 and UDP 50000 on loopback; NODE_IP is what LiveKit
+  # advertises to browsers. Chat turns calls on only when LIVEKIT_API_KEY and
+  # LIVEKIT_API_SECRET are set in .env (the dev defaults below just keep this
+  # container bootable when they are not).
+  livekit:
+    image: livekit/livekit-server:v1.13.10
+    profiles: ["core"]
+    command: ["--config", "/etc/livekit.yaml"]
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-dev-only-livekit-secret-change-me-0123456789}"
+      LIVEKIT_WEBHOOK_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      NODE_IP: 127.0.0.1
+    volumes:
+      - ../livekit/livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "127.0.0.1:7881:7881"         # RTC over TCP (fallback)
+      - "127.0.0.1:50000:50000/udp"   # RTC media (single-port UDP mux)
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.livekit.rule=PathPrefix(`/rtc`)"
+      - traefik.http.routers.livekit.entrypoints=web
+      - traefik.http.services.livekit.loadbalancer.server.port=7880
 
   # ---- Marketplace service (Phase 5) ---------------------------------------
   marketplace:
@@ -860,12 +885,14 @@ services:
     environment:
       POSTGRES_HOST: postgres
       REDIS_URL: redis://redis:6379/12
+      RABBITMQ_URL: ${RABBITMQ_URL}
       TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
       RUN_MIGRATIONS: "true"
     ports: ["127.0.0.1:8012:8000"]
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz/"]
       interval: 10s
@@ -876,6 +903,24 @@ services:
       - "traefik.http.routers.admin.rule=PathPrefix(`/api/v1/admin`)"
       - traefik.http.routers.admin.entrypoints=web
       - traefik.http.services.admin.loadbalancer.server.port=8000
+
+  # Beat: outbox relay, health poll (30 s) and platform statistics (5 min).
+  admin-relay:
+    image: tara/admin:dev
+    profiles: ["core"]
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    env_file: [../../.env]
+    environment: {POSTGRES_HOST: postgres, REDIS_URL: "redis://redis:6379/12", RABBITMQ_URL: "${RABBITMQ_URL}", RUN_MIGRATIONS: "false"}
+    depends_on: {admin: {condition: service_healthy}}
+
+  # Unified audit log: consumes role, capability, moderation and ad decisions.
+  admin-consumer:
+    image: tara/admin:dev
+    profiles: ["core"]
+    command: ["python", "manage.py", "consume_events"]
+    env_file: [../../.env]
+    environment: {POSTGRES_HOST: postgres, REDIS_URL: "redis://redis:6379/12", RABBITMQ_URL: "${RABBITMQ_URL}", RUN_MIGRATIONS: "false"}
+    depends_on: {admin: {condition: service_healthy}}
 
   # ---- OpenSearch (optional; enable with --profile search + SEARCH_USE_OPENSEARCH=true)
   opensearch:

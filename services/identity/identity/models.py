@@ -103,6 +103,28 @@ class AccountRole(models.Model):
         ]
 
 
+class RoleCapability(models.Model):
+    """One cell of the capability matrix that differs from the code defaults.
+
+    ``tara_common.capabilities.DEFAULT_ROLE_CAPABILITIES`` holds the defaults; a
+    row grants (``granted=True``) or revokes a capability for a role on top of
+    them. No row means the default applies. Edited only through admin (8.12).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    role = models.CharField(max_length=32, choices=AccountRole.Role.choices)
+    capability = models.CharField(max_length=80)
+    granted = models.BooleanField()
+    updated_by = models.UUIDField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "role_capability"
+        constraints = [
+            models.UniqueConstraint(fields=["role", "capability"], name="role_capability_uniq"),
+        ]
+
+
 class Device(models.Model):
     class Platform(models.TextChoices):
         WEB = "web", "Web"

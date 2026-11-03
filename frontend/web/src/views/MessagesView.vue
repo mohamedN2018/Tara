@@ -19,6 +19,9 @@ import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
+import CallBanner from "@/components/calls/CallBanner.vue";
+import CallButtons from "@/components/calls/CallButtons.vue";
+import CallLogChip from "@/components/calls/CallLogChip.vue";
 import ChatSearch from "@/components/chat/ChatSearch.vue";
 import ConversationList from "@/components/chat/ConversationList.vue";
 import ForwardModal from "@/components/chat/ForwardModal.vue";
@@ -49,6 +52,7 @@ import type { VoiceNote } from "@/lib/useVoiceRecorder";
 import { realtime } from "@/lib/ws";
 import { chatService } from "@/services/chat";
 import { useAuthStore } from "@/stores/auth";
+import { useCallStore } from "@/stores/calls";
 import { useChatUnreadStore } from "@/stores/chatUnread";
 import { useDirectoryStore } from "@/stores/directory";
 import { usePresenceStore } from "@/stores/presence";
@@ -63,6 +67,7 @@ const presence = usePresenceStore();
 const directory = useDirectoryStore();
 const toasts = useToastStore();
 const chatUnread = useChatUnreadStore();
+const calls = useCallStore();
 
 // How far back to look for the overlap with what's loaded after a reconnect.
 const MAX_CATCH_UP_PAGES = 5;
@@ -714,6 +719,7 @@ onMounted(() => {
   loadConversations();
   loadMessages(activeId.value);
   subscribe(activeId.value);
+  if (activeId.value) void calls.watchConversation(activeId.value);
 
   unsubs = [
     realtime.on("chat.message.created", (frame) => {
@@ -800,6 +806,7 @@ watch(activeId, (id, prev) => {
   olderRetryAt = 0;
   loadMessages(id);
   if (id && !activeConversation.value) void loadConversations(true);
+  if (id) void calls.watchConversation(id);
 });
 </script>
 
@@ -896,6 +903,7 @@ watch(activeId, (id, prev) => {
               </span>
             </div>
             <div class="ms-auto flex items-center gap-1">
+              <CallButtons :conversation-id="activeId" :conversation-type="activeConversation?.type" />
               <button
                 class="btn-ghost px-2"
                 :aria-label="t('messages.search')"
@@ -971,6 +979,8 @@ watch(activeId, (id, prev) => {
             </div>
           </header>
 
+          <CallBanner :conversation-id="activeId" />
+
           <!-- Pinned messages -->
           <div v-if="activeConversation?.pinned_messages.length" class="border-b border-gray-200 px-3 py-1.5 dark:border-gray-800" data-testid="pinned-bar">
             <button
@@ -1001,6 +1011,14 @@ watch(activeId, (id, prev) => {
                     {{ row.label }}
                   </span>
                 </div>
+                <CallLogChip
+                  v-else-if="row.message.type === 'system'"
+                  :data-message-id="row.message.id"
+                  :message="row.message"
+                  :self-id="myId"
+                  :conversation-id="activeId"
+                  :callable="activeConversation?.type !== 'support' && activeConversation?.type !== 'page'"
+                />
                 <MessageBubble
                   v-else
                   :data-message-id="row.message.id"

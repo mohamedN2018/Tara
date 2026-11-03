@@ -16,10 +16,11 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from tara_common.capabilities import capabilities_for_roles
 from tara_events.envelope import uuid7
 
 from .events import emit_security_event
-from .models import Account, RefreshToken, UserSession
+from .models import Account, RefreshToken, RoleCapability, UserSession
 
 
 class TokenError(Exception):
@@ -53,19 +54,37 @@ def roles_for(account: Account) -> list[str]:
     return sorted(granted | set(bridged_roles(account)))
 
 
+def capability_overrides() -> dict[tuple[str, str], bool]:
+    """The matrix cells that differ from the defaults: ``{(role, key): granted}``."""
+    return {
+        (row.role, row.capability): row.granted
+        for row in RoleCapability.objects.only("role", "capability", "granted")
+    }
+
+
+def capabilities_for(roles: list[str]) -> list[str]:
+    """The ``caps`` claim: what the roles allow, with identity's overrides applied."""
+    if not roles:
+        return []  # ordinary members: no matrix query on every sign-in
+    return sorted(capabilities_for_roles(roles, capability_overrides()))
+
+
 def issue_access_token(account: Account, session_id: str) -> tuple[str, int]:
     """Return (jwt, expires_in_seconds)."""
     if not settings.JWT_PRIVATE_KEY:
         raise TokenError("JWT signing key is not configured.")
     ttl = settings.ACCESS_TOKEN_TTL_SECONDS
     now = _now()
+    roles = roles_for(account)
+    # No email: the token travels to every service and sits in browser storage,
+    # and nothing reads it there (roadmap 8.12). /me/ returns it to its owner.
     claims = {
         "sub": str(account.id),
-        "email": account.email,
         "type": "access",
         "sid": str(session_id),
         "scope": "user",
-        "roles": roles_for(account),
+        "roles": roles,
+        "caps": capabilities_for(roles),
         "iss": settings.JWT_ISSUER,
         "aud": settings.JWT_AUDIENCE,
         "iat": int(now.timestamp()),

@@ -1,6 +1,7 @@
 import {
   Bell,
   Bookmark,
+  CalendarDays,
   Flag,
   Home,
   type LucideIcon,
@@ -28,6 +29,7 @@ export const navItems: NavItem[] = [
   { name: "notifications", route: "/notifications", labelKey: "nav.notifications", icon: Bell, badge: "notifications" },
   { name: "search", route: "/search", labelKey: "nav.explore", icon: Search },
   { name: "pages", route: "/pages", labelKey: "nav.pages", icon: Flag },
+  { name: "events", route: "/events", labelKey: "nav.events", icon: CalendarDays },
   { name: "marketplace", route: "/marketplace", labelKey: "nav.marketplace", icon: ShoppingBag },
   { name: "saved", route: "/saved", labelKey: "nav.saved", icon: Bookmark },
   { name: "settings", route: "/settings", labelKey: "nav.settings", icon: Settings },

@@ -19,6 +19,12 @@ http:
         customResponseHeaders:
           X-Tara-Gateway: "edge"
           Server: ""  # strip server fingerprint
+        # A client must not pick the request id or region that reach the audit
+        # log (roadmap 8.1). An empty value removes the header; each service
+        # then mints its own id. (In production nginx sets $request_id.)
+        customRequestHeaders:
+          X-Request-Id: ""
+          X-Geo-Region: ""
 
     # Coarse per-source rate limit. Generous for dev; tighten per route in prod.
     # (Auth endpoints are additionally throttled inside the identity service.)

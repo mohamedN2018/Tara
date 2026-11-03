@@ -1,0 +1,34 @@
+# LiveKit SFU for Tara calls (roadmap 3.7 / 3.8). Shared by the dev compose
+# (infra/compose/docker-compose.yml) and the Dokploy compose.
+#
+# Nothing secret lives here. The container gets, from the environment:
+#   LIVEKIT_KEYS             "<LIVEKIT_API_KEY>: <LIVEKIT_API_SECRET>"
+#   LIVEKIT_WEBHOOK_API_KEY  <LIVEKIT_API_KEY> (signs the webhooks chat verifies)
+#   NODE_IP                  the address browsers reach the media ports on
+#                            (127.0.0.1 in dev; the server's public IP in production)
+#   LIVEKIT_TURN_*           TURN settings in production (see docs/deploy/DOKPLOY.md)
+port: 7880            # signalling (HTTP + WebSocket); reached through the edge at /rtc
+log_level: info
+
+rtc:
+  tcp_port: 7881      # RTC over TCP, the fallback when UDP is blocked
+  udp_port: 50000     # every UDP media session multiplexed on one port
+  # NODE_IP is set explicitly, so no STUN lookup of the external address.
+  use_external_ip: false
+
+room:
+  auto_create: true
+  # Matches chat's CALL_MAX_PARTICIPANTS (roadmap 3.x risks: capped at 16).
+  max_participants: 16
+  # An empty room closes after this many seconds and sends `room_finished`.
+  empty_timeout: 60
+  departure_timeout: 20
+
+webhook:
+  # Internal network only: the edge never routes /internal/ (docs/deploy/DOKPLOY.md).
+  urls:
+    - http://chat:8000/internal/v1/livekit/webhook/
+
+turn:
+  # Off in dev. Production turns it on through LIVEKIT_TURN_ENABLED / _DOMAIN / _UDP_PORT.
+  enabled: false

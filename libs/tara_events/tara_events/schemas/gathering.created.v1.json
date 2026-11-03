@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/gathering.created.v1.json",
+  "title": "gathering.created v1 payload",
+  "description": "An event was created. Ids, enums and times only: never the title, description or place.",
+  "type": "object",
+  "properties": {
+    "gathering_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "host_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "host_type": {
+      "type": "string",
+      "enum": [
+        "user",
+        "page"
+      ]
+    },
+    "audience": {
+      "type": "string",
+      "enum": [
+        "public",
+        "friends",
+        "invite_only"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "scheduled",
+        "cancelled",
+        "ended"
+      ]
+    },
+    "location_type": {
+      "type": "string",
+      "enum": [
+        "place",
+        "online"
+      ]
+    },
+    "starts_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "ends_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "capacity": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1
+    },
+    "cover_media_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "gathering_id",
+    "host_id",
+    "host_type",
+    "audience",
+    "status",
+    "location_type",
+    "starts_at",
+    "ends_at",
+    "capacity",
+    "cover_media_id"
+  ],
+  "additionalProperties": false
+}

@@ -1,10 +1,13 @@
 import { api } from "@/lib/api";
+import type { MatrixChange } from "@/lib/capabilities";
 import type { CursorPage } from "@/types";
 
 export interface ServiceHealth {
   service: string;
-  status: string; // ready | not_ready | ...
+  status: string; // ready | not_ready | unreachable | unknown
   latency_ms: number | null;
+  /** When the beat task last polled it; null before the first poll. */
+  checked_at?: string | null;
 }
 
 export interface HealthOverview {
@@ -52,6 +55,100 @@ export interface RoleHolder {
   bridged_roles: string[];
 }
 
+export interface CapabilityOverride {
+  role: string;
+  capability: string;
+  granted: boolean;
+  updated_by: string | null;
+  updated_at: string;
+}
+
+/** The role x capability matrix as identity stores it. */
+export interface CapabilityMatrix {
+  capabilities: { key: string; namespace: string }[];
+  roles: string[];
+  locked_roles: string[];
+  defaults: Record<string, string[]>;
+  overrides: CapabilityOverride[];
+  effective: Record<string, string[]>;
+  implies: Record<string, string[]>;
+}
+
+export interface AuditEntry {
+  id: string;
+  occurred_at: string;
+  actor_kind: "account" | "system";
+  actor_id: string | null;
+  actor_name: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  request_id: string;
+  detail: Record<string, unknown>;
+}
+
+export interface AuditFilters {
+  actor?: string;
+  action?: string;
+  target_type?: string;
+  target_id?: string;
+  /** ISO datetimes. */
+  since?: string;
+  until?: string;
+}
+
+export const AUDIT_ACTIONS = [
+  "role.granted",
+  "role.revoked",
+  "capability.changed",
+  "moderation.actioned",
+  "appeal.resolved",
+  "ad.review.decided",
+  "feature_flag.changed",
+  "audit.exported",
+] as const;
+
+export const PLATFORM_METRICS = ["accounts", "posts", "active_conversations", "listings", "open_cases"] as const;
+
+export interface PlatformStat {
+  metric: string;
+  value: number | null;
+  updated_at: string | null;
+}
+
+export interface MonitorOverview {
+  overall: string; // ok | degraded | unknown
+  services: ServiceHealth[];
+  stats: PlatformStat[];
+  intervals: { health_seconds: number; stats_seconds: number };
+}
+
+/** Only the filters that are set: an empty `actor=` would filter on "". */
+export function auditParams(filters: AuditFilters, cursor?: string | null): Record<string, string> {
+  const params: Record<string, string> = {};
+  for (const [key, value] of Object.entries(filters)) {
+    const v = typeof value === "string" ? value.trim() : "";
+    if (v) params[key] = v;
+  }
+  if (cursor) params.cursor = cursor;
+  return params;
+}
+
+/** Hand a downloaded file to the browser under `filename`. */
+export function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+const emptyPage = { next_cursor: null, prev_cursor: null, has_more: false };
+
 export const adminService = {
   async flags(): Promise<FeatureFlag[]> {
     const { data } = await api.get<{ data: FeatureFlag[] }>("/admin/feature-flags/");
@@ -79,6 +176,37 @@ export const adminService = {
   },
   async revokeRole(accountId: string, role: string): Promise<void> {
     await api.delete("/admin/roles/", { data: { account_id: accountId, role } });
+  },
+
+  /** Roles x capabilities: defaults, overrides and the effective result. */
+  async capabilityMatrix(): Promise<CapabilityMatrix> {
+    const { data } = await api.get<{ data: CapabilityMatrix }>("/admin/capabilities/");
+    return data.data;
+  },
+  async saveCapabilities(changes: MatrixChange[]): Promise<CapabilityMatrix> {
+    const { data } = await api.put<{ data: CapabilityMatrix }>("/admin/capabilities/", { changes });
+    return data.data;
+  },
+
+  /** The unified audit trail, newest first (cursor-paginated). */
+  async audit(filters: AuditFilters = {}, cursor?: string | null): Promise<CursorPage<AuditEntry>> {
+    const { data } = await api.get<CursorPage<AuditEntry>>("/admin/audit/", { params: auditParams(filters, cursor) });
+    return { data: Array.isArray(data?.data) ? data.data : [], page: data?.page ?? emptyPage };
+  },
+
+  /** Download the filtered audit trail as CSV (through the API client, which adds the token). */
+  async exportAudit(filters: AuditFilters = {}, now: Date = new Date()): Promise<void> {
+    const { data } = await api.get<Blob>("/admin/audit/export.csv", {
+      params: auditParams(filters),
+      responseType: "blob",
+    });
+    saveBlob(data, `tara-audit-${now.toISOString().slice(0, 10)}.csv`);
+  },
+
+  /** Service health and platform statistics, as the beat task last recorded them. */
+  async monitor(): Promise<MonitorOverview> {
+    const { data } = await api.get<{ data: MonitorOverview }>("/admin/monitor/");
+    return data.data;
   },
 
   /** Aggregated per-service readiness (admin RBAC). */

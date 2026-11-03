@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/account.role.revoked.v1.json",
+  "title": "account.role.revoked v1 payload",
+  "description": "Identity revoked a platform role. actor_id is the admin.",
+  "type": "object",
+  "properties": {
+    "account_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "admin",
+        "moderator",
+        "ad_reviewer",
+        "analyst"
+      ]
+    }
+  },
+  "required": [
+    "account_id",
+    "role"
+  ],
+  "additionalProperties": false
+}

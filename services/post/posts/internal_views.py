@@ -11,6 +11,8 @@ import uuid
 
 from django.db import transaction
 from django.utils.decorators import method_decorator
+from gatherings.models import Gathering
+from gatherings.services import visible_to_viewer as gathering_visible
 from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -58,5 +60,11 @@ class PostVisibilityView(APIView):
                 "viewer_id must be a UUID.", code="validation_error", http_status_code=400
             ) from exc
         post = Post.objects.filter(id=post_id).first()
-        visible = post is not None and services.visible_to_viewer(viewer_id, post)
+        if post is not None:
+            visible = services.visible_to_viewer(viewer_id, post)
+        else:
+            # An event's cover is bound to the event id the same way (no clash:
+            # uuid7), so media asks this one endpoint for both.
+            gathering = Gathering.objects.filter(id=post_id).first()
+            visible = gathering is not None and gathering_visible(viewer_id, gathering)
         return data_response({"post_id": str(post_id), "viewer_id": viewer_id, "visible": visible})

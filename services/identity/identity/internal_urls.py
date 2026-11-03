@@ -1,6 +1,14 @@
 from django.urls import path
 
-from .internal_views import AccountLookupView, AccountRolesView, RoleHoldersView
+from tara_common.stats import InternalStatsView
+
+from .internal_views import (
+    AccountLookupView,
+    AccountRolesView,
+    CapabilityMatrixView,
+    RoleHoldersView,
+)
+from .stats import COUNTERS
 
 urlpatterns = [
     path("accounts/lookup/", AccountLookupView.as_view(), name="internal-account-lookup"),
@@ -10,4 +18,6 @@ urlpatterns = [
         AccountRolesView.as_view(),
         name="internal-account-roles",
     ),
+    path("capabilities/", CapabilityMatrixView.as_view(), name="internal-capabilities"),
+    path("stats/", InternalStatsView.as_view(counters=COUNTERS), name="internal-stats"),
 ]

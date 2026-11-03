@@ -109,7 +109,9 @@ async def whoami(request: Request, claims: dict = Depends(current_claims)) -> JS
         content={
             "data": {
                 "account_id": claims.get("sub"),
-                "email": claims.get("email"),
+                # Access tokens no longer carry the email (roadmap 8.12); /me/
+                # returns it to its owner. None while identity is degraded.
+                "email": (profile or {}).get("email") or claims.get("email"),
                 "scopes": claims.get("scope", "").split(),
                 "profile": profile,
                 "degraded": degraded,
