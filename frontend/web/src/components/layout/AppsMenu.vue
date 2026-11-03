@@ -15,6 +15,7 @@ import {
   User,
   UserCheck,
   Users,
+  UsersRound,
 } from "lucide-vue-next";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -49,6 +50,7 @@ const links = computed<AppLink[]>(() => {
     { to: "/messages", icon: MessageCircle, label: "nav.messages" },
     { to: "/marketplace", icon: Store, label: "nav.marketplace" },
     { to: "/pages", icon: Flag, label: "nav.pages" },
+    { to: "/groups", icon: UsersRound, label: "nav.groups" },
     { to: "/events", icon: CalendarDays, label: "nav.events" },
     { to: "/ads", icon: Megaphone, label: "nav.ads" },
     { to: "/saved", icon: Bookmark, label: "nav.saved" },

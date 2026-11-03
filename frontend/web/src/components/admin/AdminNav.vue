@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Activity, ClipboardList, KeyRound, ShieldCheck } from "lucide-vue-next";
+import { Activity, ClipboardList, KeyRound, ShieldCheck, Users } from "lucide-vue-next";
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -12,6 +12,7 @@ const auth = useAuthStore();
 const sections = computed(() =>
   [
     { to: "/admin", label: "admin.sections.overview", icon: ShieldCheck, cap: null },
+    { to: "/admin/users", label: "admin.sections.users", icon: Users, cap: "admin.users.view" },
     { to: "/admin/capabilities", label: "admin.sections.capabilities", icon: KeyRound, cap: "admin.capabilities.manage" },
     { to: "/admin/audit", label: "admin.sections.audit", icon: ClipboardList, cap: "admin.audit.view" },
     { to: "/admin/monitor", label: "admin.sections.monitor", icon: Activity, cap: "admin.monitor.view" },

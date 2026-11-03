@@ -219,6 +219,7 @@ __marimo__/
 
 # Tara: local secrets, keys and virtualenvs
 .env.*
+.env_*
 !.env*.example
 .keys*/
 .venv*/

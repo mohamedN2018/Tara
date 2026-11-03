@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Globe2, ImagePlus, Lock, MapPin, Trash2, Users } from "lucide-vue-next";
+import { ArrowLeft, Globe2, ImagePlus, Lock, MapPin, Trash2, Users, UsersRound } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
@@ -54,7 +54,9 @@ const capacity = ref<string | number>("");
 const zone = viewerTimeZone();
 const coverUrl = useMediaUrl(() => coverId.value);
 
-const AUDIENCE_ICONS = { public: Globe2, friends: Users, invite_only: Lock } as const;
+const AUDIENCE_ICONS = { public: Globe2, friends: Users, invite_only: Lock, group: UsersRound } as const;
+// `/events/new?group=<id>`: an event of that group (the server checks membership).
+const groupId = computed(() => (!editingId.value && typeof route.query.group === "string" ? route.query.group : null));
 
 function defaults() {
   // Tomorrow at 19:00 in the viewer's zone.
@@ -153,6 +155,7 @@ function build(): EventInput | string {
     cover_media_id: coverId.value,
     audience: audience.value,
     capacity: cap,
+    ...(groupId.value ? { group_id: groupId.value } : {}),
   };
 }
 
@@ -300,7 +303,10 @@ onMounted(load);
           <p class="mt-1 text-end text-xs tabular-nums text-gray-500 dark:text-gray-400">{{ description.length }} / {{ MAX_DESCRIPTION }}</p>
         </div>
 
-        <fieldset>
+        <p v-if="groupId || audience === 'group'" class="rounded-xl bg-brand-50 px-3 py-2 text-sm text-brand-800 dark:bg-brand-950/50 dark:text-brand-200">
+          {{ t("events.groupAudienceHint") }}
+        </p>
+        <fieldset v-else>
           <legend class="label">{{ t("events.form.audience") }}</legend>
           <div class="mt-1 grid gap-2 sm:grid-cols-3">
             <label

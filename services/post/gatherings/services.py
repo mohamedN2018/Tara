@@ -10,6 +10,8 @@ Rules (roadmap 1.13 and section 3.3):
   - ``public``: everyone else.
   - ``friends``: the host's friends (graph).
   - ``invite_only``: the host, invitees and anyone who has an RSVP row.
+  - ``group`` (an event with a ``group_id``, 1.11): the group's own rule, from
+    post's group read model (public group: anyone; otherwise active members).
 * **The host does not RSVP** (decision): the host is the organiser, is never
   counted in ``going_count`` and never takes a capacity seat; an RSVP from the
   host is 400 ``host_cannot_rsvp``. The host still gets the reminders.
@@ -24,6 +26,7 @@ Rules (roadmap 1.13 and section 3.3):
 from __future__ import annotations
 
 import logging
+import uuid
 import zoneinfo
 from datetime import datetime, timedelta
 from urllib.parse import urlsplit
@@ -33,8 +36,9 @@ from django.db.models import DateTimeField, ExpressionWrapper, F, Q
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from posts import events, media_client
+from posts import groups as group_rm
 from posts.clients import get_relationship
-from posts.models import BlockedPair, PostMedia
+from posts.models import BlockedPair, GroupMembership, GroupRef, PostMedia
 
 from tara_common.exceptions import TaraAPIError
 from tara_events.envelope import uuid7
@@ -108,8 +112,8 @@ def _conflict(message: str, code: str) -> TaraAPIError:
     return TaraAPIError(message, code=code, http_status_code=409)
 
 
-def _forbidden(message: str) -> TaraAPIError:
-    return TaraAPIError(message, code="permission_denied", http_status_code=403)
+def _forbidden(message: str, code: str = "permission_denied") -> TaraAPIError:
+    return TaraAPIError(message, code=code, http_status_code=403)
 
 
 # ---- time ------------------------------------------------------------------------
@@ -170,6 +174,8 @@ def visible_to_viewer(
             return False
     elif host in blocked:
         return False
+    if g.group_id:
+        return group_rm.content_visible(viewer, group_rm.access(g.group_id, viewer))
     if g.audience == Gathering.Audience.PUBLIC:
         return True
     if g.audience == Gathering.Audience.FRIENDS:
@@ -189,9 +195,16 @@ def visible_filter(viewer_id: str, friends: set[str]) -> Q:
     """``visible_to_viewer`` as SQL (blocks are excluded separately)."""
     invited = GatheringInvite.objects.filter(invitee_id=viewer_id).values("gathering_id")
     answered = GatheringRSVP.objects.filter(account_id=viewer_id).values("gathering_id")
+    # Group events reach the lists of the group's active members only (the
+    # group's own Events tab shows a public group's events to anyone).
+    live_groups = GroupRef.objects.filter(status="active").values("group_id")
+    my_groups = GroupMembership.objects.filter(
+        account_id=viewer_id, state="active", group_id__in=live_groups
+    ).values("group_id")
     return (
         Q(host_id=viewer_id)
-        | Q(audience=Gathering.Audience.PUBLIC)
+        | Q(audience=Gathering.Audience.GROUP, group_id__in=my_groups)
+        | Q(audience=Gathering.Audience.PUBLIC, group_id__isnull=True)
         | Q(audience=Gathering.Audience.FRIENDS, host_id__in=list(friends))
         | Q(audience=Gathering.Audience.INVITE_ONLY, id__in=invited)
         | Q(audience=Gathering.Audience.INVITE_ONLY, id__in=answered)
@@ -246,6 +259,33 @@ def list_queryset(viewer_id: str, scope: str, *, q: str = ""):
             "-starts_at", "-id"
         )
     return qs.order_by("starts_at", "id")
+
+
+def group_queryset(viewer_id: str, group_id):
+    """One group's events that have not ended, soonest first. 404 when the viewer
+    may not read the group's content."""
+    try:
+        group_id = str(uuid.UUID(str(group_id)))
+    except ValueError as exc:
+        raise _bad_request("group_id must be a UUID.") from exc
+    if not group_rm.content_visible(str(viewer_id), group_rm.access(group_id, viewer_id)):
+        raise _not_found()
+    return (
+        Gathering.objects.filter(_live(), group_id=group_id)
+        .annotate(effective_end=_EFFECTIVE_END)
+        .filter(effective_end__gte=timezone.now())
+        .exclude(host_id__in=list(blocked_ids(str(viewer_id))))
+        .order_by("starts_at", "id")
+    )
+
+
+def _check_group(host_id: str, group_id) -> None:
+    """The host of a group event is an active member, asked of profile first."""
+    acc = group_rm.access(group_id, host_id, fresh=True)
+    if not group_rm.content_visible(str(host_id), acc):
+        raise TaraAPIError("Group not found.", code="not_found", http_status_code=404)
+    if not acc.is_member:
+        raise _forbidden("Only members can create events in this group.", "not_group_member")
 
 
 def viewer_state(viewer_id: str, gatherings: list[Gathering]) -> dict:
@@ -365,6 +405,7 @@ def _core_payload(g: Gathering) -> dict:
         "ends_at": _iso(g.ends_at),
         "capacity": g.capacity,
         "cover_media_id": str(g.cover_media_id) if g.cover_media_id else None,
+        "group_id": str(g.group_id) if g.group_id else None,
     }
 
 
@@ -407,6 +448,12 @@ def create_gathering(host_id: str, **values) -> Gathering:
     bound through media first (503 when media is down, nothing written)."""
     values["timezone"] = validate_timezone(values.get("timezone") or "UTC")
     values["online_url"] = validate_url(values.get("online_url") or "")
+    group_id = values.pop("group_id", None)
+    if group_id:
+        _check_group(host_id, group_id)
+        values["audience"] = Gathering.Audience.GROUP
+    elif values.get("audience") == Gathering.Audience.GROUP:
+        raise _bad_request("Only an event in a group has the group audience.")
     _validate(values)
     gathering_id = uuid7()
     cover = values.get("cover_media_id")
@@ -427,6 +474,7 @@ def create_gathering(host_id: str, **values) -> Gathering:
             cover_media_id=cover,
             audience=values["audience"],
             capacity=values.get("capacity"),
+            group_id=group_id,
         )
         _emit("gathering.created", g, _core_payload(g))
     return g
@@ -450,6 +498,10 @@ def edit_gathering(host_id: str, gathering_id, changes: dict) -> Gathering:
         raise _bad_request("Nothing to change.")
     g = _hosted(host_id, gathering_id)
     _require_open(g)
+    if "audience" in changes and (changes["audience"] == Gathering.Audience.GROUP) != bool(
+        g.group_id
+    ):
+        raise _bad_request("An event in a group keeps the group audience.")
     if "timezone" in changes:
         changes["timezone"] = validate_timezone(changes["timezone"])
     if "online_url" in changes:

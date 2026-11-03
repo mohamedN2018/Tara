@@ -6,8 +6,9 @@ import re
 import uuid
 from datetime import timedelta
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import F, Q
+from django.db.models import Count, Exists, F, Max, OuterRef, Q
 from django.db.models.functions import Greatest
 from django.utils import timezone
 
@@ -15,15 +16,18 @@ from tara_common.exceptions import Conflict, TaraAPIError
 from tara_events.envelope import uuid7
 
 from . import events, linkpreview, media_client
+from . import groups as group_rm
 from .clients import get_relationship, resolve_handles
 from .models import (
     REACTION_TYPES,
+    ApprovalState,
     Audience,
     BlockedPair,
     Comment,
     CommentPolicy,
     CommentReaction,
     CommentReport,
+    GroupReportReview,
     Hashtag,
     Mention,
     Poll,
@@ -52,7 +56,12 @@ AUDIENCE_RANK = {
     Audience.FRIENDS: 1,
     Audience.FOLLOWERS: 2,
     Audience.PUBLIC: 3,
+    # Only posts of public groups can be shared (``share``), so a share of one
+    # may reach as far as a public post.
+    Audience.GROUP: 3,
 }
+# Recipients per notification event (group.post.published, group.announcement.pinned).
+RECIPIENT_CHUNK = 500
 
 
 def extract_hashtags(body: str) -> list[str]:
@@ -89,6 +98,8 @@ def visible_to_viewer(
     """``rel_cache`` and ``blocked`` avoid per-post lookups when checking many posts."""
     if not post.is_visible:
         return False
+    if post.group_id:
+        return _group_post_visible(viewer_id, post, rel_cache, blocked)
     if str(post.author_id) == str(viewer_id):
         return True
     if blocked is None:
@@ -114,6 +125,71 @@ def visible_to_viewer(
     if post.audience == Audience.FOLLOWERS:
         return rel.are_friends or rel.a_follows_b
     return False
+
+
+def _group_access(viewer_id: str, group_id, cache: dict | None = None):
+    """The viewer's place in the group (read model), once per group per request."""
+    key = f"group:{group_id}"
+    if cache is not None and key in cache:
+        return cache[key]
+    acc = group_rm.access(group_id, viewer_id)
+    if cache is not None:
+        cache[key] = acc
+    return acc
+
+
+def _group_post_visible(viewer_id: str, post: Post, cache: dict | None, blocked) -> bool:
+    """A group post: the group's content rule (public: anyone; private and hidden:
+    active members; never a banned account), then blocks with the author both
+    ways. A post waiting for approval is seen by its author and the group's staff."""
+    acc = _group_access(viewer_id, post.group_id, cache)
+    if not group_rm.content_visible(str(viewer_id), acc):
+        return False
+    viewer, author = str(viewer_id), str(post.author_id)
+    if viewer != author:
+        if blocked is None:
+            if _is_locally_blocked(viewer, author):
+                return False
+        elif author in blocked:
+            return False
+    if post.approval_state == ApprovalState.PENDING:
+        return viewer == author or acc.is_staff
+    return True
+
+
+def _not_group_member() -> TaraAPIError:
+    return TaraAPIError(
+        "Only members of the group can do this.", code="not_group_member", http_status_code=403
+    )
+
+
+def require_group_member(account_id: str, group_id):
+    """Writes into a group (posting, commenting): profile is asked first, so a
+    member removed or banned a moment ago is refused (403; 404 when the group is
+    hidden from them). Profile down: the read model decides, failing closed."""
+    acc = group_rm.access(group_id, account_id, fresh=True)
+    if not group_rm.content_visible(str(account_id), acc):
+        raise TaraAPIError("Group not found.", code="not_found", http_status_code=404)
+    if not acc.is_member:
+        raise _not_group_member()
+    return acc
+
+
+def _require_group_staff(actor_id: str, post: Post):
+    """A moderator, admin or owner of the post's group, asked of profile first.
+    Someone who cannot see the post gets 404, a member without the role 403."""
+    if not post.group_id:
+        raise TaraAPIError("Post not found.", code="not_found", http_status_code=404)
+    acc = group_rm.access(post.group_id, actor_id, fresh=True)
+    if not group_rm.content_visible(str(actor_id), acc):
+        raise TaraAPIError("Post not found.", code="not_found", http_status_code=404)
+    if not acc.is_staff:
+        raise TaraAPIError(
+            "Only the group's moderators can do this.",
+            code="permission_denied",
+            http_status_code=403,
+        )
+    return acc
 
 
 def _require_visible(viewer_id: str, post_id: str) -> Post:
@@ -202,10 +278,26 @@ def create_post(
     author_type: str = "user",
     poll: dict | None = None,
     comment_policy: str = CommentPolicy.EVERYONE,
+    group_id=None,
 ) -> Post:
     """Media are checked and bound to the post through media before the write
     transaction opens, so a media outage fails the request (503) instead of
-    publishing restricted photos as public."""
+    publishing restricted photos as public.
+
+    With ``group_id`` the author must be an active member (asked of profile);
+    the audience is forced to ``group`` whatever the client sent, the media are
+    restricted (they follow the group's visibility), and with post approval on a
+    plain member's post waits for the group's staff."""
+    approval = ApprovalState.APPROVED
+    if group_id:
+        acc = require_group_member(str(author_id), group_id)
+        if author_type != "user":
+            raise _bad_request("Only people post in groups.")
+        audience = Audience.GROUP
+        if acc.post_approval and not acc.is_staff:
+            approval = ApprovalState.PENDING
+    elif audience == Audience.GROUP:
+        raise _bad_request("Only a post in a group has the group audience.")
     if audience not in Audience.values:
         raise TaraAPIError("Invalid audience.", code="validation_error", http_status_code=400)
     if comment_policy not in CommentPolicy.values:
@@ -236,6 +328,8 @@ def create_post(
             audience=audience,
             shared_post_id=shared_post_id,
             comment_policy=comment_policy,
+            group_id=group_id or None,
+            approval_state=approval,
         )
         if poll:
             _create_poll(post, poll)
@@ -257,11 +351,61 @@ def create_post(
                 "mentions": mentions,
                 "shared_post_id": str(shared_post_id) if shared_post_id else None,
                 "created_at": post.created_at.isoformat(),
+                # Search and feed treat a post with a group as non-public (1.11).
+                "group_id": str(post.group_id) if post.group_id else None,
+                "approval_state": post.approval_state,
             },
             actor_id=str(author_id),
             partition_key=f"author:{author_id}",
         )
+        if post.group_id and approval == ApprovalState.APPROVED:
+            _emit_group_post_published(post)
     return post
+
+
+def _chunks(ids: list[str]) -> list[list[str]]:
+    return [ids[i : i + RECIPIENT_CHUNK] for i in range(0, len(ids), RECIPIENT_CHUNK)] or [[]]
+
+
+def _group_recipients(post: Post, *, opted_in_only: bool, exclude: set[str]) -> list[str]:
+    """Active members (from the read model), never anyone blocked either way with
+    the post's author."""
+    hidden = blocked_ids(str(post.author_id)) | exclude
+    return [
+        a
+        for a in group_rm.member_ids(post.group_id, opted_in_only=opted_in_only)
+        if a not in hidden
+    ]
+
+
+def _emit_group_event(event_type: str, post: Post, payload: dict, recipients, actor_id) -> None:
+    if not settings.POST_EMIT_GROUP_EVENTS:
+        return
+    payload = {**payload, "handle": group_rm.handle_of(post.group_id)}
+    chunks = _chunks(recipients)
+    for index, chunk in enumerate(chunks):
+        events.emit(
+            event_type,
+            subject_id=str(post.group_id),
+            payload={**payload, "recipients": chunk, "chunk": index, "chunks": len(chunks)},
+            actor_id=str(actor_id),
+            partition_key=f"group:{post.group_id}",
+        )
+
+
+def _emit_group_post_published(post: Post) -> None:
+    """Members who turned on post notifications for the group (off by default)."""
+    author = str(post.author_id)
+    recipients = _group_recipients(post, opted_in_only=True, exclude={author})
+    if not recipients:
+        return
+    _emit_group_event(
+        "group.post.published",
+        post,
+        {"group_id": str(post.group_id), "post_id": str(post.id), "author_id": author},
+        recipients,
+        author,
+    )
 
 
 def _editable_post(author_id: str, post_id: str, *, lock: bool = False) -> Post:
@@ -301,6 +445,15 @@ def edit_post(
     if comment_policy is not None and comment_policy not in CommentPolicy.values:
         raise _bad_request("Invalid comment policy.")
     post = _editable_post(author_id, post_id)
+    if post.group_id:
+        if audience is not None and audience != Audience.GROUP:
+            raise _bad_request("A post in a group keeps the group's audience.", "group_audience")
+        audience = None
+        require_group_member(str(author_id), post.group_id)  # removed or banned: refused
+    elif audience == Audience.GROUP:
+        raise _bad_request("Only a post in a group has the group audience.")
+    if body is None and audience is None and comment_policy is None:
+        raise _bad_request("Nothing to change.")
     if audience is not None and audience != post.audience and post.shared_post_id:
         original = Post.objects.filter(id=post.shared_post_id).first()
         if original and AUDIENCE_RANK[audience] > AUDIENCE_RANK[original.audience]:
@@ -356,20 +509,41 @@ def _emit_updated(post: Post, *, new_mentions: list[str]) -> None:
             "excerpt": post.body[:280],
             "hashtags": sorted(post.hashtags.values_list("hashtag__tag", flat=True)),
             "new_mentions": new_mentions,
+            **search_fields(post),
         },
         actor_id=str(post.author_id),
     )
 
 
+def search_fields(post: Post) -> dict:
+    """Additive ``post.updated`` fields (search v2, 1.15): what ``post.created``
+    already carries, so a post that becomes public is indexed with its type,
+    photos and date. Ids and enums only."""
+    return {
+        "type": post.type,
+        "author_type": post.author_type,
+        "media_ids": [str(m.media_id) for m in post.media.all()],  # ordered by position
+        "created_at": post.created_at.isoformat(),
+    }
+
+
 def delete_post(author_id: str, post_id: str) -> None:
+    """The author deletes their post; in a group, its moderators, admins and
+    owners may delete any post too (asked of profile first)."""
+    by = "author"
+    candidate = Post.objects.filter(id=post_id, deleted_at__isnull=True).first()
+    if candidate is not None and str(candidate.author_id) != str(author_id):
+        if not candidate.group_id:
+            raise TaraAPIError("Post not found.", code="not_found", http_status_code=404)
+        _require_group_staff(str(author_id), candidate)
+        by = "group"
     with transaction.atomic():
         # Locked: a concurrent delete waits, then finds nothing, so the
         # original's share_count goes down once.
-        post = (
-            Post.objects.select_for_update()
-            .filter(id=post_id, author_id=author_id, deleted_at__isnull=True)
-            .first()
-        )
+        qs = Post.objects.select_for_update().filter(id=post_id, deleted_at__isnull=True)
+        if by == "author":
+            qs = qs.filter(author_id=author_id)
+        post = qs.first()
         if post is None:
             raise TaraAPIError("Post not found.", code="not_found", http_status_code=404)
         post.deleted_at = timezone.now()
@@ -378,10 +552,13 @@ def delete_post(author_id: str, post_id: str) -> None:
             Post.objects.filter(id=post.shared_post_id, share_count__gt=0).update(
                 share_count=F("share_count") - 1
             )
+        payload = {"post_id": str(post.id)}
+        if by == "group":
+            payload.update(by="group", group_id=str(post.group_id))
         events.emit(
             "post.deleted",
             subject_id=str(post.id),
-            payload={"post_id": str(post.id)},
+            payload=payload,
             actor_id=str(author_id),
         )
 
@@ -421,7 +598,10 @@ def author_posts_queryset(author_id: str | None):
         author_id = str(uuid.UUID(str(author_id)))
     except ValueError as exc:
         raise _bad_request("author_id must be a UUID.") from exc
-    return with_detail(Post.objects.filter(author_id=author_id, deleted_at__isnull=True))
+    # Group posts stay in their group: never on the author's timeline (1.11).
+    return with_detail(
+        Post.objects.filter(author_id=author_id, deleted_at__isnull=True, group_id__isnull=True)
+    )
 
 
 def hashtag_posts_queryset(tag: str):
@@ -677,6 +857,10 @@ def add_comment(viewer_id: str, post_id: str, body: str, reply_to_id: str | None
         root = target.parent if target.parent_id else target
         if root.deleted_at is not None or _is_locally_blocked(viewer_id, root.author_id):
             raise TaraAPIError("Parent comment not found.", code="not_found", http_status_code=404)
+    if post.group_id:  # only members talk in a group; a ban a moment ago counts
+        require_group_member(str(viewer_id), post.group_id)
+        if post.approval_state == ApprovalState.PENDING:
+            raise _bad_request("This post is waiting for approval.", "post_pending")
     _check_comment_policy(viewer_id, post)
     mentions = extract_mentions(body)
     with transaction.atomic():
@@ -804,6 +988,10 @@ def delete_comment(viewer_id: str, comment_id: str) -> int:
         by = "author"
     elif str(comment.post.author_id) == str(viewer_id):
         by = "post_author"
+    elif comment.post.group_id:
+        visible_comment(viewer_id, comment_id)  # 404 when hidden
+        _require_group_staff(str(viewer_id), comment.post)  # 403 without the role
+        by = "group_moderator"
     else:
         visible_comment(viewer_id, comment_id)  # 404 when hidden
         raise TaraAPIError(
@@ -986,7 +1174,15 @@ def share(viewer_id: str, post_id: str, *, body: str = "", audience: str | None 
     post = _require_visible(viewer_id, post_id)
     if post.shared_post_id:
         post = _require_visible(viewer_id, post.shared_post_id)
-    audience = audience or post.audience
+    if post.group_id:
+        acc = group_rm.access(post.group_id, viewer_id)
+        if acc is None or acc.privacy != "public":
+            raise _bad_request(
+                "Posts of private and hidden groups cannot be shared.", "group_post_not_shareable"
+            )
+    if audience == Audience.GROUP:
+        raise _bad_request("A share cannot have the group audience.")
+    audience = audience or (Audience.PUBLIC if post.group_id else post.audience)
     if AUDIENCE_RANK[audience] > AUDIENCE_RANK[post.audience]:
         raise TaraAPIError(
             "A share cannot reach further than the original post.",
@@ -1160,3 +1356,203 @@ def report_post(viewer_id: str, post_id: str, reason: str) -> PostReport:
     except IntegrityError:  # a concurrent duplicate won the unique constraint
         return PostReport.objects.get(post=post, reporter_id=viewer_id)
     return report
+
+
+# ---- groups (roadmap 1.11) --------------------------------------------------------
+
+GROUP_VIEWS = ("discussion", "featured", "pending", "media")
+MAX_GROUP_REPORTS = 100
+
+
+def _group_uuid(group_id) -> str:
+    try:
+        return str(uuid.UUID(str(group_id)))
+    except ValueError as exc:
+        raise _bad_request("group_id must be a UUID.") from exc
+
+
+def group_posts_queryset(viewer_id: str, group_id, view: str = "discussion"):
+    """One group's posts, filtered in SQL before paging (one access check for the
+    whole page). 404 when the viewer may not read the group's content.
+
+    ``discussion``: published posts, newest first. ``featured``: pinned
+    announcements, newest pin first. ``pending``: posts waiting for approval
+    (the staff see all of them, others only their own). ``media``: published
+    posts with photos."""
+    if view not in GROUP_VIEWS:
+        raise _bad_request(f"view must be one of {', '.join(GROUP_VIEWS)}.")
+    group_id = _group_uuid(group_id)
+    acc = group_rm.access(group_id, viewer_id)
+    if not group_rm.content_visible(str(viewer_id), acc):
+        raise TaraAPIError("Group not found.", code="not_found", http_status_code=404)
+    qs = (
+        Post.objects.filter(group_id=group_id, deleted_at__isnull=True)
+        .exclude(moderation_status=Post.ModerationStatus.REMOVED)
+        .exclude(author_id__in=list(blocked_ids(str(viewer_id))))
+    )
+    if view == "pending":
+        qs = qs.filter(approval_state=ApprovalState.PENDING)
+        if not acc.is_staff:
+            qs = qs.filter(author_id=viewer_id)
+        return with_detail(qs.order_by("-created_at", "-id"))
+    qs = qs.filter(approval_state=ApprovalState.APPROVED)
+    if view == "featured":
+        return with_detail(qs.filter(pinned_at__isnull=False).order_by("-pinned_at", "-id"))
+    if view == "media":
+        qs = qs.filter(Exists(PostMedia.objects.filter(post=OuterRef("pk"))))
+    return with_detail(qs.order_by("-created_at", "-id"))
+
+
+def _staff_post(actor_id: str, post_id: str, *, pending: bool | None = None) -> Post:
+    post = Post.objects.filter(id=post_id, deleted_at__isnull=True).first()
+    if post is None or not post.group_id or not post.is_visible:
+        raise TaraAPIError("Post not found.", code="not_found", http_status_code=404)
+    _require_group_staff(actor_id, post)
+    if pending is not None and (post.approval_state == ApprovalState.PENDING) != pending:
+        raise TaraAPIError(
+            "This post is not waiting for approval." if pending else "Approve this post first.",
+            code="conflict",
+            http_status_code=409,
+        )
+    return post
+
+
+def approve_group_post(actor_id: str, post_id: str) -> Post:
+    """A moderator, admin or owner publishes a waiting post. Members who opted in
+    hear about it then."""
+    _staff_post(actor_id, post_id, pending=True)
+    with transaction.atomic():
+        post = Post.objects.select_for_update().get(id=post_id)
+        if post.approval_state != ApprovalState.PENDING or post.deleted_at is not None:
+            raise TaraAPIError("Post not found.", code="not_found", http_status_code=404)
+        post.approval_state = ApprovalState.APPROVED
+        post.save(update_fields=["approval_state", "updated_at"])
+        _emit_group_post_published(post)
+    return with_detail(Post.objects.filter(id=post.id)).get()
+
+
+def decline_group_post(actor_id: str, post_id: str) -> None:
+    """A waiting post that is declined is deleted (the author is not told)."""
+    _staff_post(actor_id, post_id, pending=True)
+    with transaction.atomic():
+        post = Post.objects.select_for_update().filter(id=post_id, deleted_at__isnull=True).first()
+        if post is None or post.approval_state != ApprovalState.PENDING:
+            raise TaraAPIError("Post not found.", code="not_found", http_status_code=404)
+        post.deleted_at = timezone.now()
+        post.save(update_fields=["deleted_at"])
+        events.emit(
+            "post.deleted",
+            subject_id=str(post.id),
+            payload={"post_id": str(post.id), "by": "group", "group_id": str(post.group_id)},
+            actor_id=str(actor_id),
+        )
+
+
+def pin_group_post(actor_id: str, post_id: str, *, pin: bool) -> Post:
+    """Pin a published post as an announcement (members are told), or unpin it."""
+    _staff_post(actor_id, post_id, pending=False)
+    with transaction.atomic():
+        post = Post.objects.select_for_update().get(id=post_id)
+        if pin and post.pinned_at is None:
+            post.pinned_at = timezone.now()
+            post.save(update_fields=["pinned_at", "updated_at"])
+            recipients = _group_recipients(post, opted_in_only=False, exclude={str(actor_id)})
+            _emit_group_event(
+                "group.announcement.pinned",
+                post,
+                {
+                    "group_id": str(post.group_id),
+                    "post_id": str(post.id),
+                    "author_id": str(post.author_id),
+                },
+                recipients,
+                actor_id,
+            )
+        elif not pin and post.pinned_at is not None:
+            post.pinned_at = None
+            post.save(update_fields=["pinned_at", "updated_at"])
+    return with_detail(Post.objects.filter(id=post.id)).get()
+
+
+def _require_group_staff_for(actor_id: str, group_id: str):
+    acc = group_rm.access(group_id, actor_id, fresh=True)
+    if not group_rm.content_visible(str(actor_id), acc):
+        raise TaraAPIError("Group not found.", code="not_found", http_status_code=404)
+    if not acc.is_staff:
+        raise TaraAPIError(
+            "Only the group's moderators can do this.",
+            code="permission_denied",
+            http_status_code=403,
+        )
+    return acc
+
+
+def _report_item(target_type: str, row, post_id: str) -> dict:
+    return {
+        "target_type": target_type,
+        "target_id": str(row.id),
+        "post_id": post_id,
+        "author_id": str(row.author_id),
+        "excerpt": row.body[:280],
+        "report_count": row.n,
+        "reasons": sorted(set(row.reports.values_list("reason", flat=True)[:20]))[:5],
+        "last_reported_at": row.last,
+    }
+
+
+def group_reported_content(actor_id: str, group_id) -> list[dict]:
+    """Posts and comments of the group that members reported, for the group's
+    staff: the newest report first, leaving out what a moderator already kept
+    (until it is reported again) and what is already gone."""
+    group_id = _group_uuid(group_id)
+    _require_group_staff_for(actor_id, group_id)
+    reviewed = {
+        (r.target_type, str(r.target_id)): r.reviewed_at
+        for r in GroupReportReview.objects.filter(group_id=group_id)
+    }
+    hidden = blocked_ids(str(actor_id))
+    posts = (
+        Post.objects.filter(group_id=group_id, deleted_at__isnull=True, reports__isnull=False)
+        .exclude(moderation_status=Post.ModerationStatus.REMOVED)
+        .annotate(n=Count("reports", distinct=True), last=Max("reports__created_at"))
+        .order_by("-last")[:MAX_GROUP_REPORTS]
+    )
+    comments = (
+        Comment.objects.filter(
+            post__group_id=group_id, deleted_at__isnull=True, reports__isnull=False
+        )
+        .annotate(n=Count("reports", distinct=True), last=Max("reports__created_at"))
+        .order_by("-last")[:MAX_GROUP_REPORTS]
+    )
+    items = [_report_item("post", p, str(p.id)) for p in posts] + [
+        _report_item("comment", c, str(c.post_id)) for c in comments
+    ]
+
+    def keep(item: dict) -> bool:
+        seen = reviewed.get((item["target_type"], item["target_id"]))
+        return item["author_id"] not in hidden and (seen is None or seen < item["last_reported_at"])
+
+    items = sorted(filter(keep, items), key=lambda i: i["last_reported_at"], reverse=True)
+    for item in items:
+        item["last_reported_at"] = item["last_reported_at"].isoformat()
+    return items[:MAX_GROUP_REPORTS]
+
+
+def dismiss_group_report(actor_id: str, group_id, target_type: str, target_id: str) -> None:
+    """Keep a reported post or comment: it leaves the queue until reported again."""
+    if target_type not in ("post", "comment"):
+        raise _bad_request("target_type must be post or comment.")
+    group_id = _group_uuid(group_id)
+    _require_group_staff_for(actor_id, group_id)
+    in_group = (
+        Post.objects.filter(id=target_id, group_id=group_id)
+        if target_type == "post"
+        else Comment.objects.filter(id=target_id, post__group_id=group_id)
+    )
+    if not in_group.exists():
+        raise TaraAPIError("Not found.", code="not_found", http_status_code=404)
+    GroupReportReview.objects.update_or_create(
+        target_type=target_type,
+        target_id=target_id,
+        defaults={"group_id": group_id, "reviewed_by": actor_id},
+    )

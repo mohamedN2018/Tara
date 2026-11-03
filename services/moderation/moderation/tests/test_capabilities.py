@@ -126,3 +126,19 @@ def test_stats_count_open_cases(client, settings):
     token = mint_internal_token(issuer="admin", audience="moderation-internal")
     resp = client.get("/internal/v1/stats/", HTTP_AUTHORIZATION=f"Bearer {token}")
     assert resp.json()["data"]["stats"] == {"open_cases": 1}
+
+
+def test_account_stats_count_open_cases_about_the_account(client, settings):
+    """Admin's user console (8.6): cases about the user or their content, open only."""
+    settings.TARA_INTERNAL_JWT_SECRET = "shared-internal-secret-every-service-holds-0123456789"
+    owner = _acct()
+    _case(owner_id=owner)
+    services.ingest_report(reporter_id=_acct(), target_type="user", target_id=owner)
+    closed = _case(owner_id=owner)
+    services.take_action(str(closed.id), _acct(), "dismiss")
+    _case(owner_id=_acct())
+    url = f"/internal/v1/stats/accounts/{owner}/"
+    assert client.get(url).status_code == 401
+    token = mint_internal_token(issuer="admin", audience="moderation-internal")
+    resp = client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
+    assert resp.json()["data"]["stats"] == {"open_cases": 2}

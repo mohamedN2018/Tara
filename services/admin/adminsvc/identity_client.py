@@ -13,7 +13,7 @@ import requests
 from django.conf import settings
 
 from tara_common.auth import mint_internal_token
-from tara_common.exceptions import DependencyUnavailable, TaraAPIError
+from tara_common.exceptions import Conflict, DependencyUnavailable, TaraAPIError
 from tara_common.middleware import current_request_id
 
 logger = logging.getLogger("tara.admin.identity_client")
@@ -40,7 +40,7 @@ def _headers() -> dict:
     return headers
 
 
-def _call(method: str, path: str, **kwargs):
+def _request(method: str, path: str, **kwargs) -> dict:
     try:
         resp = requests.request(
             method,
@@ -54,14 +54,20 @@ def _call(method: str, path: str, **kwargs):
         raise DependencyUnavailable("Identity is unavailable.") from exc
     if resp.status_code == 404:
         raise TaraAPIError("Account not found.", code="not_found", http_status_code=404)
-    if resp.status_code == 400:
-        # Identity validated the change (e.g. the locked admin role): pass it on.
+    if resp.status_code in (400, 409, 429):
+        # Identity validated the change (the locked admin role, a staff account
+        # that can't be suspended, a resend too soon): pass it on.
         try:
             error = resp.json().get("error") or {}
         except ValueError:
             error = {}
+        message = str(error.get("message") or "Invalid request.")
+        if resp.status_code == 409:
+            raise Conflict(message, code="conflict")
+        if resp.status_code == 429:
+            raise TaraAPIError(message, code="throttled", http_status_code=429)
         raise TaraAPIError(
-            str(error.get("message") or "Invalid request."),
+            message,
             code="validation_error",
             details=error.get("details") if isinstance(error.get("details"), list) else None,
             http_status_code=400,
@@ -73,7 +79,16 @@ def _call(method: str, path: str, **kwargs):
     if not resp.ok:
         logger.warning("identity role call failed", extra={"status": resp.status_code})
         raise DependencyUnavailable("Identity is unavailable.")
-    return resp.json()["data"]
+    return resp.json()
+
+
+def _call(method: str, path: str, **kwargs):
+    return _request(method, path, **kwargs)["data"]
+
+
+def _call_page(method: str, path: str, **kwargs) -> dict:
+    body = _request(method, path, **kwargs)
+    return {"data": body.get("data") or [], "page": body.get("page") or {}}
 
 
 def account_roles(account_id: str) -> dict:
@@ -106,3 +121,60 @@ def capability_matrix() -> dict:
 
 def update_capabilities(changes: list[dict], actor_id: str) -> dict:
     return _call("PUT", "capabilities/", json={"changes": changes, "actor_id": str(actor_id)})
+
+
+# ---- user management console (8.6) and suspensions (8.4) --------------------
+
+
+def search_accounts(q: str, cursor: str | None = None, limit: int | None = None) -> dict:
+    """``{"data": [...], "page": {...}}``: accounts by id or email prefix, masked."""
+    params = {"q": q}
+    if cursor:
+        params["cursor"] = cursor
+    if limit:
+        params["limit"] = str(limit)
+    return _call_page("GET", "accounts/search/", params=params)
+
+
+def account_summaries(ids: list[str]) -> list[dict]:
+    return _call("POST", "accounts/summaries/", json={"ids": [str(i) for i in ids]})
+
+
+def account_overview(account_id: str) -> dict:
+    return _call("GET", f"accounts/{account_id}/overview/")
+
+
+def account_personal_data(account_id: str) -> dict:
+    return _call("GET", f"accounts/{account_id}/personal/")
+
+
+def suspend(
+    account_id: str, *, actor_id: str, reason: str, until: str | None, idempotency_key: str
+) -> dict:
+    return _call(
+        "POST",
+        f"accounts/{account_id}/suspension/",
+        json={
+            "actor_id": str(actor_id),
+            "reason": reason,
+            "until": until,
+            "idempotency_key": idempotency_key,
+            "source": "admin",
+        },
+    )
+
+
+def unsuspend(account_id: str, *, actor_id: str, reason: str) -> dict:
+    return _call(
+        "DELETE",
+        f"accounts/{account_id}/suspension/",
+        json={"actor_id": str(actor_id), "reason": reason},
+    )
+
+
+def sign_out_everywhere(account_id: str, *, actor_id: str) -> dict:
+    return _call("POST", f"accounts/{account_id}/sign-out/", json={"actor_id": str(actor_id)})
+
+
+def resend_verification(account_id: str, *, actor_id: str) -> dict:
+    return _call("POST", f"accounts/{account_id}/verification/", json={"actor_id": str(actor_id)})

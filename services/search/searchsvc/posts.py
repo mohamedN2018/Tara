@@ -104,13 +104,56 @@ def apply_post_event(e: EventEnvelope, *, deleted: bool = False) -> None:
 
         author_id = p.get("author_id") or None
         if public:
-            backend.index_document(
-                "post", post_id, title="", body=p.get("excerpt", ""), owner_id=author_id
-            )
+            backend.index_document("post", post_id, **post_doc(post_id, p, author_id))
             set_post_hashtags(post_id, tags_for(p), author_id=author_id)
         else:
             backend.delete_document("post", post_id)
             set_post_hashtags(post_id, set())
+
+
+# Post types whose media are photos: the "photos" search tab.
+PHOTO_TYPES = {"image"}
+MAX_MEDIA_IDS = 4
+
+
+def post_doc(post_id: str, p: dict, author_id) -> dict:
+    """Document fields for a public post. ``post.updated`` from before 1.15 has no
+    type, media or creation time: those are kept from the existing document."""
+    previous = (
+        SearchDocument.objects.filter(doc_type="post", doc_id=post_id)
+        .values_list("extra", flat=True)
+        .first()
+    ) or {}
+    post_type = p.get("type") or previous.get("post_type") or "text"
+    media = p.get("media_ids")
+    media = [str(m) for m in media][:MAX_MEDIA_IDS] if isinstance(media, list) else None
+    if media is None:
+        media = previous.get("media_ids") or []
+    created_at = p.get("created_at") or previous.get("created_at")
+    photo = post_type in PHOTO_TYPES and bool(media)
+    return {
+        "title": "",
+        "body": p.get("excerpt", ""),
+        "owner_id": author_id,
+        "category": "photo" if photo else post_type,
+        "source_at": _parse(created_at),
+        "extra": {
+            "author_type": p.get("author_type") or previous.get("author_type") or "user",
+            "post_type": post_type,
+            "media_ids": media,
+            "created_at": created_at,
+        },
+    }
+
+
+def _parse(value) -> datetime | None:
+    try:
+        moment = parse_datetime(value) if value else None
+    except (TypeError, ValueError):
+        return None
+    if moment is not None and timezone.is_naive(moment):
+        moment = moment.replace(tzinfo=UTC)
+    return moment
 
 
 def set_post_hashtags(post_id: str, tags: set[str], *, author_id=None) -> None:
@@ -135,13 +178,17 @@ def set_post_hashtags(post_id: str, tags: set[str], *, author_id=None) -> None:
         ignore_conflicts=True,
     )
     for tag in sorted(tags):
-        backend.index_document("hashtag", tag, title=f"#{tag}", body="")
+        backend.index_document("hashtag", tag, **hashtag_doc(tag))
     if removed:
         still_used = set(
             PublicPostHashtag.objects.filter(tag__in=removed).values_list("tag", flat=True)
         )
         for tag in sorted(removed - still_used):
             backend.delete_document("hashtag", tag)
+
+
+def hashtag_doc(tag: str) -> dict:
+    return {"title": f"#{tag}", "body": "", "extra": {"tag": tag}}
 
 
 _CHUNK = 500
@@ -280,5 +327,5 @@ def _restore_hashtag_if_backed(tag: str) -> bool:
         backing = PublicPostHashtag.objects.select_for_update().filter(tag=tag)
         if not list(backing.values_list("id", flat=True)[:1]):
             return False  # its last public post went away meanwhile
-        backend.index_document("hashtag", tag, title=f"#{tag}", body="")
+        backend.index_document("hashtag", tag, **hashtag_doc(tag))
         return True

@@ -111,3 +111,54 @@ def audit_ad_review_decided(env: EventEnvelope) -> None:
         target_id=_payload(env).get("creative_id") or env.subject_id,
         detail_keys=("decision",),
     )
+
+
+# ---- account actions by staff (8.4, 8.6); identity emits them ------------------
+
+
+def _account_target(env: EventEnvelope):
+    return _payload(env).get("account_id") or env.subject_id
+
+
+@on_event("account.suspended")
+def audit_account_suspended(env: EventEnvelope) -> None:
+    _record(
+        env,
+        "account.suspended",
+        target_type="account",
+        target_id=_account_target(env),
+        detail_keys=("suspension_id", "until", "source"),
+    )
+
+
+@on_event("account.unsuspended")
+def audit_account_unsuspended(env: EventEnvelope) -> None:
+    _record(
+        env,
+        "account.unsuspended",
+        target_type="account",
+        target_id=_account_target(env),
+        detail_keys=("suspension_id", "expired"),
+    )
+
+
+@on_event("account.signed_out")
+def audit_account_signed_out(env: EventEnvelope) -> None:
+    _record(
+        env,
+        "account.signed_out",
+        target_type="account",
+        target_id=_account_target(env),
+        detail_keys=("sessions",),
+    )
+
+
+@on_event("account.verification.resent")
+def audit_account_verification_resent(env: EventEnvelope) -> None:
+    _record(
+        env,
+        "account.verification_resent",
+        target_type="account",
+        target_id=_account_target(env),
+        detail_keys=(),
+    )

@@ -31,6 +31,7 @@ SERVICE_NAME = "search"
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.auth",
+    "django.contrib.postgres",
     "rest_framework",
     "drf_spectacular",
     "corsheaders",
@@ -86,7 +87,10 @@ REST_FRAMEWORK = {
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Tara Search API",
-    "DESCRIPTION": "Users, pages, posts, listings, hashtags search + autocomplete.",
+    "DESCRIPTION": (
+        "Unified search: people, posts, photos, pages, groups, listings, events and"
+        " hashtags; suggestions, recent searches and trending hashtags."
+    ),
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
     "SCHEMA_PATH_PREFIX": "/api/v1",
@@ -102,6 +106,15 @@ TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-s
 SEARCH_USE_OPENSEARCH = env_bool("SEARCH_USE_OPENSEARCH", False)
 OPENSEARCH_URL = os.getenv("OPENSEARCH_URL", "http://opensearch:9200")
 OPENSEARCH_INDEX = os.getenv("OPENSEARCH_INDEX", "tara")
+
+# Internal reads (short-lived HS256 tokens, timeout, circuit breaker):
+# graph for the viewer's relationships on people and page results, the owners'
+# export endpoints for the backfill, and post for an event's current state.
+GRAPH_INTERNAL_URL = os.getenv("GRAPH_INTERNAL_URL", "http://graph:8000")
+POST_INTERNAL_URL = os.getenv("POST_INTERNAL_URL", "http://post:8000")
+PROFILE_INTERNAL_URL = os.getenv("PROFILE_INTERNAL_URL", "http://profile:8000")
+MARKETPLACE_INTERNAL_URL = os.getenv("MARKETPLACE_INTERNAL_URL", "http://marketplace:8000")
+SEARCH_INTERNAL_TIMEOUT = float(os.getenv("SEARCH_INTERNAL_TIMEOUT", "1.5"))
 
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")
 TARA_EVENT_PUBLISHER = "null"  # Search is read-only-derived; it does not publish events

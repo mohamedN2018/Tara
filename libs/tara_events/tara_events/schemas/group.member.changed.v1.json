@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/group.member.changed.v1.json",
+  "title": "group.member.changed v1 payload",
+  "description": "An account's role or state in a group changed. Partition key group:<id>. Post keeps its read model from it; notification tells invitees, staff (requests), approved members and role changes.",
+  "type": "object",
+  "properties": {
+    "group_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "account_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "role": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "owner",
+        "admin",
+        "moderator",
+        "member",
+        null
+      ]
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "requested",
+        "invited",
+        "active",
+        "banned",
+        "none"
+      ],
+      "description": "none: the account has no relation any more (left, removed, declined, unbanned)."
+    },
+    "previous_role": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "owner",
+        "admin",
+        "moderator",
+        "member",
+        null
+      ]
+    },
+    "previous_state": {
+      "type": "string",
+      "enum": [
+        "requested",
+        "invited",
+        "active",
+        "banned",
+        "none"
+      ]
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "created",
+        "joined",
+        "requested",
+        "approved",
+        "declined",
+        "cancelled",
+        "invited",
+        "invite_declined",
+        "left",
+        "removed",
+        "banned",
+        "unbanned",
+        "role_changed",
+        "settings_changed"
+      ]
+    },
+    "notify_posts": {
+      "type": "boolean"
+    },
+    "privacy": {
+      "type": "string",
+      "enum": [
+        "public",
+        "private",
+        "hidden"
+      ]
+    },
+    "handle": {
+      "type": "string",
+      "maxLength": 30,
+      "description": "For notification links; blank for a hidden group."
+    },
+    "recipients": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "maxItems": 100,
+      "description": "Only for action requested: the group's owners, admins and moderators."
+    }
+  },
+  "required": [
+    "group_id",
+    "account_id",
+    "role",
+    "state",
+    "previous_state",
+    "action",
+    "notify_posts",
+    "privacy",
+    "handle",
+    "recipients"
+  ],
+  "additionalProperties": false
+}

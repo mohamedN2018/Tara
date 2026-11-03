@@ -85,6 +85,10 @@ export interface Post {
   poll?: Poll | null;
   shared_post_id?: string | null;
   shared_post?: SharedPost | null;
+  /** Group posts (1.11): the server forces `audience: "group"`. */
+  group_id?: string | null;
+  approval_state?: "approved" | "pending";
+  pinned_at?: string | null;
   created_at: string;
   // Client-side: built from a feed snapshot, so `body` may be a truncated
   // excerpt and it must not be edited.

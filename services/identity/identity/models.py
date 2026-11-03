@@ -103,6 +103,59 @@ class AccountRole(models.Model):
         ]
 
 
+class AccountSuspension(models.Model):
+    """One suspension of an account (roadmap 8.4, 8.6). Identity owns them.
+
+    While a row has no ``lifted_at`` the account's status is ``suspended``:
+    login and refresh refuse it, and its sessions were revoked when the row was
+    made. ``until`` (optional) is when it lifts by itself; the beat task and the
+    next login attempt lift an expired one. ``previous_status`` is what the
+    account goes back to (a pending account stays pending). The idempotency key
+    makes a retried request (admin's dialog, moderation's case action in 8.4)
+    apply once. ``reason`` is staff-written and never goes on the bus.
+    """
+
+    class Source(models.TextChoices):
+        ADMIN = "admin", "Admin console"
+        MODERATION = "moderation", "Moderation case"
+
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="suspensions")
+    reason = models.CharField(max_length=500)
+    until = models.DateTimeField(null=True, blank=True)
+    previous_status = models.CharField(max_length=16, choices=Account.Status.choices)
+    source = models.CharField(max_length=16, choices=Source.choices, default=Source.ADMIN)
+    idempotency_key = models.CharField(max_length=100, unique=True)
+    created_by = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    lifted_at = models.DateTimeField(null=True, blank=True)
+    # None with ``lifted_at`` set: lifted by the system (expiry).
+    lifted_by = models.UUIDField(null=True, blank=True)
+    lift_reason = models.CharField(max_length=500, blank=True, default="")
+
+    class Meta:
+        db_table = "account_suspension"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["account"],
+                condition=models.Q(lifted_at__isnull=True),
+                name="suspension_one_active_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["until"],
+                condition=models.Q(lifted_at__isnull=True, until__isnull=False),
+                name="suspension_expiry_idx",
+            ),
+            models.Index(fields=["account", "-created_at"], name="suspension_account_idx"),
+        ]
+
+    @property
+    def is_active(self) -> bool:
+        return self.lifted_at is None
+
+
 class RoleCapability(models.Model):
     """One cell of the capability matrix that differs from the code defaults.
 

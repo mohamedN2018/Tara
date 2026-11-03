@@ -10,6 +10,7 @@ import {
   Settings,
   ShoppingBag,
   Users,
+  UsersRound,
 } from "lucide-vue-next";
 
 export interface NavItem {
@@ -25,6 +26,7 @@ export interface NavItem {
 export const navItems: NavItem[] = [
   { name: "home", route: "/home", labelKey: "nav.home", icon: Home },
   { name: "friends", route: "/friends", labelKey: "nav.friends", icon: Users },
+  { name: "groups", route: "/groups", labelKey: "nav.groups", icon: UsersRound },
   { name: "messages", route: "/messages", labelKey: "nav.messages", icon: MessageCircle, badge: "messages" },
   { name: "notifications", route: "/notifications", labelKey: "nav.notifications", icon: Bell, badge: "notifications" },
   { name: "search", route: "/search", labelKey: "nav.explore", icon: Search },

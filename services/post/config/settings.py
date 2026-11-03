@@ -82,6 +82,9 @@ REST_FRAMEWORK = {
 }
 # Post and comment reports per account (each can open a moderation case).
 POST_REPORT_RATE = os.getenv("POST_REPORT_RATE", "20/hour")
+# group.post.published / group.announcement.pinned (1.11): two-release rollout
+# (roadmap 3.3); deploy notification first, then turn this on.
+POST_EMIT_GROUP_EVENTS = env_bool("POST_EMIT_GROUP_EVENTS", True)
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Tara Post API",

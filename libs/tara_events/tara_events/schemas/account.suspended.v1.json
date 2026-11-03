@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/account.suspended.v1.json",
+  "title": "account.suspended v1 payload",
+  "description": "Identity suspended an account and revoked its sessions and refresh tokens (8.4, 8.6). subject_id is the account; actor_id is the staff member (null for the system). No reason text: it stays in identity. Consumers hide what the account owns until account.unsuspended (8.5).",
+  "type": "object",
+  "properties": {
+    "account_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "until": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "description": "When the suspension lifts by itself; null until staff lift it."
+    },
+    "suspension_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "admin",
+        "moderation"
+      ]
+    }
+  },
+  "required": [
+    "account_id",
+    "until",
+    "suspension_id"
+  ],
+  "additionalProperties": false
+}

@@ -193,6 +193,9 @@ def login(
         if account is not None:
             emit_security_event(account, "login_failed", {}, ip_region=ip_region)
         raise InvalidCredentials()
+    from .account_admin import lift_if_expired  # account_admin imports this module
+
+    account = lift_if_expired(account)  # a suspension past its end date ends here
     if not account.is_usable:
         emit_security_event(
             account, "login_blocked", {"status": account.status}, ip_region=ip_region

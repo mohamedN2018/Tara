@@ -76,6 +76,7 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         **_throttling["DEFAULT_THROTTLE_RATES"],
         "audit_export": os.getenv("ADMIN_AUDIT_EXPORT_RATE", "10/min"),
+        "user_reveal": os.getenv("ADMIN_USER_REVEAL_RATE", "30/hour"),
     },
     "DEFAULT_AUTHENTICATION_CLASSES": ["tara_common.auth.JWTAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
@@ -140,6 +141,16 @@ STATS_TARGETS = {
     "moderation": "http://moderation:8000",
 }
 STATS_TIMEOUT = float(os.getenv("ADMIN_STATS_TIMEOUT", "5.0"))
+
+# User management console (8.6): names from profile, and what one account owns
+# (GET /internal/v1/stats/accounts/<id>/, shared internal secret).
+PROFILE_INTERNAL_URL = os.getenv("PROFILE_INTERNAL_URL", "http://profile:8000")
+USER_COUNT_TARGETS = {
+    "post": STATS_TARGETS["post"],
+    "marketplace": STATS_TARGETS["marketplace"],
+    "moderation": STATS_TARGETS["moderation"],
+}
+USERS_CALL_TIMEOUT = float(os.getenv("ADMIN_USERS_CALL_TIMEOUT", "3"))
 STATS_POLL_SECONDS = float(os.getenv("ADMIN_STATS_POLL_SECONDS", "300"))
 
 # The audit CSV export streams at most this many rows (newest first).

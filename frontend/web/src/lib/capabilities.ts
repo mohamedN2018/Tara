@@ -15,6 +15,10 @@ export const CAPABILITIES = [
   "moderation.appeal.resolve",
   "ads.review",
   "admin.users.view",
+  "admin.users.reveal",
+  "admin.users.suspend",
+  "admin.users.sign_out",
+  "admin.users.resend_verification",
   "admin.roles.manage",
   "admin.capabilities.manage",
   "admin.flags.manage",
@@ -35,6 +39,10 @@ export const IMPLIES: Readonly<Record<string, readonly string[]>> = {
   "moderation.case.act": ["moderation.case.view"],
   "moderation.appeal.resolve": ["moderation.appeal.view"],
   "admin.audit.export": ["admin.audit.view"],
+  "admin.users.reveal": ["admin.users.view"],
+  "admin.users.suspend": ["admin.users.view"],
+  "admin.users.sign_out": ["admin.users.view"],
+  "admin.users.resend_verification": ["admin.users.view"],
 };
 
 export const DEFAULT_ROLE_CAPABILITIES: Readonly<Record<string, readonly string[]>> = {

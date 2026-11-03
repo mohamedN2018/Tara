@@ -205,6 +205,172 @@ never served, but it does take up space.
 - **Edge:** nginx now sets `X-Request-Id` itself and drops a client's
   `X-Geo-Region`, so a client cannot choose what reaches the audit log.
 
+### Upgrading: DLQ topology
+
+Roadmap 1.0c. Before this release every `<service>.events.dlq` was bound to
+`tara.events.dlx` with `#`, so each DLQ received every service's dead letters.
+Now each DLQ is bound with its own queue name, and each queue dead-letters with
+its own name as routing key: the queue argument `x-dead-letter-routing-key` on
+fresh installs, and a policy `tara-dlq-<queue>` on queues that already exist.
+RabbitMQ refuses to redeclare an existing queue with a new argument (406), so the
+consumers keep the old arguments, log `keeps its pre-1.0c arguments`, and get the
+routing key from the policy. Retry queues do not change.
+
+The tool is `python -m tara_events.topology` and runs in any service
+container. It uses `RABBITMQ_URL` and the management API at
+`http://rabbitmq:15672` (set `RABBITMQ_MANAGEMENT_URL` to override it).
+Every command is safe to re-run.
+
+A fresh install needs none of this. Running it there is harmless: the policies
+repeat what the queue arguments already say.
+
+1. **Deploy the release.** All consumers restart as usual. Nothing changes in
+   routing yet, because the old `#` bindings are still there. `--replay-dlq`
+   now replays only its own service's dead letters, and leaves other services'
+   copies for step 4.
+2. **Back up the broker definitions:**
+
+   ```bash
+   docker exec tara-rabbitmq-1 rabbitmqctl export_definitions /tmp/defs-before-1.0c.json
+   docker cp tara-rabbitmq-1:/tmp/defs-before-1.0c.json /var/backups/tara/
+   ```
+
+3. **Dry run.** It changes nothing, and it lists the bindings, policies and
+   unbinds it would make, with a per-DLQ table (`before`, `kept`, `moved_out`,
+   `moved_in`, `dropped`, `after`):
+
+   ```bash
+   docker exec tara-feed-consumer-1 python -m tara_events.topology migrate --dry-run
+   ```
+
+4. **Apply** at a quiet hour. It takes seconds. The order matters, and the tool
+   follows it:
+   1. It binds each DLQ with its queue name.
+   2. It sets the policies and waits until RabbitMQ reports them applied. If a
+      policy is shadowed, it stops here with nothing unbound.
+   3. It removes the `#` bindings.
+   4. It sorts the messages already in the DLQs by the origin queue in
+      `x-death`. A service's own messages stay. A foreign copy whose origin DLQ
+      already holds the same event is a duplicate of the old fan-out and is
+      dropped. Any other foreign copy moves to its origin's DLQ (publisher
+      confirm first, then ack) and gets the `x-tara-origin-queue` header.
+      Messages with no known origin stay where they are. Pass
+      `--keep-duplicates` to move duplicates instead of dropping them.
+
+   ```bash
+   docker exec tara-feed-consumer-1 python -m tara_events.topology migrate
+   ```
+
+   It exits 1 and prints `PROBLEM:` when a count does not add up, for example
+   when dead letters arrived during the run. Re-run it in that case.
+5. **Verify:**
+
+   ```bash
+   docker exec tara-feed-consumer-1 python -m tara_events.topology status   # exit 0: every DLQ bound only to its own queue, every policy applied
+   docker exec tara-feed-consumer-1 python -m tara_events.topology migrate  # a second run: "no topology changes needed", 0 moved, 0 dropped
+   ```
+
+   On the broker, `rabbitmqctl list_policies` shows one `tara-dlq-*` policy
+   per queue, and `rabbitmqctl list_bindings source_name destination_name routing_key | grep dlx`
+   shows no `#` binding.
+6. **Rollback** (the same container, any time):
+
+   ```bash
+   docker exec tara-feed-consumer-1 python -m tara_events.topology rollback
+   ```
+
+   It re-adds `#` first and only then deletes the policies, so no dead letter
+   is ever left without a matching binding. Messages that were moved stay in
+   their origin's DLQ, where they belong either way. The previous image also
+   works against both topologies, so the code can be rolled back
+   independently. `rabbitmqctl import_definitions` only adds objects and does
+   not remove the policies, so use `rollback` rather than the backup to undo
+   the change.
+
+**Policies do not merge.** Only the highest-priority policy that matches a queue
+applies. The `tara-dlq-*` policies have priority 10 and match one queue each.
+A later queue policy on `*.events` (for example a length limit) must either
+include `dead-letter-exchange` and `dead-letter-routing-key`, or have a lower
+priority. Otherwise dead letters go back to the event routing key, which no
+DLQ is bound to any more, and they are dropped. `topology status` reports a
+shadowed policy. The 1.0g alternate-exchange policy applies to exchanges, so
+it does not conflict.
+
+### Upgrading: user management console (8.6) and suspensions (8.4)
+
+- **Migrations (additive, run at boot):** identity `0005_account_suspension`
+  (a new table) and admin `0005_auditentry_reason` (a column with a constant
+  default, no rewrite).
+- **New variables, all optional:** on identity
+  `IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS` (default `true`) and
+  `IDENTITY_SUSPENSION_EXPIRY_SECONDS` (60, how often `identity-beat` lifts
+  suspensions past their end date); on admin `PROFILE_INTERNAL_URL`
+  (`http://profile:8000`), `ADMIN_USERS_CALL_TIMEOUT` (3) and
+  `ADMIN_USER_REVEAL_RATE` (`30/hour` per staff member).
+- **Order (new event types):** on an existing install deploy once with
+  `IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS=false`, so `admin-consumer` binds
+  `account.suspended`, `account.unsuspended`, `account.signed_out` and
+  `account.verification.resent` first, then set it to `true` and redeploy
+  identity. With the flag off, suspensions still revoke sessions; only the
+  events (and so their audit rows) are missing.
+- **Services:** profile (`/internal/v1/profiles/search/`, `by-account/`),
+  post, marketplace and moderation (`/internal/v1/stats/accounts/<id>/`) gain
+  internal read endpoints. Until they are redeployed, the console's handle and
+  name search answers 503 and the per-account counts show as unavailable.
+- **No new containers, no one-off commands.**
+
+### Upgrading: search v2 (1.15)
+
+- **Migrations (search, run at boot):** `0005_search_v2` (new columns with
+  `db_default`, so the old indexer can keep writing, plus two new tables),
+  `0006_renormalize_documents` (fills the normalised columns in committed
+  batches) and `0007_search_v2_indexes` (`pg_trgm`, then the trigram and
+  recent-sort indexes built `CONCURRENTLY`). No other service migrates.
+- **New variables, all optional:** on profile `PROFILE_EMIT_PAGE_UPDATED`
+  (default `true`); on search `POST_INTERNAL_URL`, `PROFILE_INTERNAL_URL`,
+  `MARKETPLACE_INTERNAL_URL` (the service names on port 8000) and
+  `SEARCH_INTERNAL_TIMEOUT` (1.5 s). Search already gets `GRAPH_INTERNAL_URL`.
+- **Order (one new event type, `page.updated`):** on an existing install deploy
+  once with `PROFILE_EMIT_PAGE_UPDATED=false`, so `search-consumer` binds
+  `page.updated`, `group.*`, `gathering.*` and `listing.created`/`updated`
+  first; then set it to `true` and redeploy profile. Every other change is an
+  additive payload field.
+- **Services:** graph gains `POST /internal/v1/relationships/batch/`; post gains
+  `/internal/v1/search/gatherings/<id>/` and the export endpoints; profile and
+  marketplace gain export endpoints. Until graph is redeployed, people and page
+  results come back without the relationship, mutual-friend and follower data.
+- **One-off command, after all services run the new code:**
+
+  ```bash
+  docker exec tara-search-consumer-1 python manage.py backfill_search
+  ```
+
+  It indexes existing people, pages, groups, public posts, public events and
+  active listings from the owners' export endpoints, and is safe to re-run.
+- **No new containers.**
+
+### Upgrading: groups (1.11, 1.12)
+
+- **Migrations (additive, run at boot):** profile `groups 0001_initial` (new
+  tables); post `0007_group_posts_and_readmodels` (nullable `group_id`,
+  `pinned_at`, `approval_state` with a constant default, and the new read-model
+  tables), then `0008_post_group_idx` (the group feed index, built
+  `CONCURRENTLY`, outside a transaction); gatherings `0002_group_id`.
+- **New variables, all optional:** on profile `GROUP_REPORT_RATE` (group reports
+  per account, default `20/hour`) and `PROFILE_EMIT_GROUP_EVENTS` (default
+  `true`); on post `POST_EMIT_GROUP_EVENTS` (default `true`). Post already gets
+  `PROFILE_INTERNAL_URL`.
+- **Order (new event types):** on an existing install deploy once with
+  `PROFILE_EMIT_GROUP_EVENTS=false` and `POST_EMIT_GROUP_EVENTS=false`, so
+  `post-consumer`, `notification-consumer`, `moderation-consumer` and
+  `search-consumer` bind `group.*` first; then set both to `true` and redeploy
+  profile and post. With the flags off, groups still work: post answers every
+  group check from profile's internal access endpoint instead of its read model,
+  and no group notifications are sent.
+- **Edge:** `/api/v1/groups` is routed to profile in `frontend/web/nginx.conf`
+  and in the Traefik labels; redeploy `web` with the new SPA.
+- **No new containers, no one-off commands** (there are no groups to backfill).
+
 ### Backups
 
 `scripts/backup.sh` saves all databases, media and the JWT keys. Run it daily from

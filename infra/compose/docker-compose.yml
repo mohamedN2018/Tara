@@ -290,7 +290,7 @@ services:
       retries: 10
     labels:
       - traefik.enable=true
-      - "traefik.http.routers.profile.rule=PathPrefix(`/api/v1/users`) || PathPrefix(`/api/v1/profile`) || PathPrefix(`/api/v1/pages`)"
+      - "traefik.http.routers.profile.rule=PathPrefix(`/api/v1/users`) || PathPrefix(`/api/v1/profile`) || PathPrefix(`/api/v1/pages`) || PathPrefix(`/api/v1/groups`)"
       - traefik.http.routers.profile.entrypoints=web
       - traefik.http.services.profile.loadbalancer.server.port=8000
 

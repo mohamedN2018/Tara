@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/group.reported.v1.json",
+  "title": "group.reported v1 payload",
+  "description": "An account reported a group it can see; once per reporter per group. reason is an enum, owner_id the group's first owner.",
+  "type": "object",
+  "properties": {
+    "group_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reporter": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "spam",
+        "scam",
+        "hate",
+        "violence",
+        "nudity",
+        "harassment",
+        "false_information",
+        "other"
+      ]
+    },
+    "owner_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "group_id",
+    "reporter",
+    "reason",
+    "owner_id"
+  ],
+  "additionalProperties": false
+}

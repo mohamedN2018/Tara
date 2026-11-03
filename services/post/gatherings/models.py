@@ -24,6 +24,8 @@ class Gathering(models.Model):
         PUBLIC = "public", "Public"
         FRIENDS = "friends", "The host's friends"
         INVITE_ONLY = "invite_only", "Invited people only"
+        # Forced for an event in a group: the group's visibility decides (1.11).
+        GROUP = "group", "The group's audience"
 
     class Status(models.TextChoices):
         SCHEDULED = "scheduled", "Scheduled"
@@ -42,6 +44,7 @@ class Gathering(models.Model):
     host_id = models.UUIDField()
     host_type = models.CharField(max_length=8, default="user")  # user | page (later)
     page_id = models.UUIDField(null=True, blank=True)  # posting as a Page (roadmap 2.7)
+    group_id = models.UUIDField(null=True, blank=True)  # an event in a group (1.11)
     title = models.CharField(max_length=MAX_TITLE)
     description = models.TextField(blank=True, default="")
     starts_at = models.DateTimeField()
@@ -71,6 +74,11 @@ class Gathering(models.Model):
         indexes = [
             models.Index(fields=["starts_at", "id"], name="gathering_starts_idx"),
             models.Index(fields=["host_id", "starts_at"], name="gathering_host_idx"),
+            models.Index(
+                fields=["group_id", "starts_at"],
+                name="gathering_group_idx",
+                condition=Q(group_id__isnull=False),
+            ),
         ]
         constraints = [
             models.CheckConstraint(

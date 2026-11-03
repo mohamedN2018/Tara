@@ -5,7 +5,7 @@ import type { CursorPage } from "@/types";
 // every rule: visibility (a hidden event is a 404), capacity (409 event_full),
 // host-only edits and friends-only invites.
 
-export type EventAudience = "public" | "friends" | "invite_only";
+export type EventAudience = "public" | "friends" | "invite_only" | "group";
 export type EventStatus = "scheduled" | "cancelled" | "ended";
 export type RsvpStatus = "going" | "interested" | "not_going";
 export type LocationType = "place" | "online";
@@ -55,6 +55,8 @@ export interface TaraEvent {
   cover_media_id: string | null;
   audience: EventAudience;
   capacity: number | null;
+  /** A group's event (1.11): visible like the group's content. */
+  group_id?: string | null;
   going_count: number;
   interested_count: number;
   spots_left: number | null;
@@ -79,6 +81,7 @@ export interface EventInput {
   cover_media_id: string | null;
   audience: EventAudience;
   capacity: number | null;
+  group_id?: string | null;
 }
 
 export interface Attendee {
@@ -112,6 +115,14 @@ export const eventsService = {
   async list(scope: EventScope, cursor?: string | null, q = ""): Promise<CursorPage<TaraEvent>> {
     const { data } = await api.get<CursorPage<TaraEvent>>("/events/", {
       params: { scope, ...(cursor ? { cursor } : {}), ...(q ? { q } : {}) },
+    });
+    return data;
+  },
+
+  /** A group's upcoming events (404 when the viewer cannot read the group). */
+  async forGroup(groupId: string, cursor?: string | null): Promise<CursorPage<TaraEvent>> {
+    const { data } = await api.get<CursorPage<TaraEvent>>("/events/", {
+      params: { group_id: groupId, ...(cursor ? { cursor } : {}) },
     });
     return data;
   },

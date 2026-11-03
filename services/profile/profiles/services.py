@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import secrets
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import Prefetch, Q
 
@@ -85,18 +86,31 @@ def ensure_profile(
     return profile
 
 
+def profile_search_payload(profile: UserProfile, changed: list[str]) -> dict:
+    """The ``profile.updated`` payload. ``city`` is sent only while its field
+    privacy is public (search shows it to everyone); otherwise it is ``None``."""
+    city_level = (
+        ProfileFieldPrivacy.objects.filter(profile=profile, field_key="city")
+        .values_list("visibility", flat=True)
+        .first()
+    )
+    public_city = (city_level or Visibility.PUBLIC) == Visibility.PUBLIC
+    return {
+        "handle": profile.handle,
+        "display_name": profile.display_name,
+        "visibility": profile.visibility,
+        "avatar_media_id": str(profile.avatar_media_id) if profile.avatar_media_id else None,
+        "city": (profile.city or None) if public_city else None,
+        "changed": changed,
+    }
+
+
 def emit_profile_updated(profile: UserProfile, changed: list[str]) -> None:
     """Search indexes people from this event, so a new account needs one too."""
     events.emit(
         "profile.updated",
         subject_id=str(profile.account_id),
-        payload={
-            "handle": profile.handle,
-            "display_name": profile.display_name,
-            "visibility": profile.visibility,
-            "avatar_media_id": str(profile.avatar_media_id) if profile.avatar_media_id else None,
-            "changed": changed,
-        },
+        payload=profile_search_payload(profile, changed),
         actor_id=str(profile.account_id),
     )
 
@@ -179,9 +193,12 @@ def update_profile(profile: UserProfile, data: dict) -> UserProfile:
 def set_field_privacy(profile: UserProfile, field_key: str, visibility: str) -> None:
     if visibility not in Visibility.values:
         raise TaraAPIError("Invalid visibility.", code="validation_error", http_status_code=400)
-    ProfileFieldPrivacy.objects.update_or_create(
-        profile=profile, field_key=field_key, defaults={"visibility": visibility}
-    )
+    with transaction.atomic():
+        ProfileFieldPrivacy.objects.update_or_create(
+            profile=profile, field_key=field_key, defaults={"visibility": visibility}
+        )
+        if field_key == "city":  # search shows the city only while it is public
+            emit_profile_updated(profile, changed=["field_privacy.city"])
 
 
 # ---- pages ------------------------------------------------------------------
@@ -271,10 +288,25 @@ def create_page(owner_account_id: str, data: dict) -> Page:
         events.emit(
             "page.created",
             subject_id=str(page.id),
-            payload={"handle": page.handle, "name": page.name, "owner": str(owner_account_id)},
+            payload=page_search_payload(page),
             actor_id=str(owner_account_id),
         )
     return page
+
+
+def page_search_payload(page: Page) -> dict:
+    """``page.created``/``page.updated``: the page's searchable state. The owner is
+    always carried, so a re-index never clears it (blocks are matched on it)."""
+    return {
+        "handle": page.handle,
+        "name": page.name,
+        "owner": str(page.owner_account_id),
+        "category": page.category,
+        "location": page.location,
+        "status": page.status,
+        "avatar_media_id": str(page.avatar_media_id) if page.avatar_media_id else None,
+        "deleted": page.deleted_at is not None,
+    }
 
 
 def update_page(page: Page, actor_id: str, data: dict) -> Page:
@@ -293,10 +325,19 @@ def update_page(page: Page, actor_id: str, data: dict) -> Page:
             code="permission_denied",
             http_status_code=403,
         )
-    for key in ("name", "category", "description", "contact", "location", "status"):
+    editable = ("name", "category", "description", "contact", "location", "status")
+    for key in editable:
         if key in data:
             setattr(page, key, data[key])
-    page.save()
+    with transaction.atomic():
+        page.save()
+        if settings.PROFILE_EMIT_PAGE_UPDATED:
+            events.emit(
+                "page.updated",
+                subject_id=str(page.id),
+                payload={**page_search_payload(page), "changed": sorted(set(data) & set(editable))},
+                actor_id=str(actor_id),
+            )
     return page
 
 

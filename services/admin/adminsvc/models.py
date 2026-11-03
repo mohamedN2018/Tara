@@ -84,6 +84,9 @@ class AuditEntry(models.Model):
     target_id = models.CharField(max_length=64, blank=True, default="")
     request_id = models.CharField(max_length=100, blank=True, default="")
     detail = models.JSONField(default=dict, blank=True)
+    # Why a staff member looked at personal data (8.6), in their own words. Only
+    # admin's own decisions set it; event payloads never carry free text.
+    reason = models.CharField(max_length=500, blank=True, default="")
     # The event this row came from: a redelivery cannot add a second row.
     source_event_id = models.UUIDField(null=True, blank=True, unique=True)
 

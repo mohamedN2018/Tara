@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/account.signed_out.v1.json",
+  "title": "account.signed_out v1 payload",
+  "description": "A staff member signed an account out everywhere: every session and refresh token revoked (8.6). For admin's audit log.",
+  "type": "object",
+  "properties": {
+    "account_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "sessions": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "account_id",
+    "sessions"
+  ],
+  "additionalProperties": false
+}

@@ -99,6 +99,7 @@ class PostCreateView(APIView):
                 media_ids=[str(m) for m in v["media_ids"]],
                 poll=v.get("poll"),
                 comment_policy=v["comment_policy"],
+                group_id=v.get("group_id"),
             )
             return data_response(_one(_me(request), post), status=status.HTTP_201_CREATED)
 

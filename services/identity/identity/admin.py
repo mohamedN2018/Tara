@@ -1,7 +1,14 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from .models import Account, RefreshToken, SecurityEvent, SocialIdentity, UserSession
+from .models import (
+    Account,
+    AccountSuspension,
+    RefreshToken,
+    SecurityEvent,
+    SocialIdentity,
+    UserSession,
+)
 
 
 @admin.register(Account)
@@ -10,7 +17,17 @@ class AccountAdmin(UserAdmin):
     list_display = ("email", "status", "email_verified", "is_staff", "created_at", "last_login_at")
     list_filter = ("status", "email_verified", "is_staff", "is_superuser")
     search_fields = ("email", "id")
-    readonly_fields = ("id", "created_at", "updated_at", "last_login_at")
+    # Status and staff flags change only through identity's audited paths
+    # (suspension, the role API, ``create_admin``), never by editing here (8.4).
+    readonly_fields = (
+        "id",
+        "created_at",
+        "updated_at",
+        "last_login_at",
+        "status",
+        "is_staff",
+        "is_superuser",
+    )
     fieldsets = (
         (None, {"fields": ("id", "email", "password")}),
         ("Status", {"fields": ("status", "email_verified", "is_active")}),
@@ -55,3 +72,21 @@ class SocialIdentityAdmin(admin.ModelAdmin):
     list_filter = ("provider",)
     search_fields = ("account__email", "email")
     readonly_fields = ("subject",)
+
+
+@admin.register(AccountSuspension)
+class AccountSuspensionAdmin(admin.ModelAdmin):
+    """Read-only: suspensions are made and lifted through the admin console API."""
+
+    list_display = ("id", "account", "source", "until", "created_at", "lifted_at")
+    list_filter = ("source",)
+    search_fields = ("account__email",)
+
+    def has_add_permission(self, request) -> bool:
+        return False
+
+    def has_change_permission(self, request, obj=None) -> bool:
+        return False
+
+    def has_delete_permission(self, request, obj=None) -> bool:
+        return False

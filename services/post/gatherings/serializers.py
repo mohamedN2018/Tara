@@ -43,6 +43,9 @@ class GatheringCreateSerializer(serializers.Serializer):
     capacity = serializers.IntegerField(
         min_value=1, max_value=MAX_CAPACITY, required=False, allow_null=True, default=None
     )
+    # An event in a group (1.11): the host must be a member, the audience becomes
+    # ``group``. Ignored on edit: an event never moves between groups.
+    group_id = serializers.UUIDField(required=False, allow_null=True, default=None)
 
 
 class GatheringSerializer(serializers.ModelSerializer):
@@ -62,6 +65,7 @@ class GatheringSerializer(serializers.ModelSerializer):
             "host_id",
             "host_type",
             "page_id",
+            "group_id",
             "title",
             "description",
             "starts_at",

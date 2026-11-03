@@ -13,7 +13,12 @@ PRODUCER = "profile-service"
 
 
 def emit(
-    event_type: str, *, subject_id: str, payload: dict[str, Any], actor_id: str | None = None
+    event_type: str,
+    *,
+    subject_id: str,
+    payload: dict[str, Any],
+    actor_id: str | None = None,
+    partition_key: str | None = None,
 ) -> None:
     record_event(
         OutboxEvent,
@@ -23,5 +28,6 @@ def emit(
             subject_id=str(subject_id),
             producer=PRODUCER,
             actor_id=str(actor_id) if actor_id else None,
+            partition_key=partition_key,
         ),
     )

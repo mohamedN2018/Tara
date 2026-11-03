@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/group.updated.v1.json",
+  "title": "group.updated v1 payload",
+  "description": "The group's settings changed (changed[] lists the fields; privacy is always present). Also emitted with changed=[status] when an overturned moderation removal restores the group.",
+  "type": "object",
+  "properties": {
+    "group_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "handle": {
+      "type": "string",
+      "maxLength": 30,
+      "description": "Blank for a hidden group."
+    },
+    "name": {
+      "type": "string",
+      "maxLength": 100,
+      "description": "Blank for a hidden group."
+    },
+    "privacy": {
+      "type": "string",
+      "enum": [
+        "public",
+        "private",
+        "hidden"
+      ]
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "general",
+        "education",
+        "business",
+        "technology",
+        "sports",
+        "gaming",
+        "arts",
+        "entertainment",
+        "health",
+        "travel",
+        "food",
+        "parenting",
+        "religion",
+        "local",
+        "buy_sell",
+        "hobbies",
+        "science",
+        "other"
+      ]
+    },
+    "post_approval": {
+      "type": "boolean"
+    },
+    "membership_approval": {
+      "type": "boolean"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "suspended",
+        "deleted"
+      ]
+    },
+    "changed": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "name",
+          "description",
+          "category",
+          "privacy",
+          "membership_approval",
+          "post_approval",
+          "cover_media_id",
+          "status"
+        ]
+      }
+    }
+  },
+  "required": [
+    "group_id",
+    "handle",
+    "name",
+    "privacy",
+    "category",
+    "changed"
+  ],
+  "additionalProperties": false
+}

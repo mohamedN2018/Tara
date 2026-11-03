@@ -72,3 +72,31 @@ class FanoutAudienceView(APIView):
                 "recipients": sorted(followers | friends),
             }
         )
+
+
+class RelationshipBatchView(APIView):
+    """The viewer's relationship with up to 50 accounts and 50 pages (search v2,
+    roadmap 1.15): friend state with the pending request id, follow state, and
+    the mutual friend count where the target's lists are visible to the viewer;
+    for pages, follow state and follower count. Accounts in a block with the
+    viewer, either way, are absent from the answer."""
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+    throttle_classes: list = []  # internal: no per-IP throttle (roadmap 3.3)
+
+    def post(self, request: Request) -> Response:
+        _require_internal(request)
+        body = request.data if isinstance(request.data, dict) else {}
+        try:
+            viewer = str(uuid.UUID(str(body.get("viewer_id") or "")))
+        except ValueError as exc:
+            raise TaraAPIError(
+                "viewer_id must be a UUID.", code="validation_error", http_status_code=400
+            ) from exc
+        users, pages = body.get("users") or [], body.get("pages") or []
+        if not isinstance(users, list) or not isinstance(pages, list):
+            raise TaraAPIError(
+                "users and pages must be lists.", code="validation_error", http_status_code=400
+            )
+        return data_response({"results": services.relationships_for(viewer, users, pages)})

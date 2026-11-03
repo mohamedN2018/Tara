@@ -169,6 +169,9 @@ def google_sign_in(
             raise Conflict("An account with this email already exists.") from exc
         created = True
 
+    from .account_admin import lift_if_expired
+
+    account = lift_if_expired(account)  # a suspension past its end date ends here
     if not account.is_usable:
         emit_security_event(
             account,

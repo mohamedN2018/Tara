@@ -15,3 +15,15 @@ def count_posts() -> int:
 
 
 COUNTERS = {"posts": count_posts}
+
+
+def count_posts_by(account_id) -> int:
+    """One author's live posts, for admin's user console (8.6)."""
+    return (
+        Post.objects.filter(author_id=account_id, deleted_at__isnull=True)
+        .exclude(moderation_status=Post.ModerationStatus.REMOVED)
+        .count()
+    )
+
+
+ACCOUNT_COUNTERS = {"posts": count_posts_by}

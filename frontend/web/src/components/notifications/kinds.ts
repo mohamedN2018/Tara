@@ -18,6 +18,7 @@ import {
   ShoppingBag,
   UserCheck,
   UserPlus,
+  UsersRound,
 } from "lucide-vue-next";
 
 import { sameOriginPath } from "@/lib/redirect";
@@ -44,6 +45,12 @@ const KIND_ICONS: Record<string, LucideIcon> = {
   "gathering.update": CalendarDays,
   "gathering.cancel": CalendarDays,
   "gathering.rsvp": CalendarDays,
+  "group.invite": UsersRound,
+  "group.request": UsersRound,
+  "group.approved": UsersRound,
+  "group.post": UsersRound,
+  "group.role": UsersRound,
+  "group.announcement": Megaphone,
 };
 
 export const iconFor = (kind: string): LucideIcon => KIND_ICONS[kind] ?? Bell;
@@ -52,7 +59,7 @@ export const iconFor = (kind: string): LucideIcon => KIND_ICONS[kind] ?? Bell;
 export const kindKey = (kind: string) => kind.replace(/\./g, "_");
 
 // The order categories and kinds appear in Settings and the filter chips.
-export const CATEGORY_ORDER = ["social", "connections", "messages", "marketplace", "pages", "ads"];
+export const CATEGORY_ORDER = ["social", "connections", "messages", "groups", "marketplace", "pages", "ads"];
 
 export type InlineAction = "accept" | "decline" | "follow_back";
 
@@ -89,6 +96,11 @@ export function notificationText(
   }
   if (n.kind === "call.missed" && n.data?.call_kind === "video") {
     return t("notifications.kinds.call_missed_video", { name });
+  }
+  if (n.kind === "group.role") {
+    const role = String(n.data?.role ?? "");
+    const roleKey = `groups.roles.${role}`;
+    return t(key, { name, role: te(roleKey) ? t(roleKey) : role });
   }
   if (n.kind === "gathering.reminder" && n.data?.window === "1h") {
     return t("notifications.kinds.gathering_reminder_hour");
@@ -132,6 +144,10 @@ export function urlFor(n: Notification): string {
   if (type === "conversation" && id) return `/messages/${id}`;
   if (type === "listing" && id) return `/marketplace/${id}`;
   if (type === "gathering" && id) return `/events/${id}`;
+  if (type === "group" && id) {
+    const handle = n.data?.group_handle;
+    return `/groups/${encodeURIComponent(typeof handle === "string" && handle ? handle : id)}`;
+  }
   if (n.actor_id) return `/u/id/${n.actor_id}`;
   return "/notifications";
 }

@@ -21,7 +21,7 @@ from urllib.parse import quote
 
 CHANNELS = ("in_app", "push")
 
-CATEGORIES = ("social", "connections", "messages", "marketplace", "pages", "ads")
+CATEGORIES = ("social", "connections", "messages", "marketplace", "pages", "ads", "groups")
 
 # Aggregation scopes.
 PER_SUBJECT = "subject"  # one open row per (recipient, kind, subject_ref)
@@ -87,6 +87,15 @@ _KINDS = [
     Kind("gathering.update", "social"),
     Kind("gathering.cancel", "social"),
     Kind("gathering.rsvp", "social", aggregate=PER_SUBJECT),
+    # Groups (profile 1.11; posts and announcements from post). Requests reach the
+    # group's staff as one row per group; new posts only reach members who turned
+    # them on for that group (``notify_posts``, off by default).
+    Kind("group.invite", "groups", resolutions=frozenset({"joined", "declined"})),
+    Kind("group.request", "groups", aggregate=PER_SUBJECT),
+    Kind("group.approved", "groups"),
+    Kind("group.post", "groups", aggregate=PER_SUBJECT),
+    Kind("group.role", "groups"),
+    Kind("group.announcement", "groups"),
 ]
 
 KINDS: dict[str, Kind] = {k.name: k for k in _KINDS}
@@ -118,6 +127,9 @@ DATA_KEYS = frozenset(
         "decision",
         "gathering_id",
         "window",
+        "group_id",
+        "group_handle",
+        "role",
     }
 )
 MAX_DATA_BYTES = 1024
@@ -206,6 +218,9 @@ def build_url(
         return f"{url}?comment={tid}" if target == "comment" and tid else url
     if subject == "conversation" and sid:
         return f"/messages/{sid}"
+    if subject == "group" and sid:
+        handle = data.get("group_handle")
+        return f"/groups/{quote(str(handle), safe='')}" if handle else f"/groups/{sid}"
     if subject == "gathering" and sid:
         return f"/events/{sid}"
     if subject == "listing" and sid:

@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "django_prometheus",
     "profiles",
+    "groups",
 ]
 
 MIDDLEWARE = [
@@ -70,6 +71,12 @@ CACHES = {
     }
 }
 
+# Group reports: each can open a moderation case.
+GROUP_REPORT_RATE = os.getenv("GROUP_REPORT_RATE", "20/hour")
+# group.* events (1.11). Two-release rollout (roadmap 3.3): deploy the consumers
+# with this off, then turn it on. Off, post answers group checks from profile.
+PROFILE_EMIT_GROUP_EVENTS = env_bool("PROFILE_EMIT_GROUP_EVENTS", True)
+
 REST_FRAMEWORK = {
     **api_throttling(),
     "DEFAULT_AUTHENTICATION_CLASSES": ["tara_common.auth.JWTAuthentication"],
@@ -98,6 +105,10 @@ TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-s
 # Social Graph internal API (for friends_only privacy resolution).
 GRAPH_INTERNAL_URL = os.getenv("GRAPH_INTERNAL_URL", "http://graph:8000")
 GRAPH_CALL_TIMEOUT = float(os.getenv("GRAPH_CALL_TIMEOUT", "2.0"))
+
+# `page.updated` (search v2, roadmap 1.15): the page's searchable state on every
+# edit. A new event type: deploy the search consumer first (two releases, §3.3).
+PROFILE_EMIT_PAGE_UPDATED = env_bool("PROFILE_EMIT_PAGE_UPDATED", True)
 # Avatars and covers are checked with media (the owner's own image); fails closed.
 MEDIA_INTERNAL_URL = os.getenv("MEDIA_INTERNAL_URL", "http://media:8000")
 MEDIA_CALL_TIMEOUT = float(os.getenv("MEDIA_CALL_TIMEOUT", "2.0"))

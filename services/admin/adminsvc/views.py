@@ -8,8 +8,12 @@ admin edits the matrix.
 
 from __future__ import annotations
 
+import uuid
+
+from django.db import transaction
 from django.http import StreamingHttpResponse
 from django.utils import timezone
+from django.utils.decorators import method_decorator
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
@@ -21,9 +25,9 @@ from tara_common.exceptions import TaraAPIError
 from tara_common.pagination import CursorPagination
 from tara_common.permissions import HasCapability
 from tara_common.responses import data_response
-from tara_common.throttling import ReadThrottle
+from tara_common.throttling import ReadThrottle, WriteThrottle
 
-from . import audit, identity_client, services
+from . import audit, identity_client, services, users
 from .models import FeatureFlag
 from .serializers import (
     AuditEntrySerializer,
@@ -31,7 +35,10 @@ from .serializers import (
     CapabilityMatrixUpdateSerializer,
     FeatureFlagSerializer,
     FeatureFlagWriteSerializer,
+    ReasonSerializer,
     RoleSerializer,
+    SuspendSerializer,
+    UserSearchSerializer,
 )
 
 FLAG_KEY_MAX_LENGTH = FeatureFlag._meta.get_field("key").max_length
@@ -247,3 +254,147 @@ class AuditExportView(APIView):
         response["X-Export-Truncated"] = "true" if truncated else "false"
         response["X-Export-Row-Cap"] = str(cap)
         return response
+
+
+# ---- user management console (8.6) -------------------------------------------
+#
+# These views call identity, profile and the counters before they write, so they
+# do not run in ATOMIC_REQUESTS' transaction (05 §3.3, sync calls inside
+# requests): each audit row opens and commits its own, before the response.
+
+_non_atomic = method_decorator(transaction.non_atomic_requests, name="dispatch")
+
+
+def _no_store(response: Response) -> Response:
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+def _idempotency_key(request: Request) -> str:
+    """The client's key for this action (a retried dialog applies once), or a fresh one."""
+    key = request.headers.get("Idempotency-Key", "").strip()
+    if key and not (8 <= len(key) <= 90 and key.isprintable()):
+        raise TaraAPIError(
+            "Idempotency-Key must be 8 to 90 characters.",
+            code="validation_error",
+            http_status_code=400,
+        )
+    return f"admin:{key}" if key else f"admin:{uuid.uuid4().hex}"
+
+
+@_non_atomic
+class UserSearchView(APIView):
+    """Accounts by email (exact or prefix), handle, name or account id."""
+
+    permission_classes = [HasCapability("admin.users.view")]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("q", str, required=True),
+            OpenApiParameter("field", str, enum=list(users.SEARCH_FIELDS)),
+            OpenApiParameter("cursor", str),
+            OpenApiParameter("limit", int),
+        ],
+        responses={200: None},
+        tags=["admin"],
+    )
+    def get(self, request: Request) -> Response:
+        serializer = UserSearchSerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        v = serializer.validated_data
+        result = users.search(v["q"], field=v["field"], cursor=v.get("cursor"), limit=v["limit"])
+        page = result["page"]
+        return _no_store(
+            Response(
+                {
+                    "data": result["data"],
+                    "page": {
+                        "next_cursor": page.get("next_cursor"),
+                        "prev_cursor": page.get("prev_cursor"),
+                        "has_more": bool(page.get("has_more")),
+                    },
+                    "field": result["field"],
+                }
+            )
+        )
+
+
+@_non_atomic
+class UserDetailView(APIView):
+    """One account's page. Every view is audited (``user.viewed``)."""
+
+    permission_classes = [HasCapability("admin.users.view")]
+
+    @extend_schema(responses={200: None}, tags=["admin"])
+    def get(self, request: Request, account_id) -> Response:
+        data = users.detail(str(account_id))
+        users.record_view(str(account_id), _me(request))
+        return _no_store(data_response(data))
+
+
+@_non_atomic
+class UserRevealView(APIView):
+    """Full email, phone and sessions, after a typed reason is on the audit log."""
+
+    permission_classes = [HasCapability("admin.users.reveal")]
+    throttle_classes = [WriteThrottle, ScopedRateThrottle]
+    throttle_scope = "user_reveal"
+
+    @extend_schema(request=ReasonSerializer, responses={200: None}, tags=["admin"])
+    def post(self, request: Request, account_id) -> Response:
+        serializer = ReasonSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = users.reveal(str(account_id), _me(request), serializer.validated_data["reason"])
+        return _no_store(data_response(data))
+
+
+@_non_atomic
+class UserSuspendView(APIView):
+    permission_classes = [HasCapability("admin.users.suspend")]
+
+    @extend_schema(request=SuspendSerializer, responses={201: None}, tags=["admin"])
+    def post(self, request: Request, account_id) -> Response:
+        serializer = SuspendSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        v = serializer.validated_data
+        result = users.suspend(
+            str(account_id),
+            _me(request),
+            reason=v["reason"],
+            until=v["until"],
+            idempotency_key=_idempotency_key(request),
+        )
+        return data_response(result, status=201 if result.get("created") else 200)
+
+
+@_non_atomic
+class UserUnsuspendView(APIView):
+    permission_classes = [HasCapability("admin.users.suspend")]
+
+    @extend_schema(request=ReasonSerializer, responses={200: None}, tags=["admin"])
+    def post(self, request: Request, account_id) -> Response:
+        serializer = ReasonSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return data_response(
+            users.unsuspend(
+                str(account_id), _me(request), reason=serializer.validated_data["reason"]
+            )
+        )
+
+
+@_non_atomic
+class UserSignOutView(APIView):
+    permission_classes = [HasCapability("admin.users.sign_out")]
+
+    @extend_schema(responses={200: None}, tags=["admin"])
+    def post(self, request: Request, account_id) -> Response:
+        return data_response(users.sign_out_everywhere(str(account_id), _me(request)))
+
+
+@_non_atomic
+class UserResendVerificationView(APIView):
+    permission_classes = [HasCapability("admin.users.resend_verification")]
+
+    @extend_schema(responses={202: None}, tags=["admin"])
+    def post(self, request: Request, account_id) -> Response:
+        return data_response(users.resend_verification(str(account_id), _me(request)), status=202)

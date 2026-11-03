@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/account.verification.resent.v1.json",
+  "title": "account.verification.resent v1 payload",
+  "description": "A staff member sent the account a new email-verification link (8.6). For admin's audit log; no address on the bus.",
+  "type": "object",
+  "properties": {
+    "account_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "account_id"
+  ],
+  "additionalProperties": false
+}

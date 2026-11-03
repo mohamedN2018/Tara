@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/group.deleted.v1.json",
+  "title": "group.deleted v1 payload",
+  "description": "The owner deleted the group (status deleted), or moderation removed it (status suspended, by moderation). Search drops it, post hides its posts, notification purges group:<id>.",
+  "type": "object",
+  "properties": {
+    "group_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "handle": {
+      "type": "string",
+      "maxLength": 30,
+      "description": "Blank for a hidden group."
+    },
+    "name": {
+      "type": "string",
+      "maxLength": 100,
+      "description": "Blank for a hidden group."
+    },
+    "privacy": {
+      "type": "string",
+      "enum": [
+        "public",
+        "private",
+        "hidden"
+      ]
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "general",
+        "education",
+        "business",
+        "technology",
+        "sports",
+        "gaming",
+        "arts",
+        "entertainment",
+        "health",
+        "travel",
+        "food",
+        "parenting",
+        "religion",
+        "local",
+        "buy_sell",
+        "hobbies",
+        "science",
+        "other"
+      ]
+    },
+    "post_approval": {
+      "type": "boolean"
+    },
+    "membership_approval": {
+      "type": "boolean"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "suspended",
+        "deleted"
+      ]
+    },
+    "by": {
+      "type": "string",
+      "enum": [
+        "moderation"
+      ],
+      "description": "Present when a moderator removed the group (status suspended)."
+    }
+  },
+  "required": [
+    "group_id",
+    "handle",
+    "name",
+    "privacy",
+    "category"
+  ],
+  "additionalProperties": false
+}

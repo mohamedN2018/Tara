@@ -22,7 +22,7 @@ from tara_common.auth import verify_internal_token
 from tara_common.exceptions import TaraAPIError
 from tara_common.responses import data_response
 
-from . import services
+from . import groups, services
 from .models import Post
 
 
@@ -67,4 +67,10 @@ class PostVisibilityView(APIView):
             # uuid7), so media asks this one endpoint for both.
             gathering = Gathering.objects.filter(id=post_id).first()
             visible = gathering is not None and gathering_visible(viewer_id, gathering)
+            if gathering is None:
+                # A group's cover is bound to the group id (1.11): it is seen by
+                # whoever may see the group itself. An unknown id asks profile
+                # once (the read model may lag a new group) and fails closed.
+                acc = groups.access(str(post_id), viewer_id)
+                visible = groups.can_see_group(viewer_id, acc)
         return data_response({"post_id": str(post_id), "viewer_id": viewer_id, "visible": visible})

@@ -74,6 +74,8 @@ x-identity-env: &identity-env
   ADMIN_IDENTITY_SECRET: ${ADMIN_IDENTITY_SECRET:?}
   # Role and capability-matrix events for admin's audit log (8.1, deploy note).
   IDENTITY_EMIT_AUDIT_EVENTS: ${IDENTITY_EMIT_AUDIT_EVENTS:-true}
+  # account.suspended/unsuspended, account.signed_out, account.verification.resent (8.4, 8.6).
+  IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS: ${IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS:-true}
   REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-}
   EMAIL_HOST: ${EMAIL_HOST:?set your SMTP host}
   EMAIL_PORT: ${EMAIL_PORT:-587}
@@ -99,6 +101,7 @@ x-profile-env: &profile-env
   PROFILE_DB_USER: ${PROFILE_DB_USER:-}
   PROFILE_DEBUG: ${PROFILE_DEBUG:-}
   PROFILE_SECRET_KEY: ${PROFILE_SECRET_KEY:?}
+  PROFILE_EMIT_PAGE_UPDATED: ${PROFILE_EMIT_PAGE_UPDATED:-true}
 
 x-graph-env: &graph-env
   <<: *common-env

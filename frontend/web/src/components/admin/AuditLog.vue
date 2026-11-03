@@ -189,6 +189,7 @@ onMounted(load);
             <td class="px-3 py-2">
               {{ actionLabel(e.action) }}
               <span v-if="detailText(e.detail)" class="block break-all text-xs text-gray-500 dark:text-gray-400" dir="ltr">{{ detailText(e.detail) }}</span>
+              <span v-if="e.reason" class="block break-words text-xs" dir="auto" data-testid="audit-reason">{{ t("admin.users.reasonLabel") }}: {{ e.reason }}</span>
             </td>
             <td class="px-3 py-2">
               <span class="block text-xs" dir="ltr">{{ e.target_type }}</span>

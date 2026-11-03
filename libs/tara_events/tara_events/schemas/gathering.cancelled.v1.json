@@ -25,7 +25,8 @@
       "enum": [
         "public",
         "friends",
-        "invite_only"
+        "invite_only",
+        "group"
       ]
     },
     "status": {
@@ -83,6 +84,14 @@
     "chunks": {
       "type": "integer",
       "minimum": 1
+    },
+    "group_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid",
+      "description": "Set for an event in a group (1.11, additive): its audience is then group."
     }
   },
   "required": [

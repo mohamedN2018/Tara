@@ -34,8 +34,10 @@ const props = withDefaults(
     focusId?: string | null;
     /** Its thread root, when the link knows it (`?thread=`). */
     focusRootId?: string | null;
+    /** A group moderator: may delete any comment on the post. */
+    canModerate?: boolean;
   }>(),
-  { policy: "everyone", knownNames: () => ({}), focusId: null, focusRootId: null },
+  { policy: "everyone", knownNames: () => ({}), focusId: null, focusRootId: null, canModerate: false },
 );
 const emit = defineEmits<{ added: []; total: [count: number] }>();
 
@@ -304,7 +306,7 @@ watch(
         :comment="root"
         :name="nameFor(root.author_id)"
         :can-edit="root.author_id === me"
-        :can-delete="root.author_id === me || isPostAuthor"
+        :can-delete="root.author_id === me || isPostAuthor || canModerate"
         :can-reply="!commentsOff"
         :busy="busyId === root.id"
         :highlighted="highlightId === root.id"
@@ -335,7 +337,7 @@ watch(
             :name="nameFor(r.author_id)"
             :reply-to-name="replyToName(r)"
             :can-edit="r.author_id === me"
-            :can-delete="r.author_id === me || isPostAuthor"
+            :can-delete="r.author_id === me || isPostAuthor || canModerate"
             :can-reply="!commentsOff"
             :busy="busyId === r.id"
             :highlighted="highlightId === r.id"

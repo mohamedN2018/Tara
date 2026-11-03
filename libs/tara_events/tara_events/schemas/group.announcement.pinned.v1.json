@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/group.announcement.pinned.v1.json",
+  "title": "group.announcement.pinned v1 payload",
+  "description": "A group moderator pinned a post as an announcement. recipients: active members except the pinner and anyone blocked with the author; chunked by 500. Emitted by post.",
+  "type": "object",
+  "properties": {
+    "group_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "post_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "author_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "handle": {
+      "type": "string",
+      "maxLength": 30
+    },
+    "recipients": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "maxItems": 500
+    },
+    "chunk": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "chunks": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "required": [
+    "group_id",
+    "post_id",
+    "author_id",
+    "handle",
+    "recipients",
+    "chunk",
+    "chunks"
+  ],
+  "additionalProperties": false
+}

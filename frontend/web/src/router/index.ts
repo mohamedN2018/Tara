@@ -30,6 +30,10 @@ const routes: RouteRecordRaw[] = [
   { path: "/events/new", name: "event-new", component: () => import("@/views/EventFormView.vue"), meta: { auth: true } },
   { path: "/events/:id/edit", name: "event-edit", component: () => import("@/views/EventFormView.vue"), meta: { auth: true } },
   { path: "/events/:id", name: "event", component: () => import("@/views/EventDetailView.vue"), meta: { auth: true } },
+  { path: "/groups", name: "groups", component: () => import("@/views/GroupsView.vue"), meta: { auth: true } },
+  { path: "/groups/new", name: "group-new", component: () => import("@/views/GroupFormView.vue"), meta: { auth: true } },
+  { path: "/groups/:handle/manage", name: "group-manage", component: () => import("@/views/GroupManageView.vue"), meta: { auth: true } },
+  { path: "/groups/:handle", name: "group", component: () => import("@/views/GroupDetailView.vue"), meta: { auth: true } },
   { path: "/notifications", name: "notifications", component: () => import("@/views/NotificationsView.vue"), meta: { auth: true } },
   { path: "/search", name: "search", component: () => import("@/views/SearchView.vue"), meta: { auth: true } },
   { path: "/settings", name: "settings", component: () => import("@/views/SettingsView.vue"), meta: { auth: true } },
@@ -37,6 +41,8 @@ const routes: RouteRecordRaw[] = [
   { path: "/admin/capabilities", name: "admin-capabilities", component: () => import("@/views/AdminCapabilitiesView.vue"), meta: { auth: true, staff: true, caps: ["admin.capabilities.manage"] } },
   { path: "/admin/audit", name: "admin-audit", component: () => import("@/views/AdminAuditView.vue"), meta: { auth: true, staff: true, caps: ["admin.audit.view"] } },
   { path: "/admin/monitor", name: "admin-monitor", component: () => import("@/views/AdminMonitorView.vue"), meta: { auth: true, staff: true, caps: ["admin.monitor.view"] } },
+  { path: "/admin/users", name: "admin-users", component: () => import("@/views/AdminUsersView.vue"), meta: { auth: true, staff: true, caps: ["admin.users.view"] } },
+  { path: "/admin/users/:id", name: "admin-user", component: () => import("@/views/AdminUserView.vue"), meta: { auth: true, staff: true, caps: ["admin.users.view"] } },
   { path: "/:pathMatch(.*)*", name: "not-found", component: () => import("@/views/NotFoundView.vue") },
 ];
 

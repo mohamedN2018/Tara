@@ -5,7 +5,7 @@ from __future__ import annotations
 from tara_events import on_event
 from tara_events.envelope import EventEnvelope
 
-from . import services
+from . import groups, services
 from .models import BlockedPair
 
 
@@ -87,3 +87,21 @@ def on_comment_edited_mentions(event: EventEnvelope) -> None:
         handles=p.get("new_mentions", []),
         comment_id=p.get("comment_id"),
     )
+
+
+# ---- group read model (profile's group.* events, roadmap 1.11) ----------------------
+
+
+@on_event("group.created")
+@on_event("group.updated")
+@on_event("group.deleted")  # also a moderator's removal (status "suspended")
+def on_group_changed(event: EventEnvelope) -> None:
+    payload = dict(event.payload)
+    if event.event_type == "group.deleted" and payload.get("status") == "active":
+        payload["status"] = "deleted"  # an older producer without a status
+    groups.apply_group_event(payload, event.occurred_at)
+
+
+@on_event("group.member.changed")
+def on_group_member_changed(event: EventEnvelope) -> None:
+    groups.apply_member_event(event.payload, event.occurred_at)

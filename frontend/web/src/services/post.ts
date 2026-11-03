@@ -51,6 +51,8 @@ export const postService = {
     type?: string;
     poll?: { options: string[]; duration_hours?: number | null };
     comment_policy?: CommentPolicy;
+    /** Post into a group: the server forces the `group` audience. */
+    group_id?: string;
   }): Promise<Post> {
     const mediaIds = payload.media_ids ?? [];
     const { data } = await api.post<{ data: Post }>("/posts/", {
@@ -60,6 +62,7 @@ export const postService = {
       body: payload.body,
       ...(payload.poll ? { poll: payload.poll } : {}),
       ...(payload.comment_policy ? { comment_policy: payload.comment_policy } : {}),
+      ...(payload.group_id ? { group_id: payload.group_id } : {}),
     });
     return data.data;
   },

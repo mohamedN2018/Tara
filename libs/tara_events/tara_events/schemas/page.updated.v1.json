@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/page.updated.v1.json",
+  "title": "page.updated v1 payload",
+  "description": "A page was edited. Carries the page's whole searchable state, so search can index or drop it from this event alone; the owner is always present so a re-index never clears it. Same fields are added to page.created.",
+  "type": "object",
+  "properties": {
+    "handle": {"type": "string"},
+    "name": {"type": "string"},
+    "owner": {"type": "string", "format": "uuid"},
+    "category": {"type": "string"},
+    "location": {"type": "string"},
+    "status": {"type": "string", "enum": ["draft", "published", "suspended"]},
+    "avatar_media_id": {"type": ["string", "null"], "format": "uuid"},
+    "deleted": {"type": "boolean"},
+    "changed": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["handle", "name", "owner", "category", "location", "status", "avatar_media_id", "deleted", "changed"],
+  "additionalProperties": false
+}

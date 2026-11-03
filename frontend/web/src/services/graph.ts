@@ -27,6 +27,12 @@ export const graphService = {
   async unfollow(userId: string): Promise<void> {
     await api.delete(`/follows/${userId}/`);
   },
+  async followPage(pageId: string): Promise<void> {
+    await api.post(`/follows/${pageId}/`, { target_type: "page" });
+  },
+  async unfollowPage(pageId: string): Promise<void> {
+    await api.delete(`/follows/${pageId}/`, { params: { target_type: "page" } });
+  },
   // NOTE: there is no "am I following X" endpoint; follow state defaults to
   // unknown. Use GET /follows/following/ and check membership if needed.
 

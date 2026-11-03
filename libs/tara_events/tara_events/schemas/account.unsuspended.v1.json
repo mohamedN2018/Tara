@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/account.unsuspended.v1.json",
+  "title": "account.unsuspended v1 payload",
+  "description": "A suspension was lifted by staff (expired=false) or because its end date passed (expired=true, actor_id null).",
+  "type": "object",
+  "properties": {
+    "account_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "suspension_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "expired": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "account_id",
+    "suspension_id",
+    "expired"
+  ],
+  "additionalProperties": false
+}

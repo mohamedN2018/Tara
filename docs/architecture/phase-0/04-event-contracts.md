@@ -89,7 +89,10 @@ Events are **never** published directly inside the business transaction. Instead
 |-------|---------|-------------|----------------|
 | `account.registered` | account | handle?, email_verified=false | Profile (create profile), Notification |
 | `account.verified` | account | — | Profile, Notification |
-| `account.suspended` | account | reason, until? | Profile, Graph, Post, Chat (restrict) |
+| `account.suspended` | account | account_id, until (ISO datetime or null: until staff lift it), suspension_id, source (`admin`/`moderation`). **No reason text**: it stays in identity's `account_suspension` row. `actor_id` = the staff member. Emitted in the transaction that suspends the account and revokes its sessions and refresh tokens; behind `IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS` (8.4, 8.6) | Admin (audit log). **Open (8.5):** search (hide the owner's documents), chat, graph, ads (pause campaigns), realtime (close sockets, 4403), post/profile |
+| `account.unsuspended` | account | account_id, suspension_id, expired (true: the end date passed and the beat task or a sign-in lifted it; `actor_id` is then null) | Admin (audit log). Open (8.5): the same consumers as `account.suspended` |
+| `account.signed_out` | account | account_id, sessions (count revoked). A staff member signed the account out everywhere (8.6) | Admin (audit log). Open: realtime could drop sockets |
+| `account.verification.resent` | account | account_id. A staff member sent a new verification link; no address on the bus (8.6) | Admin (audit log) |
 | `session.created` | session | device, ip_region | Notification (new-login alert), Security |
 | `session.revoked` | session | — | Realtime (drop sockets) |
 | `account.role.granted` | account | account_id, role; `actor_id` = the granting admin; `correlation_id` = admin's edge request id. Emitted only when a grant is new; behind `IDENTITY_EMIT_AUDIT_EVENTS` | Admin (audit log) |
@@ -99,8 +102,9 @@ Events are **never** published directly inside the business transaction. Instead
 ### Profile & Pages
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
-| `profile.updated` | account | changed_fields, public_snapshot | Search, Feed/Post/Chat (refresh author cache) |
-| `page.created` | page | handle, category | Search |
+| `profile.updated` | account | changed_fields, public_snapshot (handle, display_name, visibility, avatar_media_id), city (additive, v1: only while the city's field privacy is public, else null; a city privacy change emits the event too) | Search, Feed/Post/Chat (refresh author cache) |
+| `page.created` | page | handle, name, owner; additive, v1: category, location, status, avatar_media_id, deleted (the same searchable state as `page.updated`) | Search |
+| `page.updated` | page | as `page.created`, plus changed[]. Emitted on every page edit (behind `PROFILE_EMIT_PAGE_UPDATED`); a draft or suspended status takes the page out of search. Schema `page.updated.v1.json` | Search |
 | `page.member.changed` | page | member, role, action | (none yet) |
 
 ### Social Graph
@@ -121,7 +125,7 @@ A block ends every edge between the two accounts in the same transaction: graph 
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
 | `post.created` | post | author, audience, media_ids, hashtags, mentions | Feed (fan-out), Search, Notification (mentions) |
-| `post.updated` | post | post_id, author_id, audience (may change on edit), comment_policy (additive, v1), excerpt, hashtags (the full list, additive, v1), new_mentions. Also emitted, with no new_mentions, when an overturned appeal restores a removed post | Feed, Search |
+| `post.updated` | post | post_id, author_id, audience (may change on edit), comment_policy (additive, v1), excerpt, hashtags (the full list, additive, v1), new_mentions; type, author_type, media_ids, created_at (additive, v1, search v2: a post that becomes public is indexed with its photos and date). Also emitted, with no new_mentions, when an overturned appeal restores a removed post | Feed, Search |
 | `post.deleted` | post | post_id. Also emitted when moderation removes a post. Feed and search keep a tombstone, so a retried older `post.created`/`post.updated` cannot bring it back. Post consumes its own event to restrict the post's media through media's bind (retried while media is down), so only the owner can fetch them | Feed, Search, Post |
 | `post.reacted` | post | reactor, reaction_type | Notification |
 | `post.unreacted` | post | post_id, reactor, reaction_type, author_id. Once per removed reaction | — (for later notification clean-up) |
@@ -141,16 +145,33 @@ Schemas: `libs/tara_events/tara_events/schemas/gathering.*.v1.json`. Ids, enums 
 
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
-| `gathering.created` | gathering | gathering_id, host_id, host_type, audience (`public`/`friends`/`invite_only`), status, location_type (`place`/`online`), starts_at, ends_at, capacity, cover_media_id | (search in 1.15) |
-| `gathering.updated` | gathering | as `gathering.created`, plus changed[] (edited fields), notify[] (the time or place fields among them) and recipients[] (going and interested, only when notify[] is not empty). Also emitted with changed=[`moderation_status`] when an overturned removal restores the event | Notification (`gathering.update` when notify[] is set) |
-| `gathering.cancelled` | gathering | as `gathering.created`, plus recipients[] (going and interested) | Notification (`gathering.cancel`) |
-| `gathering.deleted` | gathering | gathering_id, host_id, by (`moderation` when a moderator removed it; absent for the host's delete) | Notification (purges `gathering:<id>`) |
-| `gathering.rsvp` | gathering | gathering_id, host_id, account_id, status (`going`/`interested`/`not_going`, null when taken back), previous_status, going_count, interested_count. Only a real change | Notification (`gathering.rsvp` to the host, aggregated per event, for a new going or interested) |
+| `gathering.created` | gathering | gathering_id, host_id, host_type, audience (`public`/`friends`/`invite_only`), status, location_type (`place`/`online`), starts_at, ends_at, capacity, cover_media_id | Search (reads the event's text and indexable state from post's `GET /internal/v1/search/gatherings/<id>/`, ordered by `updated_at`; the payload stays ids, enums and times) |
+| `gathering.updated` | gathering | as `gathering.created`, plus changed[] (edited fields), notify[] (the time or place fields among them) and recipients[] (going and interested, only when notify[] is not empty). Also emitted with changed=[`moderation_status`] when an overturned removal restores the event | Notification (`gathering.update` when notify[] is set), Search (first chunk: re-reads the state) |
+| `gathering.cancelled` | gathering | as `gathering.created`, plus recipients[] (going and interested) | Notification (`gathering.cancel`), Search (drops it) |
+| `gathering.deleted` | gathering | gathering_id, host_id, by (`moderation` when a moderator removed it; absent for the host's delete) | Notification (purges `gathering:<id>`), Search (tombstone) |
+| `gathering.rsvp` | gathering | gathering_id, host_id, account_id, status (`going`/`interested`/`not_going`, null when taken back), previous_status, going_count, interested_count. Only a real change | Notification (`gathering.rsvp` to the host, aggregated per event, for a new going or interested), Search (going and interested counts, newest wins) |
 | `gathering.invited` | gathering | gathering_id, host_id, invitee_ids[] (newly invited friends only, at most 50) | Notification (`gathering.invite`) |
 | `gathering.reminder` | gathering | gathering_id, host_id, window (`24h`: host, going and interested; `1h`: host and going), starts_at, recipients[]. Once per event and window (`gathering_reminder_log`); a new start time re-arms both | Notification (`gathering.reminder`) |
 | `gathering.reported` | gathering | gathering_id, reporter, reason (an enum: spam, scam, hate, violence, nudity, harassment, false_information, other), owner_id (the host). Once per reporter per event, and only when the reporter can see it | Moderation (`gathering` target) |
 
 Post consumes `moderation.actioned` with `target_type=gathering` (`remove` hides the event everywhere and emits `gathering.deleted`; `approve` restores it) and `user.blocked` (the blocked side loses its RSVP and invite on the other's events), and `friendship.removed` (on friends-only events hosted by either side, the other side loses its RSVP and invite, freeing the seat; invite-only and public events are untouched; graph is re-checked first so a stale event after a re-friend drops nothing; no notification). An event's cover is bound in media to the event id, restricted, and media asks post's `/internal/v1/posts/<id>/visibility/` for it like for post media.
+
+Additive (v1, roadmap 1.11): `gathering.created/updated/cancelled` carry `group_id` (null outside a group), and `audience` gains `group` for an event in a group.
+
+### Groups (profile `groups` app, roadmap 1.11)
+Schemas: `libs/tara_events/tara_events/schemas/group.*.v1.json`. Ids and enums only, plus a group's name and handle for public and private groups (search indexes them); a hidden group's `name` and `handle` are blank and its `privacy` is `hidden`, so search drops it. Partition key `group:<id>`. Every row is written in the same transaction as the state change. Profile emits the `group.*` events behind `PROFILE_EMIT_GROUP_EVENTS`, post its two behind `POST_EMIT_GROUP_EVENTS` (both default on; two-release rollout).
+
+| Event | Subject | Key payload | Consumers |
+|-------|---------|-------------|-----------|
+| `group.created` | group | group_id, handle, name, privacy (`public`/`private`/`hidden`), category; additive: post_approval, membership_approval, status (`active`/`suspended`/`deleted`) | Search, Post (group read model) |
+| `group.updated` | group | as `group.created`, plus changed[] (privacy is always present). Also emitted with changed=[`status`] when an overturned moderation removal restores the group | Search, Post |
+| `group.deleted` | group | as `group.created`; status `deleted` (the owner deleted it) or `suspended` with by=`moderation` | Search, Post (tombstone; posts hidden), Notification (purges `group:<id>`) |
+| `group.member.changed` | group | group_id, account_id, role (null once the relation ended), state (`requested`/`invited`/`active`/`banned`/`none`), previous_role, previous_state, action (`created`, `joined`, `requested`, `approved`, `declined`, `cancelled`, `invited`, `invite_declined`, `left`, `removed`, `banned`, `unbanned`, `role_changed`, `settings_changed`), notify_posts, privacy, handle (blank when hidden), recipients[] (only for `requested`: the group's owners, admins and moderators, at most 100) | Post (read model), Notification (`group.invite`, `group.request`, `group.approved`, `group.role`) |
+| `group.reported` | group | group_id, reporter, reason (the same enum as `gathering.reported`), owner_id (the group's first owner). Once per reporter per group, and only when the reporter can see the group | Moderation (`group` target) |
+| `group.post.published` | group | group_id, post_id, author_id, handle, recipients[] (active members who turned on post notifications for the group; never the author or anyone blocked either way with them), chunk, chunks. Emitted by **post** when a group post is published (at once, or when the group's staff approve it) | Notification (`group.post`, one row per group) |
+| `group.announcement.pinned` | group | as `group.post.published`; recipients are all active members except the moderator who pinned it. Emitted by **post** | Notification (`group.announcement`) |
+
+Profile consumes `moderation.actioned` with `target_type=group` (`remove` suspends the group, 404 for everyone, and emits `group.deleted`; `approve` restores it and emits `group.updated`). Post keeps `GroupRef` and `GroupMembership` from these events (newer `occurred_at` only; a deleted group and an ended membership stay as tombstones). Posting, commenting and the group staff's actions ask profile's `/internal/v1/groups/<id>/access/` first; reads use the read model, and a missing row asks profile once and caches a "no relation" answer for 30 s. A post with a `group_id` always has `audience=group`; `post.created` carries `group_id` and `approval_state` (additive), and `post.deleted` carries `by=group` and `group_id` when the group's staff deleted or declined it. `comment.deleted.by` gains `group_moderator`. A group's cover is bound in media to the group id, restricted, and post's visibility endpoint answers for it with the group-header rule.
 
 ### Feed
 | Event | Subject | Key payload | Consumers |
@@ -193,9 +214,9 @@ The call-log line in the conversation is an ordinary `message.created` with `typ
 ### Marketplace
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
-| `listing.created` | listing | seller, category, price | Search, Moderation (queue) |
-| `listing.updated` | listing | changed | Search |
-| `listing.status.changed` | listing | from, to | Search, Notification |
+| `listing.created` | listing | seller, category, price; additive, v1 (search v2): the searchable state on every `listing.*` lifecycle event: status, seller_id, title, category, category_name, price_type, price, sale_price, effective_price, currency, condition, location, cover_media_id, created_at | Search, Moderation (queue) |
+| `listing.updated` | listing | changed, plus the searchable state (as `listing.created`). Search ignores a pre-1.15 payload without `status` | Search |
+| `listing.status.changed` | listing | from, to, plus the searchable state (as `listing.created`). Search indexes `active` only | Search, Notification |
 | `listing.reported` | report | listing_id, reporter, owner_id (the seller; only the owner may appeal; absent before 1.2), reason; once per reporter per listing | Moderation |
 | `marketplace.contact.requested` | listing | buyer, seller | Chat (create conversation) |
 | `listing.availability.changed` | listing | listing_id, seller_id, from, to (available/reserved/sold or null) | Search, Notification |

@@ -30,6 +30,7 @@ ACTIONS_BY_TARGET: dict[str, frozenset[str]] = {
     "listing": _CONTENT_ACTIONS,
     "listing_review": _CONTENT_ACTIONS,
     "gathering": _CONTENT_ACTIONS,  # an event (post service, 1.13)
+    "group": _CONTENT_ACTIONS,  # a group (profile service, 1.11): remove suspends it
     "page": frozenset({"remove", "restrict", "warn", "dismiss"}),
     "user": frozenset({"restrict", "shadow", "warn", "dismiss"}),
 }
@@ -54,6 +55,7 @@ REVERSALS: dict[tuple[str, str], str] = {
         "listing",
         "listing_review",
         "gathering",
+        "group",
     )
 }
 
@@ -388,6 +390,7 @@ _REPORT_EVENT_TARGETS = {
     "message.reported": ("message", "message_id"),
     "marketplace.review.reported": ("listing_review", "review_id"),
     "gathering.reported": ("gathering", "gathering_id"),
+    "group.reported": ("group", "group_id"),
 }
 
 

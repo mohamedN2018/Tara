@@ -1,9 +1,10 @@
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-import { expect, test } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
+import { type Page, expect, request, test } from "@playwright/test";
 
-import { API, apiAs, pageAs, sharedAccounts, unique } from "./helpers";
+import { type Account, API, PASSWORD, apiAs, pageAs, sharedAccounts, unique, verificationToken } from "./helpers";
 
 const promote = (email: string) =>
   execSync(`docker exec tara-identity-1 python manage.py create_admin ${email}`, { stdio: "pipe" });
@@ -266,4 +267,149 @@ test("without a capability there is no admin menu, the routes redirect and the A
   for (const path of ["/admin/audit/", "/admin/audit/export.csv", "/admin/capabilities/", "/admin/monitor/"]) {
     expect((await bobApi.get(`${API}${path}`)).status(), path).toBe(403);
   }
+});
+
+// ---- User management console (roadmap 8.6) and suspensions (8.4) ----
+
+/**
+ * A throwaway account for the suspension test. Never suspend the shared e2e
+ * accounts: every other spec signs in with them.
+ */
+async function throwawayAccount(): Promise<Account> {
+  const api = await request.newContext();
+  try {
+    const tag = unique();
+    const handle = `e2e_s_${tag}`;
+    const email = `${handle}@example.com`;
+    const name = `موقوف ${tag}`;
+    const res = await api.post(`${API}/auth/register/`, {
+      data: { email, password: PASSWORD, handle, display_name: name, language: "ar" },
+    });
+    expect(res.status(), await res.text()).toBe(201);
+    const token = await verificationToken(api, email);
+    expect((await api.post(`${API}/auth/verify-email/`, { data: { token } })).ok()).toBe(true);
+    return { email, handle, name, id: (await res.json()).data.account_id };
+  } finally {
+    await api.dispose();
+  }
+}
+
+async function signIn(email: string): Promise<{ status: number; refresh?: string }> {
+  const api = await request.newContext();
+  try {
+    const res = await api.post(`${API}/auth/login/`, { data: { email, password: PASSWORD } });
+    const body = res.ok() ? await res.json() : null;
+    return { status: res.status(), refresh: body?.data?.refresh_token };
+  } finally {
+    await api.dispose();
+  }
+}
+
+async function seriousA11y(page: Page): Promise<string[]> {
+  const result = await new AxeBuilder({ page }).include("main").withTags(["wcag2a", "wcag2aa"]).analyze();
+  return result.violations.filter((v) => v.impact === "serious" || v.impact === "critical").map((v) => v.id);
+}
+
+test("staff search accounts, reveal personal data with an audited reason, and suspend then lift", async ({ browser }) => {
+  const { c } = await sharedAccounts();
+  promote(c.email);
+  const target = await throwawayAccount();
+  const before = await signIn(target.email);
+  expect(before.status).toBe(200);
+
+  // Search by email: results carry the masked address only.
+  const admin = await pageAs(browser, c);
+  await admin.goto("/admin");
+  await admin.getByRole("navigation", { name: "أقسام الإدارة" }).getByRole("link", { name: "المستخدمون" }).click();
+  await expect(admin).toHaveURL(/\/admin\/users$/);
+  const searchForm = admin.getByRole("search", { name: "البحث في الحسابات" });
+  await searchForm.getByRole("searchbox").fill(target.email);
+  await searchForm.getByRole("button", { name: "بحث", exact: true }).click();
+  const results = admin.getByTestId("user-results");
+  await expect(results.locator(`tr[data-account="${target.id}"]`)).toBeVisible();
+  await expect(results).not.toContainText(target.email);
+  expect(await seriousA11y(admin)).toEqual([]);
+
+  // The account page: masked until revealed; every view is audited.
+  // Names come from profile; the link always exists, whatever it shows.
+  await results.locator(`tr[data-account="${target.id}"]`).getByRole("link").click();
+  await expect(admin).toHaveURL(new RegExp(`/admin/users/${target.id}$`));
+  await expect(admin.getByTestId("user-status")).toHaveText("نشط");
+  await expect(admin.getByTestId("user-overview")).not.toContainText(target.email);
+  expect(await seriousA11y(admin)).toEqual([]);
+
+  // Reveal needs a typed reason, and that reason lands in the audit log.
+  const reason = `تذكرة دعم ${unique()}`;
+  await admin.getByRole("button", { name: "إظهار البيانات الشخصية" }).first().click();
+  const reveal = admin.getByRole("dialog", { name: "إظهار البيانات الشخصية" });
+  await expect(reveal.getByRole("button", { name: "إظهار", exact: true })).toBeDisabled();
+  await reveal.getByRole("textbox", { name: "السبب" }).fill(reason);
+  await reveal.getByRole("button", { name: "إظهار", exact: true }).click();
+  await expect(reveal).toHaveCount(0);
+  await expect(admin.getByTestId("revealed-email")).toHaveText(target.email);
+  await admin.getByRole("tab", { name: "الجلسات" }).click();
+  await expect(admin.getByTestId("user-sessions").getByRole("listitem")).not.toHaveCount(0);
+
+  const carolApi = await apiAs(c);
+  const audited = async (action: string) =>
+    (await (await carolApi.get(`${API}/admin/audit/`, { params: { action, target_id: target.id } })).json()).data as {
+      actor_id: string;
+      reason: string;
+    }[];
+  const [revealed] = await audited("user.personal_data.revealed");
+  expect(revealed.actor_id).toBe(c.id);
+  expect(revealed.reason).toBe(reason);
+  expect((await audited("user.viewed")).length).toBeGreaterThan(0);
+
+  // Suspend, after a confirmation: login and refresh stop working at once.
+  await admin.getByRole("button", { name: "إيقاف", exact: true }).click();
+  const suspend = admin.getByRole("dialog", { name: /^إيقاف/ });
+  await suspend.getByRole("textbox", { name: "السبب" }).fill("حساب اختبار آلي");
+  await suspend.getByRole("button", { name: "إيقاف الحساب" }).click();
+  await expect(suspend).toHaveCount(0);
+  await expect(admin.getByTestId("user-status")).toHaveText("موقوف");
+  expect((await signIn(target.email)).status).toBe(403);
+  const anon = await request.newContext();
+  const refreshed = await anon.post(`${API}/auth/refresh/`, { data: { refresh_token: before.refresh } });
+  expect(refreshed.status()).toBe(401);
+  await anon.dispose();
+
+  // Admin's audit consumer records the suspension (events are asynchronous).
+  await admin.getByRole("tab", { name: "النشاط" }).click();
+  await expect
+    .poll(async () => (await audited("account.suspended")).length, { timeout: 30_000 })
+    .toBeGreaterThan(0);
+
+  // Lift it: the account can sign in again.
+  await admin.reload();
+  await admin.getByRole("button", { name: "رفع الإيقاف" }).click();
+  const lift = admin.getByRole("dialog", { name: /رفع الإيقاف/ });
+  await lift.getByRole("textbox", { name: "السبب" }).fill("انتهى الاختبار");
+  await lift.getByRole("button", { name: "رفع الإيقاف" }).click();
+  await expect(lift).toHaveCount(0);
+  await expect(admin.getByTestId("user-status")).toHaveText("نشط");
+  expect((await signIn(target.email)).status).toBe(200);
+  await expect
+    .poll(async () => (await audited("account.unsuspended")).length, { timeout: 30_000 })
+    .toBeGreaterThan(0);
+  await carolApi.dispose();
+});
+
+test("the users console reads in English and refuses members without the capability", async ({ browser }) => {
+  const { b, c } = await sharedAccounts();
+  promote(c.email);
+  const english = await pageAs(browser, c);
+  await english.addInitScript(() => localStorage.setItem("tara.locale", "en"));
+  await english.goto(`/admin/users?q=${encodeURIComponent(b.email)}&field=email`);
+  await expect(english.getByRole("heading", { name: "Users" })).toBeVisible();
+  await expect(english.getByTestId("user-results").locator(`tr[data-account="${b.id}"]`)).toBeVisible();
+
+  const member = await pageAs(browser, b);
+  await member.goto("/admin/users");
+  await expect(member).toHaveURL(/\/home$/);
+  const bobApi = await apiAs(b);
+  expect((await bobApi.get(`${API}/admin/users/`, { params: { q: c.email } })).status()).toBe(403);
+  expect((await bobApi.get(`${API}/admin/users/${c.id}/`)).status()).toBe(403);
+  expect((await bobApi.post(`${API}/admin/users/${c.id}/reveal/`, { data: { reason: "curious" } })).status()).toBe(403);
+  expect((await bobApi.post(`${API}/admin/users/${c.id}/suspend/`, { data: { reason: "nope nope" } })).status()).toBe(403);
 });

@@ -177,6 +177,13 @@ ADS_SERVING_ENABLED=false
 # with both false (admin-consumer declares its queue), then set them to true.
 IDENTITY_EMIT_AUDIT_EVENTS=true
 MODERATION_EMIT_AUDIT_EVENTS=true
+# Suspension, sign-out and verification events (8.4, 8.6): same two-step upgrade.
+IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS=true
+# page.updated for search v2 (1.15): same two-step upgrade (search-consumer first).
+PROFILE_EMIT_PAGE_UPDATED=true
+# group.* and group post events (1.11): same two-step upgrade (consumers first).
+PROFILE_EMIT_GROUP_EVENTS=true
+POST_EMIT_GROUP_EVENTS=true
 # Web Push. Keep these keys: replacing them invalidates every browser subscription.
 VAPID_PUBLIC_KEY=${VAPID_PUBLIC}
 VAPID_PRIVATE_KEY=${VAPID_PRIVATE}

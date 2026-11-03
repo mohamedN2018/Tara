@@ -46,11 +46,11 @@ async function search(query: string, current: number) {
   try {
     const hits = await searchService.suggest(query);
     if (current !== generation) return;
-    // The people index titles a user as "handle display name".
+    // Hits carry the handle; older indexes only titled a user "handle display name".
     candidates.value = hits
       .filter((h) => h.type === "user")
       .slice(0, 6)
-      .map((h) => ({ id: h.id, handle: h.title.split(" ")[0] }));
+      .map((h) => ({ id: h.id, handle: h.handle || h.title.split(" ")[0] }));
     active.value = 0;
   } catch {
     candidates.value = [];

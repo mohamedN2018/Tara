@@ -13,6 +13,7 @@ import {
   Trash2,
   UserPlus,
   Users,
+  UsersRound,
 } from "lucide-vue-next";
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
@@ -65,7 +66,7 @@ const hostTime = computed(() => {
 });
 const link = computed(() => (event.value?.location_type === "online" ? safeHttpUrl(event.value.online_url) : null));
 const open = computed(() => event.value?.status === "scheduled");
-const AUDIENCE_ICONS = { public: Globe2, friends: Users, invite_only: Lock } as const;
+const AUDIENCE_ICONS = { public: Globe2, friends: Users, invite_only: Lock, group: UsersRound } as const;
 
 async function load() {
   loading.value = true;

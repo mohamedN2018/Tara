@@ -63,11 +63,15 @@ class GatheringListCreateView(APIView):
         """``upcoming`` (default), ``hosting``, ``going`` (going or interested),
         ``invited``: soonest first. ``past``: newest first. Keyset-paginated, and
         filtered by visibility before paging, so pages are full."""
-        queryset = services.list_queryset(
-            _me(request),
-            request.query_params.get("scope") or "upcoming",
-            q=request.query_params.get("q") or "",
-        )
+        group_id = request.query_params.get("group_id")
+        if group_id:  # one group's events (1.11): 404 when its content is hidden
+            queryset = services.group_queryset(_me(request), group_id)
+        else:
+            queryset = services.list_queryset(
+                _me(request),
+                request.query_params.get("scope") or "upcoming",
+                q=request.query_params.get("q") or "",
+            )
         paginator = CursorPagination()
         page = paginator.paginate_queryset(queryset, request)
         return paginator.get_paginated_response(_serialize(_me(request), page))

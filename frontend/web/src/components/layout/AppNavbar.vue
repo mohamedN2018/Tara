@@ -1,19 +1,7 @@
 <script setup lang="ts">
-import {
-  Bell,
-  Clock,
-  FileText,
-  Home,
-  Menu,
-  MessageCircle,
-  Search,
-  Store,
-  User,
-  Users,
-} from "lucide-vue-next";
-import { onBeforeUnmount, ref, watch } from "vue";
+import { Bell, Home, Menu, MessageCircle, Search, Store, Users, UsersRound } from "lucide-vue-next";
+import { ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter } from "vue-router";
 
 import MessagesPanel from "@/components/chat/MessagesPanel.vue";
 import AppsMenu from "@/components/layout/AppsMenu.vue";
@@ -21,15 +9,14 @@ import CreateMenu from "@/components/layout/CreateMenu.vue";
 import ProfileMenu from "@/components/layout/ProfileMenu.vue";
 import TaraLogo from "@/components/brand/TaraLogo.vue";
 import NotificationPanel from "@/components/notifications/NotificationPanel.vue";
+import GlobalSearch from "@/components/search/GlobalSearch.vue";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import { badgeText } from "@/lib/chat";
-import { type Suggestion, searchService } from "@/services/search";
 import { useChatUnreadStore } from "@/stores/chatUnread";
 import { useNotificationStore } from "@/stores/notifications";
 import { useUiStore } from "@/stores/ui";
 
 const { t } = useI18n();
-const router = useRouter();
 const ui = useUiStore();
 const notifications = useNotificationStore();
 const chatUnread = useChatUnreadStore();
@@ -39,96 +26,11 @@ const showMessages = ref(false);
 useEscapeKey(showNotifs, () => (showNotifs.value = false));
 useEscapeKey(showMessages, () => (showMessages.value = false));
 
-// --- Search: live autocomplete (real /search/autocomplete/) + recent history.
-const RECENT_KEY = "tara.recentSearches";
-const q = ref("");
-const suggestions = ref<Suggestion[]>([]);
-const showSearch = ref(false);
-useEscapeKey(showSearch, () => (showSearch.value = false));
-
-function loadRecent(): string[] {
-  try {
-    const raw = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
-    return Array.isArray(raw) ? raw.filter((x) => typeof x === "string").slice(0, 6) : [];
-  } catch {
-    return [];
-  }
-}
-const recent = ref<string[]>(loadRecent());
-
-function rememberTerm(term: string) {
-  recent.value = [term, ...recent.value.filter((r) => r !== term)].slice(0, 6);
-  try {
-    localStorage.setItem(RECENT_KEY, JSON.stringify(recent.value));
-  } catch {
-    // Storage may be unavailable (private mode) — recents are best-effort.
-  }
-}
-function clearRecent() {
-  recent.value = [];
-  try {
-    localStorage.removeItem(RECENT_KEY);
-  } catch {
-    // ignore
-  }
-}
-
-let suggestTimer: number | null = null;
-watch(q, (val) => {
-  if (suggestTimer) window.clearTimeout(suggestTimer);
-  const term = val.trim();
-  if (term.length < 2) {
-    suggestions.value = [];
-    return;
-  }
-  // Debounce autocomplete so we don't fire a request per keystroke.
-  suggestTimer = window.setTimeout(async () => {
-    try {
-      suggestions.value = await searchService.suggest(term);
-    } catch {
-      suggestions.value = []; // Endpoint optional; fall back to free-text search.
-    }
-  }, 250);
-});
-onBeforeUnmount(() => {
-  if (suggestTimer) window.clearTimeout(suggestTimer);
-});
-
-function go(term: string) {
-  const value = term.trim();
-  if (!value) return;
-  q.value = value;
-  rememberTerm(value);
-  showSearch.value = false;
-  router.push({ name: "search", query: { q: value } });
-}
-function submitSearch() {
-  go(q.value);
-}
-
-// Person suggestions jump straight to that profile; everything else runs a
-// full-text search.
-function pickSuggestion(s: Suggestion) {
-  rememberTerm(s.title);
-  showSearch.value = false;
-  q.value = s.title;
-  if (s.type === "user" && s.id) {
-    router.push({ name: "profile-by-id", params: { id: s.id } });
-  } else {
-    router.push({ name: "search", query: { q: s.title } });
-  }
-}
-
-function iconFor(type: string) {
-  if (type === "user") return User;
-  if (type === "listing") return Store;
-  return FileText;
-}
-
 const navIcons = [
   { name: "home", to: "/home", icon: Home, label: "nav.home" },
   { name: "friends", to: "/friends", icon: Users, label: "nav.friends" },
   { name: "marketplace", to: "/marketplace", icon: Store, label: "nav.marketplace" },
+  { name: "groups", to: "/groups", icon: UsersRound, label: "nav.groups" },
 ];
 </script>
 
@@ -146,68 +48,8 @@ const navIcons = [
       </RouterLink>
     </div>
 
-    <!-- Search with live suggestions + recent history -->
-    <div class="relative hidden min-w-0 flex-1 sm:block md:max-w-md lg:max-w-xl">
-      <form role="search" @submit.prevent="submitSearch">
-        <Search class="pointer-events-none absolute inset-y-0 start-4 my-auto h-4 w-4 text-gray-500 dark:text-gray-400" />
-        <input
-          v-model="q"
-          type="search"
-          class="input h-11 rounded-full border-transparent bg-gray-100 ps-11 dark:border-transparent dark:bg-gray-900"
-          :placeholder="t('search.placeholder')"
-          :aria-label="t('nav.search')"
-          autocomplete="off"
-          @focus="showSearch = true"
-        />
-      </form>
-
-      <template v-if="showSearch">
-        <div class="fixed inset-0 z-30" @click="showSearch = false" />
-        <div class="popover absolute inset-x-0 z-40 mt-2 max-h-[70vh] overflow-y-auto p-2">
-          <!-- Typing → live suggestions -->
-          <template v-if="q.trim().length >= 2">
-            <button
-              v-for="s in suggestions"
-              :key="s.id"
-              type="button"
-              class="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-start text-sm transition hover:bg-gray-100 dark:hover:bg-gray-800"
-              @mousedown.prevent="pickSuggestion(s)"
-            >
-              <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-600 dark:bg-brand-950/70 dark:text-brand-300">
-                <component :is="iconFor(s.type)" class="h-4 w-4" />
-              </span>
-              <span class="min-w-0 flex-1">
-                <span class="block truncate font-semibold" dir="auto">{{ s.title }}</span>
-                <span v-if="s.snippet" class="block truncate text-xs text-gray-500 dark:text-gray-400" dir="auto">{{ s.snippet }}</span>
-              </span>
-            </button>
-            <p class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">{{ t("search.hint") }}</p>
-          </template>
-
-          <!-- Empty input → recent searches -->
-          <template v-else-if="recent.length">
-            <div class="flex items-center justify-between px-3 py-1">
-              <span class="text-xs font-bold text-gray-500 dark:text-gray-400">{{ t("search.recent") }}</span>
-              <button type="button" class="text-xs font-semibold text-brand-600 dark:text-brand-300" @mousedown.prevent="clearRecent">
-                {{ t("search.clear") }}
-              </button>
-            </div>
-            <button
-              v-for="r in recent"
-              :key="r"
-              type="button"
-              class="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-start text-sm transition hover:bg-gray-100 dark:hover:bg-gray-800"
-              @mousedown.prevent="go(r)"
-            >
-              <Clock class="h-4 w-4 text-gray-500 dark:text-gray-400" />
-              <span class="truncate">{{ r }}</span>
-            </button>
-          </template>
-
-          <p v-else class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">{{ t("search.hint") }}</p>
-        </div>
-      </template>
-    </div>
+    <!-- Search: recent, trending and live suggestions (components/search/GlobalSearch.vue) -->
+    <GlobalSearch class="hidden min-w-0 flex-1 sm:block md:max-w-md lg:max-w-xl" />
 
     <!-- Primary nav on tablets; from lg the sidebar takes over -->
     <nav class="hidden h-full items-center gap-1 md:flex lg:hidden" :aria-label="t('nav.home')">
@@ -226,6 +68,10 @@ const navIcons = [
 
     <!-- End: create, messages, notifications, apps, profile -->
     <div class="ms-auto flex items-center gap-1.5">
+      <!-- Phones: the field does not fit the bar, so search opens its own page -->
+      <RouterLink to="/search" class="icon-btn sm:hidden" :aria-label="t('search.openSearch')" :title="t('search.openSearch')">
+        <Search class="h-5 w-5" />
+      </RouterLink>
       <div class="hidden sm:block">
         <CreateMenu />
       </div>

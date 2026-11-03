@@ -74,12 +74,14 @@ def record(
     detail: dict | None = None,
     occurred_at: datetime | None = None,
     source_event_id=None,
+    reason: str = "",
 ) -> AuditEntry:
     """Write one entry (call inside the decision's transaction).
 
     Without a valid account id the actor is the system, named by ``actor_name``
     (the producing service). A ``source_event_id`` seen before returns the
-    existing row, so a redelivered event never adds a second one.
+    existing row, so a redelivered event never adds a second one. ``reason`` is
+    a staff member's own justification (8.6), never content from an event.
     """
     actor = _as_uuid(actor_id)
     fields = {
@@ -92,6 +94,7 @@ def record(
         "target_id": str(target_id or "")[:64],
         "request_id": clean_request_id(request_id),
         "detail": detail or {},
+        "reason": (reason or "").strip()[:500],
     }
     event_id = _as_uuid(source_event_id)
     if event_id is None:
@@ -147,6 +150,7 @@ CSV_COLUMNS = (
     "target_id",
     "request_id",
     "detail",
+    "reason",
 )
 # A cell starting with one of these is a formula in Excel, LibreOffice and
 # Google Sheets (CSV injection); a leading apostrophe makes it text.
@@ -172,6 +176,7 @@ def _csv_row(entry: AuditEntry) -> list[str]:
         entry.target_id,
         entry.request_id,
         detail,
+        entry.reason,
     )
     return [csv_safe(v) for v in values]
 

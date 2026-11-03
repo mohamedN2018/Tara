@@ -14,6 +14,7 @@ named caller (picked by the token's ``iss``), issued by that caller, for the
 from __future__ import annotations
 
 import logging
+import uuid
 
 import jwt
 from django.conf import settings
@@ -28,10 +29,13 @@ from rest_framework.views import APIView
 from tara_common import capabilities as registry
 from tara_common.auth import verify_internal_token
 from tara_common.exceptions import TaraAPIError
+from tara_common.pagination import CursorPagination
 from tara_common.responses import data_response
 
+from . import account_admin
 from .events import emit_domain_event, emit_security_event
-from .models import Account, AccountRole, RoleCapability
+from .models import Account, AccountRole, AccountSuspension, RoleCapability
+from .services import list_sessions
 from .tokens import bridged_roles, roles_for
 
 logger = logging.getLogger("tara.identity.internal")
@@ -328,3 +332,236 @@ class CapabilityMatrixView(_InternalView):
                     actor_id=actor,
                 )
         return data_response(matrix_data())
+
+
+# ---- user management console (roadmap 8.6, identity side of 8.4) -------------
+#
+# Results and the overview carry masked contact details only. The full email,
+# the phone number and the session list come from ``personal/``, which admin
+# calls only after writing the staff member's reason to its audit log.
+
+SEARCH_MIN_LENGTH = 2
+MAX_SUMMARIES = 50
+
+
+def mask_email(email: str) -> str:
+    """``layla@example.com`` -> ``l****@e******.com``: enough to tell accounts apart."""
+    local, _, domain = (email or "").partition("@")
+    if not domain:
+        return "*" * len(local)
+    host, dot, tld = domain.rpartition(".")
+    if not dot:
+        host, tld = domain, ""
+    masked_host = (host[:1] + "*" * max(len(host) - 1, 1)) + (f".{tld}" if tld else "")
+    return f"{local[:1]}{'*' * max(len(local) - 1, 1)}@{masked_host}"
+
+
+def mask_phone(phone: str) -> str:
+    """Keep the leading ``+`` and the last two digits."""
+    if not phone:
+        return ""
+    plus = "+" if phone.startswith("+") else ""
+    digits = phone.lstrip("+")
+    return plus + "*" * max(len(digits) - 2, 0) + digits[-2:]
+
+
+def _iso(value) -> str | None:
+    return value.isoformat() if value else None
+
+
+def _summary(account: Account) -> dict:
+    return {
+        "account_id": str(account.id),
+        "email_masked": mask_email(account.email),
+        "status": account.status,
+        "email_verified": account.email_verified,
+        "created_at": _iso(account.created_at),
+    }
+
+
+def _suspension_data(suspension: AccountSuspension | None) -> dict | None:
+    if suspension is None:
+        return None
+    return {
+        "id": str(suspension.id),
+        "reason": suspension.reason,
+        "until": _iso(suspension.until),
+        "source": suspension.source,
+        "created_at": _iso(suspension.created_at),
+        "created_by": str(suspension.created_by) if suspension.created_by else None,
+    }
+
+
+def _overview(account: Account) -> dict:
+    return {
+        **_summary(account),
+        "phone_verified": account.phone_verified,
+        "phone_masked": mask_phone(account.phone) if account.phone_verified else "",
+        "last_login_at": _iso(account.last_login_at),
+        "language": account.language,
+        "roles": roles_for(account),
+        "bridged_roles": bridged_roles(account),
+        "active_sessions": list_sessions(account).count(),
+        "google_linked": account.social_identities.filter(provider="google").exists(),
+        "suspension": _suspension_data(account_admin.active_suspension(account)),
+    }
+
+
+class _SearchPagination(CursorPagination):
+    page_size = 20
+    max_page_size = 50
+
+
+class AccountSearchView(_InternalView):
+    """Accounts by id (exact) or by email (prefix; a whole address is its own prefix).
+
+    Keyset-paginated on the unique email, so a page never repeats or skips a row
+    while accounts are added. Handles and names live in profile; admin asks it.
+    """
+
+    def get(self, request: Request) -> Response:
+        q = request.query_params.get("q", "").strip()
+        try:
+            account_id = uuid.UUID(q)
+        except ValueError:
+            account_id = None
+        if account_id is not None:
+            rows = Account.objects.filter(id=account_id)
+        elif SEARCH_MIN_LENGTH <= len(q) <= 254:
+            rows = Account.objects.filter(email__startswith=q.lower())
+        else:
+            raise TaraAPIError(
+                f"Search for an account id, or {SEARCH_MIN_LENGTH} or more characters of an email.",
+                code="validation_error",
+                http_status_code=400,
+            )
+        paginator = _SearchPagination()
+        page = paginator.paginate_queryset(rows.order_by("email"), request, view=self)
+        return paginator.get_paginated_response([_summary(a) for a in page])
+
+
+class _IdsSerializer(serializers.Serializer):
+    ids = serializers.ListField(
+        child=serializers.UUIDField(), allow_empty=True, max_length=MAX_SUMMARIES
+    )
+
+
+class AccountSummariesView(_InternalView):
+    """Summaries for accounts found elsewhere (a profile search), in the order asked."""
+
+    def post(self, request: Request) -> Response:
+        serializer = _IdsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        ids = serializer.validated_data["ids"]
+        found = {a.id: a for a in Account.objects.filter(id__in=ids)}
+        return data_response([_summary(found[i]) for i in ids if i in found])
+
+
+class AccountOverviewView(_InternalView):
+    def get(self, request: Request, account_id: str) -> Response:
+        return data_response(_overview(_get_account(account_id)))
+
+
+class AccountPersonalDataView(_InternalView):
+    """Full email, phone and live sessions. Admin audits every call before making it."""
+
+    def get(self, request: Request, account_id: str) -> Response:
+        account = _get_account(account_id)
+        sessions = [
+            {
+                "id": str(s.id),
+                "platform": s.device.platform if s.device else "web",
+                "user_agent": s.user_agent,
+                "ip_region": s.ip_region,
+                "created_at": _iso(s.created_at),
+                "last_seen_at": _iso(s.last_seen_at),
+            }
+            for s in list_sessions(account)[:50]
+        ]
+        return data_response(
+            {
+                "account_id": str(account.id),
+                "email": account.email,
+                "phone": account.phone if account.phone_verified else "",
+                "sessions": sessions,
+            }
+        )
+
+
+class _ActorSerializer(serializers.Serializer):
+    actor_id = serializers.UUIDField()
+
+
+class _SuspendSerializer(_ActorSerializer):
+    reason = serializers.CharField(min_length=3, max_length=500)
+    until = serializers.DateTimeField(required=False, allow_null=True, default=None)
+    idempotency_key = serializers.CharField(min_length=8, max_length=100)
+    source = serializers.ChoiceField(
+        choices=AccountSuspension.Source.values, default=AccountSuspension.Source.ADMIN
+    )
+
+
+class _UnsuspendSerializer(_ActorSerializer):
+    reason = serializers.CharField(min_length=3, max_length=500)
+
+
+def _correlation(request: Request) -> str | None:
+    return getattr(request, "request_id", None)
+
+
+class AccountSuspensionView(_InternalView):
+    """POST suspends (once per idempotency key); DELETE lifts the active suspension."""
+
+    def post(self, request: Request, account_id: str) -> Response:
+        serializer = _SuspendSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        v = serializer.validated_data
+        suspension, created = account_admin.suspend(
+            account_id,
+            actor_id=v["actor_id"],
+            reason=v["reason"],
+            until=v["until"],
+            idempotency_key=v["idempotency_key"],
+            source=v["source"],
+            correlation_id=_correlation(request),
+        )
+        return data_response(
+            {"suspension": _suspension_data(suspension), "created": created},
+            status=201 if created else 200,
+        )
+
+    def delete(self, request: Request, account_id: str) -> Response:
+        serializer = _UnsuspendSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        v = serializer.validated_data
+        suspension = account_admin.unsuspend(
+            account_id,
+            actor_id=v["actor_id"],
+            reason=v["reason"],
+            correlation_id=_correlation(request),
+        )
+        return data_response({"suspension_id": str(suspension.id), "lifted": True})
+
+
+class AccountSignOutView(_InternalView):
+    def post(self, request: Request, account_id: str) -> Response:
+        serializer = _ActorSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        revoked = account_admin.sign_out_everywhere(
+            account_id,
+            actor_id=serializer.validated_data["actor_id"],
+            correlation_id=_correlation(request),
+        )
+        return data_response({"sessions_revoked": revoked})
+
+
+class AccountVerificationView(_InternalView):
+    def post(self, request: Request, account_id: str) -> Response:
+        serializer = _ActorSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        account_admin.resend_verification(
+            account_id,
+            actor_id=serializer.validated_data["actor_id"],
+            correlation_id=_correlation(request),
+        )
+        return data_response({"sent": True}, status=202)

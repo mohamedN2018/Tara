@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { PenSquare, Plus, Store } from "lucide-vue-next";
+import { PenSquare, Plus, Store, UsersRound } from "lucide-vue-next";
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
@@ -15,6 +15,10 @@ useEscapeKey(open, () => (open.value = false));
 function newPost() {
   open.value = false;
   router.push("/home");
+}
+function newGroup() {
+  open.value = false;
+  router.push("/groups/new");
 }
 function newListing() {
   open.value = false;
@@ -58,6 +62,16 @@ function newListing() {
             <Store class="h-4 w-4" />
           </span>
           {{ t("create.listing") }}
+        </button>
+        <button
+          class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-start text-sm transition hover:bg-gray-100 dark:hover:bg-gray-800"
+          role="menuitem"
+          @click="newGroup"
+        >
+          <span class="flex h-9 w-9 items-center justify-center rounded-full bg-brand-50 text-brand-600 dark:bg-brand-950/40 dark:text-brand-300">
+            <UsersRound class="h-4 w-4" />
+          </span>
+          {{ t("create.group") }}
         </button>
       </div>
     </template>

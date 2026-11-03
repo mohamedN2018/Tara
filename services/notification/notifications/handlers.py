@@ -410,3 +410,77 @@ def on_call_missed(e: EventEnvelope) -> None:
             },
         )
         _call_push(recipient, "call.missed", p, call_kind=p.get("kind"), body="")
+
+
+# ---- groups (profile 1.11; posts and announcements from post) -----------------------
+# Payloads carry ids and enums only. Links open /groups/<handle>; a hidden group's
+# handle never travels, so its links use the id (the app accepts both).
+
+
+def _group(p: dict) -> tuple[str, dict]:
+    group_id = p["group_id"]
+    return f"group:{group_id}", {"group_id": group_id, "group_handle": p.get("handle") or None}
+
+
+@on_event("group.member.changed")
+def on_group_member_changed(e: EventEnvelope) -> None:
+    """Invites, requests (to the group's staff, one row per group), approvals and
+    role changes. Leaving, removals and bans tell nobody."""
+    p = e.payload
+    action = p.get("action")
+    ref, data = _group(p)
+    account = p.get("account_id")
+    if action == "invited":
+        notify(account, "group.invite", actor_id=e.actor_id, subject_ref=ref, data=data)
+    elif action == "requested":
+        for recipient in p.get("recipients") or []:
+            notify(recipient, "group.request", actor_id=account, subject_ref=ref, data=data)
+    elif action == "approved":
+        notify(account, "group.approved", actor_id=e.actor_id, subject_ref=ref, data=data)
+    elif action == "role_changed" and p.get("role"):
+        notify(
+            account,
+            "group.role",
+            actor_id=e.actor_id,
+            subject_ref=ref,
+            data={**data, "role": p["role"]},
+        )
+
+
+@on_event("group.post.published")
+def on_group_post_published(e: EventEnvelope) -> None:
+    """Members who opted in for the group, one row per group until read."""
+    p = e.payload
+    ref, data = _group(p)
+    for recipient in p.get("recipients") or []:
+        notify(
+            recipient,
+            "group.post",
+            actor_id=p.get("author_id"),
+            subject_ref=ref,
+            target_ref=f"post:{p['post_id']}",
+            data={**data, "post_id": p["post_id"]},
+        )
+
+
+@on_event("group.announcement.pinned")
+def on_group_announcement(e: EventEnvelope) -> None:
+    p = e.payload
+    ref, data = _group(p)
+    for recipient in p.get("recipients") or []:
+        notify(
+            recipient,
+            "group.announcement",
+            actor_id=e.actor_id,
+            subject_ref=ref,
+            target_ref=f"post:{p['post_id']}",
+            data={**data, "post_id": p["post_id"]},
+        )
+
+
+@on_event("group.deleted")
+def on_group_deleted(e: EventEnvelope) -> None:
+    """Deleted by its owner or removed by moderation: its notifications go too."""
+    group_id = e.payload.get("group_id") or e.subject_id
+    if group_id:
+        services.purge_subject(f"group:{group_id}")

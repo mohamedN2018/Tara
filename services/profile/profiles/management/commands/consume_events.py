@@ -15,6 +15,8 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options) -> None:
+        import groups.handlers  # noqa: F401
+
         import profiles.handlers  # noqa: F401 - registers @on_event handlers
         from profiles.models import ProcessedEvent
         from tara_events.worker import run_worker

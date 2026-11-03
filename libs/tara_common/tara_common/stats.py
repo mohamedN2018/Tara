@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from typing import Any
 
 from django.conf import settings
 from django.db import transaction
@@ -64,3 +65,37 @@ class InternalStatsView(APIView):
                 logger.exception("stats counter failed", extra={"metric": metric})
                 values[metric] = None
         return data_response({"service": settings.SERVICE_NAME, "stats": values})
+
+
+@method_decorator(transaction.non_atomic_requests, name="dispatch")  # read-only counts
+class InternalAccountStatsView(APIView):
+    """Per-account counts for admin's user console (roadmap 8.6).
+
+    ``GET /internal/v1/stats/accounts/<account_id>/`` answers what one account
+    owns in this service (posts, listings, open cases about it), as integers
+    only. Same authentication as ``InternalStatsView``. Each counter takes the
+    account id (a UUID); one that fails reports ``None``, not an error.
+
+        path(
+            "internal/v1/stats/accounts/<uuid:account_id>/",
+            InternalAccountStatsView.as_view(counters={"posts": count_for_author}),
+        )
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+    throttle_classes: list = []  # internal: no per-IP throttle (roadmap 3.3)
+    counters: dict[str, Callable[[Any], int]] = {}
+
+    def get(self, request: Request, account_id) -> Response:
+        require_internal_token(request, f"{settings.SERVICE_NAME}-internal")
+        values: dict[str, int | None] = {}
+        for metric, count in self.counters.items():
+            try:
+                values[metric] = int(count(account_id))
+            except Exception:  # noqa: BLE001 - one broken counter must not hide the rest
+                logger.exception("account stats counter failed", extra={"metric": metric})
+                values[metric] = None
+        return data_response(
+            {"service": settings.SERVICE_NAME, "account_id": str(account_id), "stats": values}
+        )

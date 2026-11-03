@@ -7,9 +7,12 @@ import {
   MessageSquareOff,
   MoreHorizontal,
   PenSquare,
+  Pin,
+  PinOff,
   Trash2,
   UserCheck,
   Users,
+  UsersRound,
 } from "lucide-vue-next";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
@@ -32,6 +35,7 @@ import { applyReactionChange } from "@/lib/reactionCounts";
 import { hasLink } from "@/lib/richText";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import { useMediaViewer } from "@/lib/useMediaViewer";
+import { groupPostsService } from "@/services/groups";
 import { COMMENT_POLICIES, type CommentPolicy, postService, REPORT_ERRORS } from "@/services/post";
 import { useAuthStore } from "@/stores/auth";
 import { useDirectoryStore } from "@/stores/directory";
@@ -48,10 +52,14 @@ const props = withDefaults(
     /** Scroll the open comments to this comment (and its thread root, if known). */
     focusCommentId?: string | null;
     focusThreadId?: string | null;
+    /** In a group feed: the viewer may delete posts and comments (group moderator+). */
+    groupModerator?: boolean;
+    /** In a group feed: the viewer may pin announcements. */
+    groupCanPin?: boolean;
   }>(),
-  { startCommentsOpen: false, focusCommentId: null, focusThreadId: null },
+  { startCommentsOpen: false, focusCommentId: null, focusThreadId: null, groupModerator: false, groupCanPin: false },
 );
-const emit = defineEmits<{ removed: [id: string]; shared: [post: Post] }>();
+const emit = defineEmits<{ removed: [id: string]; shared: [post: Post]; pinned: [id: string, pinned: boolean] }>();
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -94,6 +102,7 @@ const AUDIENCE_ICON: Record<string, typeof Globe> = {
   friends: Users,
   followers: UserCheck,
   only_me: Lock,
+  group: UsersRound,
 };
 const audienceIcon = computed(() => AUDIENCE_ICON[props.post.audience] ?? Globe);
 const fullTime = computed(() => {
@@ -106,6 +115,27 @@ const fullTime = computed(() => {
 
 const menuOpen = ref(false);
 useEscapeKey(menuOpen, () => (menuOpen.value = false));
+// Group moderators delete others' posts; the author deletes their own.
+const canRemove = computed(() => isAuthor.value || props.groupModerator);
+const pinned = ref(!!props.post.pinned_at);
+const pinning = ref(false);
+async function togglePin() {
+  if (pinning.value) return;
+  menuOpen.value = false;
+  pinning.value = true;
+  const next = !pinned.value;
+  try {
+    if (next) await groupPostsService.pin(props.post.id);
+    else await groupPostsService.unpin(props.post.id);
+    pinned.value = next;
+    toasts.success(t(next ? "groups.post.pinned" : "groups.post.unpinned"));
+    emit("pinned", props.post.id, next);
+  } catch (e) {
+    toasts.error(e);
+  } finally {
+    pinning.value = false;
+  }
+}
 const removing = ref(false);
 async function remove() {
   if (removing.value) return;
@@ -296,6 +326,12 @@ async function toggleSave() {
           <span aria-hidden="true">·</span>
           <component :is="audienceIcon" class="h-3 w-3" :title="t(`feed.audience${post.audience === 'only_me' ? 'OnlyMe' : post.audience.charAt(0).toUpperCase() + post.audience.slice(1)}`)" />
           <MessageSquareOff v-if="commentPolicy === 'off'" class="h-3 w-3" :aria-label="t('post.commentsOff')" />
+          <span v-if="pinned" class="ms-1 inline-flex items-center gap-0.5 rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-semibold text-brand-700 dark:bg-brand-950/50 dark:text-brand-300">
+            <Pin class="h-3 w-3" aria-hidden="true" /> {{ t("groups.post.pinnedBadge") }}
+          </span>
+          <span v-if="post.approval_state === 'pending'" class="ms-1 rounded-full bg-accent-50 px-1.5 py-0.5 text-[10px] font-semibold text-accent-700 dark:bg-accent-900/40 dark:text-accent-300">
+            {{ t("groups.post.pendingBadge") }}
+          </span>
         </div>
       </div>
 
@@ -344,7 +380,16 @@ async function toggleSave() {
                 </button>
               </div>
               <button
-                v-if="isAuthor"
+                v-if="groupCanPin && post.approval_state !== 'pending'"
+                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-start text-sm transition hover:bg-gray-100 disabled:opacity-60 dark:hover:bg-gray-800"
+                :disabled="pinning"
+                @click="togglePin"
+              >
+                <PinOff v-if="pinned" class="h-4 w-4" /><Pin v-else class="h-4 w-4" />
+                {{ pinned ? t("groups.post.unpin") : t("groups.post.pin") }}
+              </button>
+              <button
+                v-if="canRemove"
                 class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-start text-sm text-red-600 transition hover:bg-red-50 disabled:opacity-60 dark:hover:bg-red-950/40"
                 :disabled="removing"
                 @click="remove"
@@ -352,7 +397,7 @@ async function toggleSave() {
                 <Trash2 class="h-4 w-4" /> {{ t("friends.delete") }}
               </button>
               <button
-                v-else
+                v-if="!isAuthor"
                 class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-start text-sm transition hover:bg-gray-100 dark:hover:bg-gray-800"
                 @click="menuOpen = false; showReport = true"
               >
@@ -431,6 +476,7 @@ async function toggleSave() {
         :known-names="knownNames"
         :focus-id="focusCommentId"
         :focus-root-id="focusThreadId"
+        :can-moderate="groupModerator"
         @added="commentCount += 1"
         @total="commentCount = $event"
       />

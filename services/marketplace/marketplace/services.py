@@ -83,6 +83,7 @@ def _emit_status(listing: Listing, previous: str, actor_id: str) -> None:
             "availability": after,
             "seller_id": str(listing.seller_id),
             "title": listing.title,
+            **search_snapshot(listing),
         },
         actor_id=str(actor_id),
     )
@@ -98,6 +99,31 @@ def _emit_status(listing: Listing, previous: str, actor_id: str) -> None:
             },
             actor_id=str(actor_id),
         )
+
+
+def search_snapshot(listing: Listing) -> dict:
+    """Additive fields on every ``listing.*`` lifecycle event (search v2, 1.15): the
+    listing's searchable state, so search can index (or drop) it from any one of
+    them. The seller is always carried, so a re-index never clears it."""
+    cover = listing.media.order_by("position").values_list("media_id", flat=True).first()
+    category = listing.category
+    effective = listing.sale_price if listing.sale_price is not None else listing.price
+    return {
+        "status": listing.status,
+        "seller_id": str(listing.seller_id),
+        "title": listing.title,
+        "category": category.slug,
+        "category_name": category.name,
+        "price_type": listing.price_type,
+        "price": _money(listing.price),
+        "sale_price": _money(listing.sale_price),
+        "effective_price": _money(effective),
+        "currency": listing.currency,
+        "condition": listing.condition,
+        "location": listing.location,
+        "cover_media_id": str(cover) if cover else None,
+        "created_at": listing.created_at.isoformat(),
+    }
 
 
 # ---- create / edit ----------------------------------------------------------
@@ -185,6 +211,7 @@ def create_listing(seller_id: str, data: dict) -> Listing:
                 "price_type": pricing["price_type"],
                 "currency": listing.currency,
                 "title": listing.title,
+                **search_snapshot(listing),
             },
             actor_id=str(seller_id),
         )
@@ -234,7 +261,11 @@ def update_listing(seller_id: str, listing_id: str, data: dict) -> Listing:
     events.emit(
         "listing.updated",
         subject_id=str(listing.id),
-        payload={"listing_id": str(listing.id), "changed": sorted(set(changed))},
+        payload={
+            "listing_id": str(listing.id),
+            "changed": sorted(set(changed)),
+            **search_snapshot(listing),
+        },
         actor_id=str(seller_id),
     )
     return listing

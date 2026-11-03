@@ -85,6 +85,8 @@ export interface AuditEntry {
   target_id: string;
   request_id: string;
   detail: Record<string, unknown>;
+  /** A staff member's own justification (a personal-data reveal); empty otherwise. */
+  reason?: string;
 }
 
 export interface AuditFilters {
@@ -106,6 +108,12 @@ export const AUDIT_ACTIONS = [
   "ad.review.decided",
   "feature_flag.changed",
   "audit.exported",
+  "user.viewed",
+  "user.personal_data.revealed",
+  "account.suspended",
+  "account.unsuspended",
+  "account.signed_out",
+  "account.verification_resent",
 ] as const;
 
 export const PLATFORM_METRICS = ["accounts", "posts", "active_conversations", "listings", "open_cases"] as const;

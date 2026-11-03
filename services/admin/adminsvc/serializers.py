@@ -76,4 +76,34 @@ class AuditEntrySerializer(serializers.ModelSerializer):
             "target_id",
             "request_id",
             "detail",
+            "reason",
         ]
+
+
+# ---- user management console (8.6) -------------------------------------------
+
+
+class UserSearchSerializer(serializers.Serializer):
+    q = serializers.CharField(min_length=2, max_length=254, trim_whitespace=True)
+    field = serializers.ChoiceField(
+        choices=["auto", "email", "handle", "name", "id"], default="auto"
+    )
+    cursor = serializers.CharField(required=False, max_length=500)
+    limit = serializers.IntegerField(required=False, min_value=1, max_value=50, default=20)
+
+
+class ReasonSerializer(serializers.Serializer):
+    """A staff member's own words for why: required for every sensitive step."""
+
+    reason = serializers.CharField(min_length=5, max_length=500, trim_whitespace=True)
+
+
+class SuspendSerializer(ReasonSerializer):
+    until = serializers.DateTimeField(required=False, allow_null=True, default=None)
+
+    def validate_until(self, value):
+        from django.utils import timezone
+
+        if value is not None and value <= timezone.now():
+            raise serializers.ValidationError("Must be in the future.")
+        return value

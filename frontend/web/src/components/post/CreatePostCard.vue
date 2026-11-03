@@ -13,6 +13,12 @@ import { useAuthStore } from "@/stores/auth";
 import { useUiStore } from "@/stores/ui";
 import type { Post } from "@/types";
 
+// With `groupId` the post goes into that group: no audience picker (the server
+// forces the group audience) and the home "create post" shortcut is left alone.
+const props = withDefaults(defineProps<{ groupId?: string | null; groupName?: string }>(), {
+  groupId: null,
+  groupName: "",
+});
 const emit = defineEmits<{ created: [post: Post] }>();
 
 const { t } = useI18n();
@@ -66,7 +72,7 @@ const root = ref<HTMLElement | null>(null);
 watch(
   () => ui.composeRequested,
   async (requested) => {
-    if (!requested) return;
+    if (!requested || props.groupId) return;
     ui.composeRequested = false;
     expanded.value = true;
     await nextTick();
@@ -138,8 +144,9 @@ async function submit() {
     const post = await postService.create({
       body: text,
       media_ids: mediaIds.value,
-      audience: audience.value,
+      audience: props.groupId ? undefined : audience.value,
       comment_policy: commentPolicy.value,
+      ...(props.groupId ? { group_id: props.groupId } : {}),
       ...(pollOpen.value
         ? { poll: { options: filledOptions.value, duration_hours: pollHours.value } }
         : {}),
@@ -164,12 +171,16 @@ async function submit() {
         class="h-11 flex-1 rounded-full border border-transparent bg-gray-100 px-5 text-start text-sm text-gray-500 transition hover:border-brand-200 hover:bg-white dark:bg-gray-800/70 dark:text-gray-400 dark:hover:border-brand-900 dark:hover:bg-gray-800"
         @click="expanded = true"
       >
-        {{ t("feed.composerPlaceholder") }}
+        {{ groupId ? t("groups.composer.placeholder") : t("feed.composerPlaceholder") }}
       </button>
 
       <div v-else class="min-w-0">
         <p class="truncate text-sm font-semibold">{{ authorName() }}</p>
-        <div class="relative">
+        <p v-if="groupId" class="mt-0.5 inline-flex items-center gap-1 rounded-md bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700 dark:bg-brand-950/50 dark:text-brand-300">
+          <Users class="h-3 w-3" aria-hidden="true" />
+          <span dir="auto">{{ t("groups.composer.target", { name: groupName }) }}</span>
+        </p>
+        <div v-else class="relative">
           <button
             class="mt-0.5 inline-flex items-center gap-1 rounded-md bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 transition hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300"
             @click="showAudience = !showAudience"
@@ -215,7 +226,7 @@ async function submit() {
         v-model="body"
         multiline
         field-class="input min-h-[88px] resize-none border-0 bg-gray-50 text-base focus:ring-0 dark:bg-gray-800/60"
-        :placeholder="pollOpen ? t('feed.pollQuestion') : t('feed.composerPlaceholder')"
+        :placeholder="pollOpen ? t('feed.pollQuestion') : groupId ? t('groups.composer.placeholder') : t('feed.composerPlaceholder')"
       />
 
       <div v-if="pollOpen" class="mt-2 space-y-2" data-testid="poll-editor">

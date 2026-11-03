@@ -192,6 +192,10 @@ ADMIN_IDENTITY_SECRET = os.getenv(
 # Emit account.role.granted/revoked and capability.matrix.changed for admin's
 # audit log. Roadmap 3.3 deploy order: ship admin-consumer first with this off.
 IDENTITY_EMIT_AUDIT_EVENTS = env_bool("IDENTITY_EMIT_AUDIT_EVENTS", True)
+# Emit account.suspended/unsuspended, account.signed_out and
+# account.verification.resent (8.4, 8.6). Same deploy order: their consumers
+# (admin-consumer now, the 8.5 propagation consumers later) ship first.
+IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS = env_bool("IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS", True)
 
 # ---- Events / outbox (ADR-003) ----------------------------------------------
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")
@@ -210,6 +214,11 @@ CELERY_BEAT_SCHEDULE = {
     "drain-outbox": {
         "task": "tara_events.publish_outbox",
         "schedule": 2.0,  # seconds
+    },
+    # Suspensions with an end date (8.4); a sign-in attempt lifts one too.
+    "lift-expired-suspensions": {
+        "task": "identity.lift_expired_suspensions",
+        "schedule": float(os.getenv("IDENTITY_SUSPENSION_EXPIRY_SECONDS", "60")),
     },
 }
 

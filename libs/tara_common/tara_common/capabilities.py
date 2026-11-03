@@ -42,6 +42,11 @@ _KEYS = (
     "ads.review",
     # Admin console (service: admin)
     "admin.users.view",
+    # User management console (8.6): each action has its own key.
+    "admin.users.reveal",
+    "admin.users.suspend",
+    "admin.users.sign_out",
+    "admin.users.resend_verification",
     "admin.roles.manage",
     "admin.capabilities.manage",
     "admin.flags.manage",
@@ -60,6 +65,11 @@ IMPLIES: dict[str, frozenset[str]] = {
     "moderation.case.act": frozenset({"moderation.case.view"}),
     "moderation.appeal.resolve": frozenset({"moderation.appeal.view"}),
     "admin.audit.export": frozenset({"admin.audit.view"}),
+    # Acting on an account, or seeing its personal data, starts from its page.
+    "admin.users.reveal": frozenset({"admin.users.view"}),
+    "admin.users.suspend": frozenset({"admin.users.view"}),
+    "admin.users.sign_out": frozenset({"admin.users.view"}),
+    "admin.users.resend_verification": frozenset({"admin.users.view"}),
 }
 
 # Identical to the role checks these replace: IsModerator (moderator, admin),

@@ -13,7 +13,7 @@ import uuid
 from collections.abc import Iterable
 
 from django.db import IntegrityError, transaction
-from django.db.models import Case, Exists, F, OuterRef, Q, QuerySet, UUIDField, When
+from django.db.models import Case, Count, Exists, F, OuterRef, Q, QuerySet, UUIDField, When
 from django.utils import timezone
 
 from tara_common.exceptions import Conflict, TaraAPIError
@@ -416,3 +416,118 @@ def relationship(a: str, b: str) -> dict:
         "b_follows_a": follows(b, a),
         "blocked_either_way": is_blocked(a, b),
     }
+
+
+MAX_BATCH = 50
+
+
+def _uuids(values: Iterable[str]) -> list[str]:
+    """Canonical UUID strings; anything else is dropped (search ids are free text)."""
+    out = []
+    for value in values:
+        try:
+            out.append(str(uuid.UUID(str(value))))
+        except ValueError:
+            continue
+    return out
+
+
+def lists_visible_to(viewer_id: str, owner_ids: Iterable[str]) -> set[str]:
+    """Bulk form of ``ensure_lists_visible``: the owners whose relationship lists
+    (and so mutual friends) ``viewer_id`` may see. Milestone 1.6 adds the owners'
+    list-visibility settings in both places."""
+    owners = {str(o) for o in owner_ids}
+    blocked = BlockRelation.objects.filter(
+        Q(blocker_id=viewer_id, blocked_id__in=owners)
+        | Q(blocked_id=viewer_id, blocker_id__in=owners)
+    ).values_list("blocker_id", "blocked_id")
+    hidden = {str(x) for pair in blocked for x in pair} - {str(viewer_id)}
+    return {o for o in owners if o == str(viewer_id) or o not in hidden}
+
+
+def relationships_for(viewer_id: str, user_ids: Iterable[str], page_ids: Iterable[str]) -> dict:
+    """The viewer's relationship with each account and page of a search page.
+
+    A fixed number of queries whatever the batch size. Accounts in a block with
+    the viewer, either way, are left out. ``mutual_count`` follows
+    ``mutual_friends`` (friends shared, minus anyone blocked with either side)
+    and is ``None`` where the target's lists are hidden from the viewer.
+    """
+    viewer = str(uuid.UUID(str(viewer_id)))
+    users = [u for u in dict.fromkeys(_uuids(user_ids)) if u != viewer][:MAX_BATCH]
+    pages = list(dict.fromkeys(_uuids(page_ids)))[:MAX_BATCH]
+    out: dict[str, dict] = {}
+    if users:
+        visible = lists_visible_to(viewer, users)
+        rows = Friendship.objects.filter(
+            Q(account_low_id=viewer, account_high_id__in=users)
+            | Q(account_high_id=viewer, account_low_id__in=users)
+        ).values_list("id", "account_low_id", "account_high_id", "status", "requested_by")
+        edges = {}
+        for fid, low, high, status, requested_by in rows:
+            other = str(high) if str(low) == viewer else str(low)
+            edges[other] = (str(fid), status, str(requested_by))
+        followed = {
+            str(t)
+            for t in FollowRelation.objects.filter(
+                follower_id=viewer, target_id__in=users, target_type=FollowRelation.TargetType.USER
+            ).values_list("target_id", flat=True)
+        }
+        mine = set(list_friend_ids(viewer))
+        shared: dict[str, set[str]] = {u: set() for u in users}
+        if mine:
+            theirs = Friendship.objects.filter(
+                Q(account_low_id__in=users, account_high_id__in=mine)
+                | Q(account_high_id__in=users, account_low_id__in=mine),
+                status=Friendship.Status.ACCEPTED,
+            ).values_list("account_low_id", "account_high_id")
+            for low, high in theirs:
+                low, high = str(low), str(high)
+                if low in shared and high in mine:
+                    shared[low].add(high)
+                if high in shared and low in mine:
+                    shared[high].add(low)
+            for blocker, blocked in BlockRelation.objects.filter(
+                Q(blocker_id__in=users, blocked_id__in=mine)
+                | Q(blocked_id__in=users, blocker_id__in=mine)
+            ).values_list("blocker_id", "blocked_id"):
+                blocker, blocked = str(blocker), str(blocked)
+                shared.get(blocker, set()).discard(blocked)
+                shared.get(blocked, set()).discard(blocker)
+        for u in users:
+            if u not in visible:
+                continue  # a block either way: nothing about them
+            fid, status, requested_by = edges.get(u, (None, None, None))
+            if status == Friendship.Status.ACCEPTED:
+                state = "friends"
+            elif status == Friendship.Status.PENDING:
+                state = "pending_out" if requested_by == viewer else "pending_in"
+            else:
+                state = "none"
+            out[u] = {
+                "state": state,
+                "request_id": fid if state.startswith("pending") else None,
+                "following": u in followed,
+                "mutual_count": len(shared[u]),
+            }
+    if pages:
+        followed_pages = {
+            str(t)
+            for t in FollowRelation.objects.filter(
+                follower_id=viewer, target_id__in=pages, target_type=FollowRelation.TargetType.PAGE
+            ).values_list("target_id", flat=True)
+        }
+        counts = dict(
+            FollowRelation.objects.filter(
+                target_id__in=pages, target_type=FollowRelation.TargetType.PAGE
+            )
+            .values("target_id")
+            .annotate(n=Count("id"))
+            .values_list("target_id", "n")
+        )
+        for p in pages:
+            out[p] = {
+                "following": p in followed_pages,
+                "followers_count": counts.get(uuid.UUID(p), 0),
+            }
+    return out

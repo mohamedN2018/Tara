@@ -45,6 +45,8 @@ class PostCreateSerializer(serializers.Serializer):
         child=serializers.UUIDField(), required=False, default=list, max_length=50
     )
     poll = PollCreateSerializer(required=False)
+    # Posting into a group (1.11): the server forces the ``group`` audience.
+    group_id = serializers.UUIDField(required=False, allow_null=True, default=None)
 
     def validate(self, attrs):
         if attrs.get("poll") and not attrs.get("body", "").strip():
@@ -104,6 +106,9 @@ class PostSerializer(serializers.ModelSerializer):
             "is_saved",
             "poll",
             "shared_post",
+            "group_id",
+            "approval_state",
+            "pinned_at",
             "created_at",
             "updated_at",
         ]
@@ -251,3 +256,8 @@ class SavedItemSerializer(serializers.ModelSerializer):
 
 class ReportSerializer(serializers.Serializer):
     reason = serializers.CharField(max_length=200)
+
+
+class GroupReportDismissSerializer(serializers.Serializer):
+    target_type = serializers.ChoiceField(choices=["post", "comment"])
+    target_id = serializers.UUIDField()
