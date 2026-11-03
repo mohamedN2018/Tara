@@ -22,6 +22,17 @@ class CursorPagination(DRFCursorPagination):
     ordering = "-created_at"
     cursor_query_param = "cursor"
 
+    def get_ordering(self, request, queryset, view) -> tuple[str, ...]:
+        """Use the queryset's explicit ``order_by``; ``ordering`` is only the default.
+
+        The cursor position comes from the first field, so that field must be
+        non-null. Ties in it are walked with an offset capped at ``offset_cutoff``.
+        """
+        explicit = queryset.query.order_by
+        if explicit:
+            return tuple(str(field) for field in explicit)
+        return super().get_ordering(request, queryset, view)
+
     def _cursor_token(self, url: str | None) -> str | None:
         """Extract just the opaque cursor token from a DRF-built URL."""
         if not url:

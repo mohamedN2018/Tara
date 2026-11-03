@@ -51,7 +51,7 @@ def queue(state: str | None = None):
         qs = qs.filter(state=state)
     else:
         qs = qs.exclude(state=ModerationCase.State.RESOLVED)
-    return qs.order_by("-report_count", "-created_at")
+    return qs.order_by("-report_count", "-created_at", "-id")
 
 
 def take_action(case_id: str, moderator_id: str, action: str, reason: str = "") -> ModerationAction:

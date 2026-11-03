@@ -5,7 +5,8 @@ from __future__ import annotations
 import uuid
 
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Prefetch, Q
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from tara_common.exceptions import Conflict, TaraAPIError
@@ -136,12 +137,27 @@ def create_group(actor_id: str, member_account_ids: list[str], title: str = "") 
     return conversation
 
 
+def with_members(queryset):
+    """Load active members up front; the serializer reads ``active_members``."""
+    return queryset.prefetch_related(
+        Prefetch(
+            "members",
+            queryset=ConversationMember.objects.filter(left_at__isnull=True).order_by("joined_at"),
+            to_attr="active_members",
+        )
+    )
+
+
 def list_conversations(account_id: str):
+    """The inbox, most recent activity first. A thread with no messages yet sorts
+    by creation time: the cursor position cannot be null."""
     conv_ids = ConversationMember.objects.filter(
         account_id=account_id, left_at__isnull=True
-    ).values_list("conversation_id", flat=True)
-    return Conversation.objects.filter(id__in=list(conv_ids)).order_by(
-        "-last_message_at", "-created_at"
+    ).values("conversation_id")
+    return with_members(
+        Conversation.objects.filter(id__in=conv_ids)
+        .annotate(activity_at=Coalesce("last_message_at", "created_at"))
+        .order_by("-activity_at", "-id")
     )
 
 
@@ -223,9 +239,11 @@ def remove_message(message_id: str) -> None:
 
 def list_messages(actor_id: str, conversation_id: str):
     require_member(actor_id, conversation_id)
-    return Message.objects.filter(
-        conversation_id=conversation_id, deleted_at__isnull=True
-    ).order_by("-created_at")
+    return (
+        Message.objects.filter(conversation_id=conversation_id, deleted_at__isnull=True)
+        .prefetch_related("attachments")
+        .order_by("-created_at")
+    )
 
 
 def react_message(actor_id: str, message_id: str, reaction_type: str) -> MessageReaction:

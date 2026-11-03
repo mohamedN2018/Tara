@@ -12,7 +12,7 @@ import AppShell from "@/components/layout/AppShell.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
-import { isSeen, mergeMessages } from "@/lib/chat";
+import { isSeenByOthers, mergeMessages } from "@/lib/chat";
 import { realtime } from "@/lib/ws";
 import { chatService } from "@/services/chat";
 import { useAuthStore } from "@/stores/auth";
@@ -57,7 +57,6 @@ const peerTyping = ref(false);
 const scroller = ref<HTMLElement | null>(null);
 
 const replyTarget = ref<Message | null>(null);
-const peerReadUpToId = ref<string | null>(null);
 const atBottom = ref(true);
 const hasNew = ref(false);
 
@@ -137,7 +136,9 @@ const lastMineId = computed(() => {
   }
   return null;
 });
-const peerSeen = computed(() => isSeen(messages.value, peerReadUpToId.value, myId.value));
+const peerSeen = computed(() =>
+  isSeenByOthers(messages.value, activeConversation.value?.member_states ?? [], myId.value),
+);
 
 async function loadConversations(silent = false) {
   if (!silent) loadingList.value = true;
@@ -389,9 +390,9 @@ onMounted(() => {
       }
     }),
     realtime.on("chat.message.read", (frame) => {
-      if (frame.conversation_id === activeId.value && frame.reader !== myId.value) {
-        peerReadUpToId.value = (frame.up_to_message_id as string) ?? null;
-      }
+      const conversation = conversations.value.find((c) => c.id === frame.conversation_id);
+      const state = conversation?.member_states.find((s) => s.account_id === frame.reader);
+      if (state) state.last_read_message_id = (frame.up_to_message_id as string) ?? null;
     }),
     realtime.on("_reconnected", () => {
       void loadConversations(true);
@@ -410,7 +411,6 @@ watch(activeId, (id, prev) => {
   if (prev) unsubscribe(prev);
   subscribe(id);
   replyTarget.value = null;
-  peerReadUpToId.value = null;
   hasNew.value = false;
   atBottom.value = true;
   peerTyping.value = false;

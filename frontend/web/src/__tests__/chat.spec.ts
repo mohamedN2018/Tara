@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { api } from "@/lib/api";
-import { isSeen, mergeMessages, oldestFirst } from "@/lib/chat";
+import { isSeen, isSeenByOthers, mergeMessages, oldestFirst } from "@/lib/chat";
 import { chatService } from "@/services/chat";
 import type { Message } from "@/types";
 
@@ -85,5 +85,24 @@ describe("isSeen", () => {
     expect(isSeen(list, null, "me")).toBe(false);
     expect(isSeen(list, "not-loaded", "me")).toBe(false);
     expect(isSeen([msg("b", 2)], "b", "me")).toBe(false);
+  });
+});
+
+describe("isSeenByOthers", () => {
+  const list = [msg("a", 1, "me"), msg("b", 2, "peer"), msg("c", 3, "me")];
+  const state = (account_id: string, last_read_message_id: string | null) => ({
+    account_id,
+    role: "member",
+    last_read_message_id,
+  });
+
+  it("survives a reload: read state comes from the conversation", () => {
+    expect(isSeenByOthers(list, [state("peer", "c"), state("me", "c")], "me")).toBe(true);
+  });
+  it("ignores my own read state and older receipts", () => {
+    expect(isSeenByOthers(list, [state("peer", "b"), state("me", "c")], "me")).toBe(false);
+  });
+  it("is true when any group member has read it", () => {
+    expect(isSeenByOthers(list, [state("x", null), state("y", "c")], "me")).toBe(true);
   });
 });

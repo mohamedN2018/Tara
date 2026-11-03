@@ -106,6 +106,13 @@ export interface Conversation {
   title: string;
   last_message_at: string | null;
   members: string[];
+  member_states: ConversationMemberState[];
+}
+
+export interface ConversationMemberState {
+  account_id: string;
+  role: string;
+  last_read_message_id: string | null;
 }
 
 export interface Message {

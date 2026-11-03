@@ -89,3 +89,25 @@ def test_manual_report_any_user(client_for):
     )
     assert resp.status_code == 202
     assert ModerationCase.objects.filter(target_type="user").count() == 1
+
+
+def test_queue_sorts_by_report_count_and_pages_through_ties(client_for):
+    busiest = services.ingest_report(reporter_id=_acct(), target_type="post", target_id=_acct())
+    for _ in range(2):
+        services.ingest_report(reporter_id=_acct(), target_type="post", target_id=busiest.target_id)
+    others = [
+        services.ingest_report(reporter_id=_acct(), target_type="post", target_id=_acct())
+        for _ in range(5)
+    ]
+    client = client_for(_acct(), roles=["moderator"])
+
+    seen, cursor = [], None
+    for _ in range(8):
+        params = {"limit": 2, **({"cursor": cursor} if cursor else {})}
+        body = client.get(reverse("moderation:cases"), params).json()
+        seen += [c["id"] for c in body["data"]]
+        cursor = body["page"]["next_cursor"]
+        if not cursor:
+            break
+    assert seen[0] == str(busiest.id)
+    assert sorted(seen) == sorted(str(c.id) for c in [busiest, *others])

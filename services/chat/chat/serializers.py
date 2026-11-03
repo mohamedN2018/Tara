@@ -17,14 +17,44 @@ class GroupCreateSerializer(serializers.Serializer):
 
 
 class ConversationSerializer(serializers.ModelSerializer):
+    """Querysets from ``services.with_members`` avoid a members query per row."""
+
     members = serializers.SerializerMethodField()
+    member_states = serializers.SerializerMethodField()
 
     class Meta:
         model = Conversation
-        fields = ["id", "type", "title", "listing_id", "last_message_at", "created_at", "members"]
+        fields = [
+            "id",
+            "type",
+            "title",
+            "listing_id",
+            "last_message_at",
+            "created_at",
+            "members",
+            "member_states",
+        ]
+
+    def _active(self, obj: Conversation) -> list:
+        prefetched = getattr(obj, "active_members", None)
+        if prefetched is not None:
+            return prefetched
+        return list(obj.members.filter(left_at__isnull=True).order_by("joined_at"))
 
     def get_members(self, obj: Conversation) -> list[str]:
-        return [str(m.account_id) for m in obj.members.filter(left_at__isnull=True)]
+        return [str(m.account_id) for m in self._active(obj)]
+
+    def get_member_states(self, obj: Conversation) -> list[dict]:
+        return [
+            {
+                "account_id": str(m.account_id),
+                "role": m.role,
+                "last_read_message_id": (
+                    str(m.last_read_message_id) if m.last_read_message_id else None
+                ),
+            }
+            for m in self._active(obj)
+        ]
 
 
 class AttachmentSerializer(serializers.ModelSerializer):

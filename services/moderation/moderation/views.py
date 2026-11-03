@@ -28,8 +28,14 @@ def _me(request: Request) -> str:
     return request.user.account_id
 
 
-def _paginate(request, queryset, serializer_cls):
-    paginator = CursorPagination()
+class QueuePagination(CursorPagination):
+    """Most cases share a report count, so walking the ties needs a high offset cap."""
+
+    offset_cutoff = 100_000
+
+
+def _paginate(request, queryset, serializer_cls, paginator_cls=CursorPagination):
+    paginator = paginator_cls()
     page = paginator.paginate_queryset(queryset, request)
     return paginator.get_paginated_response(serializer_cls(page, many=True).data)
 
@@ -68,7 +74,12 @@ class CasesView(APIView):
 
     @extend_schema(responses={200: CaseSerializer(many=True)}, tags=["moderation"])
     def get(self, request: Request) -> Response:
-        return _paginate(request, services.queue(request.query_params.get("state")), CaseSerializer)
+        return _paginate(
+            request,
+            services.queue(request.query_params.get("state")),
+            CaseSerializer,
+            QueuePagination,
+        )
 
 
 class CaseAssignView(APIView):
