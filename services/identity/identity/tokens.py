@@ -37,27 +37,35 @@ def hash_token(raw: str) -> str:
 # ---- Access tokens ----------------------------------------------------------
 
 
+def bridged_roles(account: Account) -> list[str]:
+    """Roles that come from the account flags: superuser -> admin, staff -> moderator."""
+    roles = []
+    if getattr(account, "is_superuser", False):
+        roles.append("admin")
+    if getattr(account, "is_staff", False):
+        roles.append("moderator")
+    return roles
+
+
+def roles_for(account: Account) -> list[str]:
+    """The ``roles`` claim (read by tara_common TokenUser.roles and permissions)."""
+    granted = {grant.role for grant in account.role_grants.all()}
+    return sorted(granted | set(bridged_roles(account)))
+
+
 def issue_access_token(account: Account, session_id: str) -> tuple[str, int]:
     """Return (jwt, expires_in_seconds)."""
     if not settings.JWT_PRIVATE_KEY:
         raise TokenError("JWT signing key is not configured.")
     ttl = settings.ACCESS_TOKEN_TTL_SECONDS
     now = _now()
-    # RBAC roles embedded in the access token (read by tara_common TokenUser.roles
-    # and the IsAdmin/IsModerator permissions). Bridged from the account flags:
-    # superuser -> admin, staff -> moderator.
-    roles: list[str] = []
-    if getattr(account, "is_superuser", False):
-        roles.append("admin")
-    if getattr(account, "is_staff", False):
-        roles.append("moderator")
     claims = {
         "sub": str(account.id),
         "email": account.email,
         "type": "access",
         "sid": str(session_id),
         "scope": "user",
-        "roles": roles,
+        "roles": roles_for(account),
         "iss": settings.JWT_ISSUER,
         "aud": settings.JWT_AUDIENCE,
         "iat": int(now.timestamp()),

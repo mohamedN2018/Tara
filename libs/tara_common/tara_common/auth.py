@@ -42,8 +42,8 @@ class TokenUser:
         self.handle = claims.get("handle")
         self.email = claims.get("email")
         self.scopes = set(claims.get("scope", "").split()) if claims.get("scope") else set()
-        # RBAC roles (e.g. "moderator", "admin"); embedded in the access token by
-        # Identity from the Admin role registry. Empty for ordinary users.
+        # RBAC roles (e.g. "moderator", "admin"); Identity owns them and embeds
+        # them in the access token. Empty for ordinary users.
         self.roles = set(claims.get("roles", []) or [])
 
     def __str__(self) -> str:  # pragma: no cover - debug aid

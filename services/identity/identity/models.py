@@ -61,6 +61,31 @@ class Account(AbstractBaseUser, PermissionsMixin):
         return self.status == self.Status.ACTIVE and self.is_active
 
 
+class AccountRole(models.Model):
+    """Platform roles. Identity owns them, and ``roles`` in the access token reads them.
+
+    ``is_superuser`` and ``is_staff`` still count as admin and moderator (see tokens.py).
+    """
+
+    class Role(models.TextChoices):
+        ADMIN = "admin", "Admin"
+        MODERATOR = "moderator", "Moderator"
+        AD_REVIEWER = "ad_reviewer", "Ad reviewer"
+        ANALYST = "analyst", "Analyst"
+
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="role_grants")
+    role = models.CharField(max_length=32, choices=Role.choices)
+    granted_by = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "account_role"
+        constraints = [
+            models.UniqueConstraint(fields=["account", "role"], name="account_role_uniq"),
+        ]
+
+
 class Device(models.Model):
     class Platform(models.TextChoices):
         WEB = "web", "Web"

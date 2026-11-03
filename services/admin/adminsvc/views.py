@@ -7,7 +7,7 @@ features; everything else requires the admin role.
 from __future__ import annotations
 
 from drf_spectacular.utils import extend_schema
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -16,7 +16,7 @@ from tara_common.exceptions import TaraAPIError
 from tara_common.permissions import IsAdmin
 from tara_common.responses import data_response
 
-from . import services
+from . import identity_client, services
 from .models import FeatureFlag
 from .serializers import FeatureFlagSerializer, FeatureFlagWriteSerializer, RoleSerializer
 
@@ -65,29 +65,46 @@ class FeatureFlagDetailView(APIView):
 
 
 class RolesView(APIView):
+    """Accounts holding roles, and grants. Identity stores them; this API audits them."""
+
     permission_classes = [IsAdmin]
+
+    @extend_schema(responses={200: None}, tags=["admin"])
+    def get(self, request: Request) -> Response:
+        return data_response(identity_client.role_holders())
 
     @extend_schema(request=RoleSerializer, responses={201: None}, tags=["admin"])
     def post(self, request: Request) -> Response:
         serializer = RoleSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        services.grant_role(
+        account = services.grant_role(
             str(serializer.validated_data["account_id"]),
             serializer.validated_data["role"],
             _me(request),
         )
-        return data_response({"detail": "granted"}, status=201)
+        return data_response(account, status=201)
 
-    @extend_schema(request=RoleSerializer, responses={204: None}, tags=["admin"])
+    @extend_schema(request=RoleSerializer, responses={200: None}, tags=["admin"])
     def delete(self, request: Request) -> Response:
         serializer = RoleSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        services.revoke_role(
+        account = services.revoke_role(
             str(serializer.validated_data["account_id"]),
             serializer.validated_data["role"],
             _me(request),
         )
-        return data_response({"detail": "revoked"})
+        return data_response(account)
+
+
+class RoleLookupView(APIView):
+    permission_classes = [IsAdmin]
+
+    @extend_schema(responses={200: None}, tags=["admin"])
+    def get(self, request: Request) -> Response:
+        email = request.query_params.get("email", "").strip()
+        if not email:
+            raise TaraAPIError("email is required.", code="validation_error", http_status_code=400)
+        return data_response(identity_client.lookup(email))
 
 
 class AccountRolesView(APIView):
@@ -95,7 +112,7 @@ class AccountRolesView(APIView):
 
     @extend_schema(responses={200: None}, tags=["admin"])
     def get(self, request: Request, account_id: str) -> Response:
-        return data_response({"account_id": account_id, "roles": services.roles_for(account_id)})
+        return data_response(identity_client.account_roles(str(account_id)))
 
 
 class ServiceHealthView(APIView):
@@ -106,27 +123,3 @@ class ServiceHealthView(APIView):
         results = services.service_health()
         overall = "ok" if all(r["status"] == "ready" for r in results) else "degraded"
         return data_response({"overall": overall, "services": results})
-
-
-class InternalRolesView(APIView):
-    """Internal: Identity fetches an account's roles to embed in the access token."""
-
-    permission_classes = [AllowAny]
-    authentication_classes: list = []
-
-    def get(self, request: Request, account_id: str) -> Response:
-        from tara_common.auth import verify_internal_token
-
-        header = request.META.get("HTTP_AUTHORIZATION", "")
-        parts = header.split()
-        if len(parts) != 2 or parts[0] != "Bearer":
-            raise TaraAPIError(
-                "Internal auth required.", code="unauthenticated", http_status_code=401
-            )
-        try:
-            verify_internal_token(parts[1], expected_audience="admin-internal")
-        except Exception as exc:  # noqa: BLE001
-            raise TaraAPIError(
-                "Invalid internal token.", code="unauthenticated", http_status_code=401
-            ) from exc
-        return data_response({"account_id": account_id, "roles": services.roles_for(account_id)})

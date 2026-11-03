@@ -93,6 +93,8 @@ TARA_JWT_PUBLIC_KEY = os.getenv("TARA_JWT_PUBLIC_KEY", "")
 TARA_JWT_ISSUER = os.getenv("JWT_ISSUER", "tara-identity")
 TARA_JWT_AUDIENCE = os.getenv("JWT_AUDIENCE", "tara")
 TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-secret-change-me")
+IDENTITY_INTERNAL_URL = os.getenv("IDENTITY_INTERNAL_URL", "http://identity:8000")
+IDENTITY_CALL_TIMEOUT = float(os.getenv("IDENTITY_CALL_TIMEOUT", "3"))
 
 # Services whose /readyz the health overview polls.
 HEALTH_TARGETS = {

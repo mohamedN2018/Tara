@@ -7,9 +7,11 @@ import logging
 import requests
 from django.conf import settings
 
+from tara_common.exceptions import Conflict, TaraAPIError
 from tara_resilience import CircuitBreaker, CircuitOpenError
 
-from .models import AccountRole, AuditLog, FeatureFlag, ServiceHealthSnapshot
+from . import identity_client
+from .models import AuditLog, FeatureFlag, ServiceHealthSnapshot
 
 logger = logging.getLogger("tara.admin.services")
 _breakers: dict[str, CircuitBreaker] = {}
@@ -35,21 +37,25 @@ def set_flag(
     return flag
 
 
-def grant_role(account_id: str, role: str, actor_id: str) -> AccountRole:
-    obj, _ = AccountRole.objects.get_or_create(
-        account_id=account_id, role=role, defaults={"granted_by": actor_id}
-    )
+def grant_role(account_id: str, role: str, actor_id: str) -> dict:
+    account = identity_client.grant(account_id, role, actor_id)
     audit(actor_id, "role.grant", target=str(account_id), role=role)
-    return obj
+    return account
 
 
-def revoke_role(account_id: str, role: str, actor_id: str) -> None:
-    AccountRole.objects.filter(account_id=account_id, role=role).delete()
+def revoke_role(account_id: str, role: str, actor_id: str) -> dict:
+    if str(account_id) == str(actor_id) and role == "admin":
+        raise TaraAPIError(
+            "You can't remove your own admin role.",
+            code="validation_error",
+            http_status_code=400,
+        )
+    account = identity_client.account_roles(account_id)
+    if role in account["bridged_roles"]:
+        raise Conflict("This role comes from staff or superuser status.", code="conflict")
+    account = identity_client.revoke(account_id, role, actor_id)
     audit(actor_id, "role.revoke", target=str(account_id), role=role)
-
-
-def roles_for(account_id: str) -> list[str]:
-    return list(AccountRole.objects.filter(account_id=account_id).values_list("role", flat=True))
+    return account
 
 
 def _check_one(service: str, url: str) -> dict:

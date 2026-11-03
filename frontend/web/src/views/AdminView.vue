@@ -1,17 +1,22 @@
 <script setup lang="ts">
 import { Activity, ShieldAlert } from "lucide-vue-next";
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
+import FeatureFlagsPanel from "@/components/admin/FeatureFlagsPanel.vue";
+import RolesPanel from "@/components/admin/RolesPanel.vue";
 import AppShell from "@/components/layout/AppShell.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
 import { adminService, type HealthOverview, type ModerationCase } from "@/services/admin";
+import { useAuthStore } from "@/stores/auth";
 import { useToastStore } from "@/stores/toasts";
 
 const { t, te } = useI18n();
 const toasts = useToastStore();
+const auth = useAuthStore();
+const isAdmin = computed(() => auth.roles.includes("admin"));
 
 const health = ref<HealthOverview | null>(null);
 const cases = ref<ModerationCase[]>([]);
@@ -100,6 +105,11 @@ onMounted(load);
         </div>
         <EmptyState v-else>{{ t("admin.healthUnavailable") }}</EmptyState>
       </section>
+
+      <template v-if="isAdmin">
+        <RolesPanel />
+        <FeatureFlagsPanel />
+      </template>
 
       <!-- Moderation queue (cases) -->
       <h2 class="mb-2 flex items-center gap-2 font-semibold">

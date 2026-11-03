@@ -21,6 +21,4 @@ class FeatureFlagWriteSerializer(serializers.Serializer):
 
 class RoleSerializer(serializers.Serializer):
     account_id = serializers.UUIDField()
-    role = serializers.ChoiceField(
-        choices=["admin", "moderator", "analyst", "advertiser", "editor"]
-    )
+    role = serializers.ChoiceField(choices=["admin", "moderator", "ad_reviewer", "analyst"])

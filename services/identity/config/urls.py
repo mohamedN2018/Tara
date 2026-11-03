@@ -31,6 +31,8 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     # API v1.
     path("api/v1/", include("identity.urls")),
+    # Service-to-service: not routed by the gateway.
+    path("internal/v1/", include("identity.internal_urls")),
     # OpenAPI.
     path("api/v1/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(

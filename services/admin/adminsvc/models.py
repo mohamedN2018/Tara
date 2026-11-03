@@ -1,4 +1,4 @@
-"""Admin domain models (owns `admin_db`): flags, config, roles, audit, health."""
+"""Admin domain models (owns `admin_db`): flags, config, audit, health."""
 
 from __future__ import annotations
 
@@ -28,23 +28,6 @@ class SystemConfig(models.Model):
 
     class Meta:
         db_table = "system_config"
-
-
-class AccountRole(models.Model):
-    """Role registry. Identity reads this to embed `roles` into access tokens."""
-
-    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
-    account_id = models.UUIDField()
-    role = models.CharField(max_length=32)  # admin | moderator | analyst | advertiser ...
-    granted_by = models.UUIDField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = "account_role"
-        constraints = [
-            models.UniqueConstraint(fields=["account_id", "role"], name="account_role_uniq"),
-        ]
-        indexes = [models.Index(fields=["account_id"], name="account_role_acct_idx")]
 
 
 class AuditLog(models.Model):

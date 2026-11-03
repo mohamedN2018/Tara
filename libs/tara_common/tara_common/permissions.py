@@ -1,8 +1,8 @@
 """RBAC permission classes keyed off the access token's ``roles`` claim.
 
-Roles are assigned in the Admin service's role registry and embedded into the
-access token by Identity at issuance. Services enforce them locally — no
-per-request call to Admin/Identity.
+Identity owns roles (the Admin service changes them through Identity's internal
+API) and embeds them in the access token at issuance. Services enforce them
+locally: no per-request call to Admin or Identity.
 """
 
 from __future__ import annotations

@@ -24,7 +24,49 @@ export interface ModerationCase {
   updated_at: string;
 }
 
+export interface FeatureFlag {
+  key: string;
+  enabled: boolean;
+  rollout_pct: number;
+  description: string;
+}
+
+export interface RoleHolder {
+  account_id: string;
+  email: string;
+  roles: string[];
+  bridged_roles: string[];
+}
+
 export const adminService = {
+  async flags(): Promise<FeatureFlag[]> {
+    const { data } = await api.get<{ data: FeatureFlag[] }>("/admin/feature-flags/");
+    return data.data;
+  },
+  async setFlag(flag: FeatureFlag): Promise<void> {
+    const { key, enabled, rollout_pct, description } = flag;
+    await api.patch(`/admin/feature-flags/${encodeURIComponent(key)}/`, {
+      enabled,
+      rollout_pct,
+      description,
+    });
+  },
+
+  async roleHolders(): Promise<RoleHolder[]> {
+    const { data } = await api.get<{ data: RoleHolder[] }>("/admin/roles/");
+    return data.data;
+  },
+  async findAccount(email: string): Promise<RoleHolder> {
+    const { data } = await api.get<{ data: RoleHolder }>("/admin/roles/lookup/", { params: { email } });
+    return data.data;
+  },
+  async grantRole(accountId: string, role: string): Promise<void> {
+    await api.post("/admin/roles/", { account_id: accountId, role });
+  },
+  async revokeRole(accountId: string, role: string): Promise<void> {
+    await api.delete("/admin/roles/", { data: { account_id: accountId, role } });
+  },
+
   /** Aggregated per-service readiness (admin RBAC). */
   async health(): Promise<HealthOverview> {
     const { data } = await api.get<{ data: HealthOverview }>("/admin/service-health/");
