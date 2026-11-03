@@ -96,7 +96,7 @@ test("my own profile: tabs, editing, and the sections work after the split", asy
   const intro = `مرحبا ${unique()}`;
   await page.getByRole("button", { name: "تعديل الملف" }).first().click();
   const dialog = page.getByRole("dialog", { name: "تعديل الملف الشخصي" });
-  await dialog.getByLabel("تعريف").fill(intro);
+  await dialog.getByLabel("تعريف", { exact: true }).fill(intro);
   await dialog.getByRole("button", { name: "حفظ", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByText(intro).first()).toBeVisible();

@@ -9,6 +9,15 @@ set -euo pipefail
 DOMAIN="${1:?Usage: gen-dokploy-env.sh <domain>   e.g. tara.example.com}"
 secret() { openssl rand -hex 32; }   # 64 hex chars
 pw()     { openssl rand -hex 18; }   # 36 hex chars
+b64url() { base64 | tr '+/' '-_' | tr -d '=\n'; }
+# Web Push (VAPID) key pair as raw P-256 keys, base64url, the form pywebpush and
+# browsers take. The DER private key holds the 32-byte scalar at offset 7 and
+# ends with the 65-byte uncompressed public point.
+vapid_der=$(mktemp)
+trap 'rm -f "$vapid_der"' EXIT
+openssl ecparam -name prime256v1 -genkey -noout -outform DER > "$vapid_der"
+VAPID_PRIVATE=$(tail -c +8 "$vapid_der" | head -c 32 | b64url)
+VAPID_PUBLIC=$(tail -c 65 "$vapid_der" | b64url)
 
 output=.env.dokploy
 if [ -e "$output" ]; then
@@ -148,6 +157,10 @@ DEFAULT_FROM_EMAIL=no-reply@${DOMAIN}
 # New listings and ads wait for a moderator.
 MARKETPLACE_AUTO_APPROVE=false
 ADS_AUTO_APPROVE=false
+# Web Push. Keep these keys: replacing them invalidates every browser subscription.
+VAPID_PUBLIC_KEY=${VAPID_PUBLIC}
+VAPID_PRIVATE_KEY=${VAPID_PRIVATE}
+VAPID_SUBJECT=mailto:admin@${DOMAIN}
 WEB_CONCURRENCY=2
 LOG_LEVEL=INFO
 EOF

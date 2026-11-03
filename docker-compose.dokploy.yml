@@ -167,6 +167,9 @@ x-notification-env: &notification-env
   NOTIF_DB_NAME: ${NOTIF_DB_NAME:-}
   NOTIF_DB_PASSWORD: ${NOTIF_DB_PASSWORD:?}
   NOTIF_DB_USER: ${NOTIF_DB_USER:-}
+  VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+  VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+  VAPID_SUBJECT: ${VAPID_SUBJECT:-}
 
 x-search-env: &search-env
   <<: *common-env

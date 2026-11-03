@@ -277,7 +277,11 @@ async function save() {
           <div class="space-y-1.5">
             <label v-for="item in fieldPrivacy" :key="item.field_key" class="flex items-center justify-between gap-3 text-sm">
               <span>{{ t(`profile.privacyFields.${item.field_key}`) }}</span>
-              <select v-model="item.visibility" class="input w-auto py-1 text-sm">
+              <select
+                v-model="item.visibility"
+                class="input w-auto py-1 text-sm"
+                :aria-label="`${t('profile.fieldPrivacy')}: ${t(`profile.privacyFields.${item.field_key}`)}`"
+              >
                 <option v-for="level in PRIVACY_LEVELS" :key="level" :value="level">{{ t(`profile.privacyLevels.${level}`) }}</option>
               </select>
             </label>

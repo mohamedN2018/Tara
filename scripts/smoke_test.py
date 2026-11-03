@@ -25,7 +25,10 @@ API = os.getenv("TARA_API", "http://127.0.0.1:8080/api/v1")
 MAILPIT = os.getenv("TARA_MAILPIT", "http://127.0.0.1:8026/api/v1")
 PASSWORD = "Str0ng-Pass-987!"  # noqa: S105 - synthetic test user
 EVENT_TIMEOUT_SECONDS = 20
-PNG_1X1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+PNG_1X1 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9"
+    "awAAAABJRU5ErkJggg=="
+)
 failures: list[str] = []
 
 
