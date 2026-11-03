@@ -7,6 +7,11 @@ app_name = "ads"
 urlpatterns = [
     path("ads/campaigns/", views.CampaignsView.as_view(), name="campaigns"),
     path(
+        "ads/campaigns/<uuid:campaign_id>/",
+        views.CampaignDetailView.as_view(),
+        name="campaign-detail",
+    ),
+    path(
         "ads/campaigns/<uuid:campaign_id>/report/",
         views.CampaignReportView.as_view(),
         name="campaign-report",
@@ -15,6 +20,7 @@ urlpatterns = [
     path(
         "ads/ad-sets/<uuid:ad_set_id>/creatives/", views.CreativesView.as_view(), name="creatives"
     ),
+    path("ads/review-queue/", views.ReviewQueueView.as_view(), name="review-queue"),
     path("ads/creatives/<uuid:creative_id>/review/", views.ReviewView.as_view(), name="review"),
     path("ads/events/", views.EventsView.as_view(), name="events"),
 ]

@@ -8,12 +8,12 @@ from decimal import Decimal
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import F, Q
+from django.db.models import Count, F, Q
 from django.utils import timezone
 
-from tara_common.exceptions import TaraAPIError
+from tara_common.exceptions import Conflict, TaraAPIError
 
-from . import events
+from . import events, serve_tokens
 from .models import (
     AdBudgetLedger,
     AdClickEvent,
@@ -62,6 +62,21 @@ def create_campaign(owner_account_id: str, data: dict) -> Campaign:
     )
 
 
+def set_campaign_status(owner_account_id: str, campaign_id: str, status: str) -> Campaign:
+    """Pause or resume. A finished campaign stays finished: its budget is spent."""
+    campaign = _own_campaign(owner_account_id, campaign_id)
+    if campaign.status == Campaign.Status.COMPLETED:
+        raise Conflict("This campaign has finished.", code="conflict")
+    campaign.status = status
+    campaign.save(update_fields=["status"])
+    return campaign
+
+
+def campaign_ad_sets(owner_account_id: str, campaign_id: str):
+    campaign = _own_campaign(owner_account_id, campaign_id)
+    return campaign.ad_sets.prefetch_related("creatives").order_by("created_at")
+
+
 def _own_campaign(owner_account_id: str, campaign_id: str) -> Campaign:
     campaign = Campaign.objects.select_related("advertiser").filter(id=campaign_id).first()
     if campaign is None or str(campaign.advertiser.owner_account_id) != str(owner_account_id):
@@ -92,6 +107,7 @@ def create_creative(owner_account_id: str, ad_set_id: str, data: dict) -> AdCrea
         body=data.get("body", ""),
         media_id=data.get("media_id"),
         cta=data.get("cta", "Learn more"),
+        link_url=data.get("link_url", ""),
     )
     if settings.ADS_AUTO_APPROVE:
         creative.review_status = AdCreative.Review.APPROVED
@@ -100,6 +116,14 @@ def create_creative(owner_account_id: str, ad_set_id: str, data: dict) -> AdCrea
 
 
 # ---- review (RBAC: ad_reviewer/admin) ---------------------------------------
+
+
+def review_queue():
+    return (
+        AdCreative.objects.filter(review_status=AdCreative.Review.PENDING)
+        .select_related("ad_set__campaign__advertiser")
+        .order_by("created_at")
+    )
 
 
 def review_creative(
@@ -153,6 +177,7 @@ def eligible_creatives(placement: str):
             Q(ad_set__campaign__schedule_end__isnull=True)
             | Q(ad_set__campaign__schedule_end__gte=now),
         )
+        .order_by("-created_at")
     )
 
 
@@ -168,8 +193,10 @@ def pick_for_viewer(viewer_id: str, placement: str = "feed") -> dict | None:
                 "body": creative.body,
                 "media_id": str(creative.media_id) if creative.media_id else None,
                 "cta": creative.cta,
+                "link_url": creative.link_url,
                 "placement": placement,
                 "sponsored": True,
+                "token": serve_tokens.issue(viewer_id, creative.id, placement),
             }
     return None
 
@@ -265,6 +292,10 @@ def campaign_report(owner_account_id: str, campaign_id: str) -> dict:
     impressions = AdImpressionEvent.objects.filter(creative__ad_set__campaign=campaign).count()
     clicks = AdClickEvent.objects.filter(creative__ad_set__campaign=campaign).count()
     ctr = (clicks / impressions) if impressions else 0.0
+    creatives = AdCreative.objects.filter(ad_set__campaign=campaign).annotate(
+        impression_count=Count("impressions", distinct=True),
+        click_count=Count("clicks", distinct=True),
+    )
     return {
         "campaign_id": str(campaign.id),
         "status": campaign.status,
@@ -273,4 +304,14 @@ def campaign_report(owner_account_id: str, campaign_id: str) -> dict:
         "impressions": impressions,
         "clicks": clicks,
         "ctr": round(ctr, 4),
+        "creatives": [
+            {
+                "id": str(c.id),
+                "headline": c.headline,
+                "review_status": c.review_status,
+                "impressions": c.impression_count,
+                "clicks": c.click_count,
+            }
+            for c in creatives
+        ],
     }

@@ -87,6 +87,7 @@ class AdCreative(models.Model):
     body = models.CharField(max_length=400, blank=True, default="")
     media_id = models.UUIDField(null=True, blank=True)
     cta = models.CharField(max_length=40, default="Learn more")
+    link_url = models.URLField(max_length=500, blank=True, default="")
     review_status = models.CharField(max_length=10, choices=Review.choices, default=Review.PENDING)
     created_at = models.DateTimeField(auto_now_add=True)
 

@@ -97,7 +97,7 @@ TARA_JWT_AUDIENCE = os.getenv("JWT_AUDIENCE", "tara")
 TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-secret-change-me")
 
 # Until the Moderation/ad-review team is staffed, dev auto-approves creatives.
-ADS_AUTO_APPROVE = env_bool("ADS_AUTO_APPROVE", True)
+ADS_AUTO_APPROVE = env_bool("ADS_AUTO_APPROVE", False)
 ADS_DEFAULT_FREQUENCY_CAP = int(os.getenv("ADS_DEFAULT_FREQUENCY_CAP", "5"))  # per viewer/day
 
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")

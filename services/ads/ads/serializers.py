@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.core.validators import URLValidator
 from rest_framework import serializers
 
 from .models import AdCreative, AdSet, Campaign
@@ -63,6 +64,13 @@ class CreativeCreateSerializer(serializers.Serializer):
     body = serializers.CharField(max_length=400, required=False, allow_blank=True, default="")
     media_id = serializers.UUIDField(required=False, allow_null=True)
     cta = serializers.CharField(max_length=40, required=False, default="Learn more")
+    link_url = serializers.URLField(
+        max_length=500,
+        required=False,
+        allow_blank=True,
+        default="",
+        validators=[URLValidator(schemes=["https"])],
+    )
 
 
 class CreativeSerializer(serializers.ModelSerializer):
@@ -75,9 +83,30 @@ class CreativeSerializer(serializers.ModelSerializer):
             "body",
             "media_id",
             "cta",
+            "link_url",
             "review_status",
             "created_at",
         ]
+
+
+class AdSetDetailSerializer(AdSetSerializer):
+    creatives = CreativeSerializer(many=True, read_only=True)
+
+    class Meta(AdSetSerializer.Meta):
+        fields = [*AdSetSerializer.Meta.fields, "creatives"]
+
+
+class ReviewQueueSerializer(CreativeSerializer):
+    campaign_name = serializers.CharField(source="ad_set.campaign.name")
+    advertiser_name = serializers.CharField(source="ad_set.campaign.advertiser.name")
+    placement = serializers.CharField(source="ad_set.placement")
+
+    class Meta(CreativeSerializer.Meta):
+        fields = [*CreativeSerializer.Meta.fields, "campaign_name", "advertiser_name", "placement"]
+
+
+class CampaignUpdateSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=[Campaign.Status.ACTIVE, Campaign.Status.PAUSED])
 
 
 class ReviewSerializer(serializers.Serializer):
@@ -90,3 +119,4 @@ class ReviewSerializer(serializers.Serializer):
 class EventSerializer(serializers.Serializer):
     kind = serializers.ChoiceField(choices=["impression", "click"])
     creative_id = serializers.UUIDField()
+    token = serializers.CharField(max_length=1000)

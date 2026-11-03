@@ -4,7 +4,7 @@ import type { FeedItem, Post, SponsoredSlot } from "@/types";
 
 export interface FeedResponse {
   data: FeedItem[];
-  sponsored: SponsoredSlot[] | null;
+  sponsored: SponsoredSlot | null;
   page: { next_cursor: string | null; has_more: boolean };
 }
 
@@ -59,7 +59,7 @@ export const feedService = {
   async page(cursor?: string): Promise<HydratedFeedPage> {
     let resp = await this.home(cursor);
     let posts = await hydrateFeed(resp.data);
-    const sponsored = resp.sponsored ?? [];
+    const sponsored = resp.sponsored ? [resp.sponsored] : [];
     for (let i = 0; i < MAX_EMPTY_PAGES; i++) {
       if (posts.length || !resp.page.has_more || !resp.page.next_cursor) break;
       resp = await this.home(resp.page.next_cursor);
