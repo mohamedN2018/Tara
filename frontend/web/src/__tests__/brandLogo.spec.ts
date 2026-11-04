@@ -47,10 +47,10 @@ describe("brand logo follows the language", () => {
     expect(en.text()).toBe("");
   });
 
-  it("dark themes use the white Arabic wordmark and the light-lettered English logo", () => {
-    expect(brandMark("en", "gradient", true)).toContain("tara-en-dark");
+  it("dark themes use the white logo in both languages", () => {
+    expect(brandMark("en", "gradient", true)).toContain("tara-en-white");
     expect(brandMark("ar", "gradient", true)).toContain("tara-ar-white");
-    for (const [lang, darkFile] of [["en", "tara-en-dark"], ["ar", "tara-ar-white"]]) {
+    for (const [lang, darkFile] of [["en", "tara-en-white"], ["ar", "tara-ar-white"]]) {
       const imgs = mountLogo(lang).all();
       expect(imgs).toHaveLength(2);
       expect(imgs[0].className).toContain("dark:hidden");
