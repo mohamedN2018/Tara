@@ -13,6 +13,7 @@ function mountLogo(locale: string, props: Record<string, unknown> = {}) {
   return {
     text: () => root.textContent ?? "",
     img: () => root.querySelector("img") as HTMLImageElement,
+    all: () => Array.from(root.querySelectorAll("img")),
     attr: (name: string) => root.getAttribute(name),
   };
 }
@@ -37,14 +38,25 @@ describe("brand logo follows the language", () => {
     expect(brandAppIcon("en")).toBe("/icons/icon-en-192.png");
   });
 
-  it("Arabic shows the wordmark alone; English adds the Tara word", () => {
+  it("shows only the logo image in both languages, never an extra word", () => {
     const ar = mountLogo("ar");
     expect(ar.img().getAttribute("src")).toContain("tara-ar");
-    expect(ar.text()).not.toContain("Tara");
+    expect(ar.text()).toBe("");
     const en = mountLogo("en");
     expect(en.img().getAttribute("src")).toContain("tara-en");
-    expect(en.text()).toContain("Tara");
-    expect(mountLogo("en", { variant: "mark" }).text()).not.toContain("Tara");
+    expect(en.text()).toBe("");
+  });
+
+  it("dark themes use the white Arabic wordmark and the light-lettered English logo", () => {
+    expect(brandMark("en", "gradient", true)).toContain("tara-en-dark");
+    expect(brandMark("ar", "gradient", true)).toContain("tara-ar-white");
+    for (const [lang, darkFile] of [["en", "tara-en-dark"], ["ar", "tara-ar-white"]]) {
+      const imgs = mountLogo(lang).all();
+      expect(imgs).toHaveLength(2);
+      expect(imgs[0].className).toContain("dark:hidden");
+      expect(imgs[1].className).toContain("dark:block");
+      expect(imgs[1].getAttribute("src")).toContain(darkFile);
+    }
   });
 
   it("keeps an accessible name and hides the image itself", () => {

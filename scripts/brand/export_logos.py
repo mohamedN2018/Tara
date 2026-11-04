@@ -21,7 +21,21 @@ ar=trim(Image.open(f"{IN}/tara-logo-v2-ar.png").convert("RGBA"))
 ar_w=trim(Image.open(f"{IN}/White Arabic Wordmark “تارا”.png").convert("RGBA"), 40)
 ar_icon=trim(Image.open(f"{IN}/tara_logo-main-ar.png").convert("RGBA"))
 
-for name, im in [("tara-en",en),("tara-en-white",en_w),("tara-ar",ar),("tara-ar-white",ar_w)]:
+# The English logo (T + "ara") is tara-en-ve.png. Its "ara" letters are a deep
+# purple (low blue channel) below the T bar: recolour them for dark themes, and
+# build a flat white version for photos and gradients.
+logo_en=trim(Image.open(f"{IN}/tara-en-ve.png").convert("RGBA"))
+def en_dark(im):
+    out=im.copy(); px=out.load(); w,h=out.size
+    for y in range(int(h*0.6),h):
+        for x in range(w):
+            r,g,b,a=px[x,y]
+            if a and b<170: px[x,y]=(245,243,255,a)
+    return out
+def flat_white(im):
+    out=Image.new("RGBA",im.size,(255,255,255,0)); out.putalpha(im.getchannel("A")); return out
+
+for name, im in [("tara-en",logo_en),("tara-en-dark",en_dark(logo_en)),("tara-en-white",flat_white(logo_en)),("tara-ar",ar),("tara-ar-white",ar_w)]:
     save(fit(im,384), f"{ASSETS}/{name}.png")
 
 def square(im, size, pad=0.0, bg=None):
@@ -76,7 +90,7 @@ badge=Image.new("RGBA",(96,96),(0,0,0,0)); w=Image.new("RGBA",sil.size,(255,255,
 badge.alpha_composite(w, ((96-sil.width)//2,(96-sil.height)//2)); save(badge, f"{ICONS}/badge-96.png")
 
 # previews on light and dark backgrounds
-for name in ("tara-en","tara-en-white","tara-ar","tara-ar-white"):
+for name in ("tara-en","tara-en-dark","tara-en-white","tara-ar","tara-ar-white"):
     im=Image.open(f"{ASSETS}/{name}.png")
     for bgname,bg in (("light",(245,245,250,255)),("dark",(11,11,31,255))):
         c=Image.new("RGBA",(im.width+40,im.height+40),bg); c.alpha_composite(im,(20,20)); c.convert("RGB").save(f"{PREV}/{name}-{bgname}.png")

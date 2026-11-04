@@ -6,11 +6,9 @@ import { brandAppIcon, brandMark, isArabicLocale } from "@/lib/brand";
 
 /**
  * The Tara logo, in the interface language: the Arabic wordmark "تارا" for
- * Arabic, the English "T" mark (plus the "Tara" wordmark) for any other
- * language.
- * - `mark`: the logo on its own.
- * - `full`: Arabic shows the wordmark (it already reads "تارا"); other
- *   languages show the T mark followed by "Tara".
+ * Arabic, the English logo ("Tara") for any other language. Both already
+ * spell the name, so no text is added next to them.
+ * - `mark` / `full`: the logo (kept as two names for existing callers).
  * - `icon`: the square app icon.
  * `tone` picks the colour artwork or the white one (on photos or gradients);
  * `size` is the logo height in pixels.
@@ -27,34 +25,38 @@ const props = withDefaults(
 
 const { locale } = useI18n();
 const arabic = computed(() => isArabicLocale(locale.value));
-const src = computed(() =>
-  props.variant === "icon" ? brandAppIcon(locale.value) : brandMark(locale.value, props.tone),
+const isIcon = computed(() => props.variant === "icon");
+const light = computed(() => (isIcon.value ? brandAppIcon(locale.value) : brandMark(locale.value, props.tone)));
+const dark = computed(() =>
+  isIcon.value ? brandAppIcon(locale.value) : brandMark(locale.value, props.tone, true),
 );
-// The English T is square; the Arabic wordmark is a little wider than tall, so
-// it gets a touch more height to read at the same visual size.
-const height = computed(() =>
-  props.variant !== "icon" && arabic.value ? Math.round(props.size * 1.1) : props.size,
-);
-const showWord = computed(() => props.variant === "full" && !arabic.value);
+// Wordmarks are a little wider than tall: give them a touch more height so
+// they read at the same visual size as the old square mark.
+const height = computed(() => (isIcon.value ? props.size : Math.round(props.size * (arabic.value ? 1.1 : 1.2))));
+const style = computed(() => ({ height: `${height.value}px`, width: isIcon.value ? `${height.value}px` : undefined }));
 </script>
 
 <template>
-  <span class="inline-flex shrink-0 items-center gap-2" role="img" :aria-label="label" dir="ltr">
+  <span class="inline-flex shrink-0 items-center" role="img" :aria-label="label" dir="ltr">
     <img
-      :src="src"
+      :src="light"
       alt=""
       aria-hidden="true"
       draggable="false"
       decoding="async"
       class="block w-auto select-none object-contain"
-      :class="variant === 'icon' ? 'rounded-[22%]' : ''"
-      :style="{ height: `${height}px`, width: variant === 'icon' ? `${height}px` : undefined }"
+      :class="[isIcon ? 'rounded-[22%]' : '', dark !== light ? 'dark:hidden' : '']"
+      :style="style"
     />
-    <span
-      v-if="showWord"
-      class="font-display font-extrabold leading-none tracking-tight"
-      :class="tone === 'white' ? 'text-white' : tone === 'ink' ? 'text-ink' : 'text-gray-950 dark:text-white'"
-      :style="{ fontSize: `${Math.round(size * 0.78)}px`, letterSpacing: '-0.03em' }"
-    >Tara</span>
+    <img
+      v-if="dark !== light"
+      :src="dark"
+      alt=""
+      aria-hidden="true"
+      draggable="false"
+      decoding="async"
+      class="hidden w-auto select-none object-contain dark:block"
+      :style="style"
+    />
   </span>
 </template>
