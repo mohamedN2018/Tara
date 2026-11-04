@@ -117,6 +117,9 @@ def profile_search_payload(profile: UserProfile, changed: list[str]) -> dict:
         "handle": profile.handle,
         "display_name": profile.display_name,
         "visibility": profile.visibility,
+        # Additive (1.6): graph keeps unsearchable accounts out of suggestions,
+        # search out of people results.
+        "searchable": profile.searchable,
         "avatar_media_id": str(profile.avatar_media_id) if profile.avatar_media_id else None,
         "city": (profile.city or None) if public_city else None,
         "changed": changed,
@@ -141,6 +144,28 @@ def profile_cards(viewer_id: str, account_ids: list) -> list[dict]:
     profiles = UserProfile.objects.filter(
         account_id__in=account_ids, deleted_at__isnull=True
     ).exclude(account_id__in=blocked)
+    return [
+        {
+            "account_id": str(p.account_id),
+            "handle": p.handle,
+            "display_name": p.display_name,
+            "avatar_media_id": str(p.avatar_media_id) if p.avatar_media_id else None,
+        }
+        for p in profiles
+    ]
+
+
+def blocked_cards(viewer_id: str, account_ids: list) -> list[dict]:
+    """Names and avatars of the accounts the viewer blocked, for the owner's own
+    Blocked list only (Settings > Content preferences, Connections). Only the
+    viewer's own blocks are answered, so nothing leaks about who blocked whom;
+    profile_cards() keeps hiding these accounts everywhere else."""
+    mine = set(
+        BlockedPair.objects.filter(blocker_id=viewer_id, blocked_id__in=account_ids).values_list(
+            "blocked_id", flat=True
+        )
+    )
+    profiles = UserProfile.objects.filter(account_id__in=mine, deleted_at__isnull=True)
     return [
         {
             "account_id": str(p.account_id),
@@ -196,6 +221,7 @@ def update_profile(profile: UserProfile, data: dict) -> UserProfile:
         "avatar_media_id",
         "cover_media_id",
         "visibility",
+        "searchable",
     }
     check_own_images(profile, data)
     for key, value in data.items():
@@ -251,8 +277,10 @@ def _visible_pages(viewer_id: str):
     )
 
 
-def list_pages(viewer_id: str, *, q: str = "", mine: bool = False):
+def list_pages(viewer_id: str, *, q: str = "", mine: bool = False, ids: list | None = None):
     pages = _visible_pages(viewer_id)
+    if ids is not None:
+        pages = pages.filter(id__in=ids)
     if mine:
         pages = pages.filter(members__account_id=viewer_id)
     if q:
@@ -282,10 +310,42 @@ def member_role(page: Page, account_id: str) -> str | None:
     return member.role if member else None
 
 
+# Path segments of the web app's Pages routes (``/pages/id/<uuid>``) and words a
+# page would take to pass for the Pages manager itself.
+RESERVED_PAGE_HANDLES = frozenset(
+    {"id", "manage", "new", "create", "mine", "followed", "discover", "settings", "tara"}
+)
+
+
+def check_page_images(actor_id: str, page: Page | None, data: dict) -> None:
+    """A new page avatar or cover must be the editor's own image upload.
+
+    Unchanged and cleared values are not checked; someone else's media and an
+    unknown id look the same. Media down: 503 and nothing is saved.
+    """
+    wanted = {
+        str(data[f])
+        for f in _IMAGE_FIELDS
+        if data.get(f) and str(data[f]) != str(getattr(page, f, None) or "")
+    }
+    if not wanted:
+        return
+    found = media_client.lookup(sorted(wanted))
+    for media_id in wanted:
+        info = found.get(media_id)
+        if info is None or info.owner_id != str(actor_id):
+            raise _bad_media("Media not found.", "media_not_owned")
+        if info.kind != "image":
+            raise _bad_media("Only an image can be an avatar or a cover.", "media_kind_not_allowed")
+        if info.status not in media_client.USABLE_STATUSES:
+            raise _bad_media("Media upload is not complete.", "media_not_ready")
+
+
 def create_page(owner_account_id: str, data: dict) -> Page:
     handle = data["handle"].lower()
-    if Page.objects.filter(handle=handle).exists():
+    if handle in RESERVED_PAGE_HANDLES or Page.objects.filter(handle=handle).exists():
         raise Conflict("Page handle already taken.", code="conflict")
+    check_page_images(owner_account_id, None, data)
     with transaction.atomic():
         try:
             page = Page.objects.create(
@@ -296,6 +356,8 @@ def create_page(owner_account_id: str, data: dict) -> Page:
                 description=data.get("description", ""),
                 contact=data.get("contact", {}),
                 location=data.get("location", ""),
+                avatar_media_id=data.get("avatar_media_id"),
+                cover_media_id=data.get("cover_media_id"),
                 created_by=owner_account_id,
             )
         except IntegrityError as exc:  # a concurrent create took the handle first
@@ -343,7 +405,17 @@ def update_page(page: Page, actor_id: str, data: dict) -> Page:
             code="permission_denied",
             http_status_code=403,
         )
-    editable = ("name", "category", "description", "contact", "location", "status")
+    editable = (
+        "name",
+        "category",
+        "description",
+        "contact",
+        "location",
+        "status",
+        "avatar_media_id",
+        "cover_media_id",
+    )
+    check_page_images(actor_id, page, data)
     for key in editable:
         if key in data:
             setattr(page, key, data[key])
@@ -434,3 +506,53 @@ def update_member_role(page: Page, actor_id: str, member: PageMember, role: str)
             actor_id=str(actor_id),
         )
     return member
+
+
+# Roles that may publish and delete posts as the page (post asks through the
+# internal access endpoint). Advertisers and analysts may not.
+PAGE_POSTER_ROLES = frozenset({PageRole.OWNER, PageRole.ADMIN, PageRole.EDITOR})
+PAGE_POST_MODERATOR_ROLES = PAGE_POSTER_ROLES | {PageRole.MODERATOR}
+
+
+def visible_page_ids(page_ids: list, viewer_id: str | None = None) -> list[str]:
+    """Which of ``page_ids`` the viewer may see, by the same rule as the page
+    itself (``get_visible_page``): published and live, or the viewer is on the
+    page's team; never a page whose owner blocks the viewer or is blocked by
+    them. Without a viewer (search's backfill), published and live pages only.
+    Post reads a page's posts through this, so a hidden page's posts 404 too."""
+    if viewer_id:
+        pages = _visible_pages(str(viewer_id))
+    else:
+        pages = Page.objects.filter(deleted_at__isnull=True, status=Page.Status.PUBLISHED)
+    return [str(i) for i in pages.filter(id__in=page_ids).values_list("id", flat=True)]
+
+
+def page_team(page_id: str) -> list[dict] | None:
+    """``[{account_id, role}, ...]`` for a live page (owner first), or ``None``
+    when the page does not exist or is deleted."""
+    page = Page.objects.filter(id=page_id, deleted_at__isnull=True).first()
+    if page is None:
+        return None
+    rows = page.members.order_by("created_at").values_list("account_id", "role")
+    team = [{"account_id": str(a), "role": r} for a, r in rows]
+    return sorted(team, key=lambda m: m["role"] != PageRole.OWNER)
+
+
+def page_access(page_id: str, account_id: str) -> dict | None:
+    """What post needs to let ``account_id`` act as the page; ``None`` when the
+    page does not exist or is deleted (post answers 404)."""
+    page = Page.objects.filter(id=page_id, deleted_at__isnull=True).first()
+    if page is None:
+        return None
+    role = member_role(page, account_id)
+    published = page.status == Page.Status.PUBLISHED
+    return {
+        "page_id": str(page.id),
+        "handle": page.handle,
+        "name": page.name,
+        "status": page.status,
+        "avatar_media_id": str(page.avatar_media_id) if page.avatar_media_id else None,
+        "role": role,
+        "can_post": published and role in PAGE_POSTER_ROLES,
+        "can_moderate": role in PAGE_POST_MODERATOR_ROLES,
+    }

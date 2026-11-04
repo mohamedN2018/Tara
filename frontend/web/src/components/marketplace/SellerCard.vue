@@ -11,7 +11,8 @@ import { useDirectoryStore } from "@/stores/directory";
 
 import StarRating from "./StarRating.vue";
 
-const props = defineProps<{ sellerId: string }>();
+// `shopLink=false` on the shop page itself (it is already there).
+const props = withDefaults(defineProps<{ sellerId: string; shopLink?: boolean }>(), { shopLink: true });
 const { t, locale } = useI18n();
 const directory = useDirectoryStore();
 
@@ -35,7 +36,7 @@ const since = computed(() => {
       new Date(summary.value.member_since),
     );
   } catch {
-    return summary.value.member_since.slice(0, 7);
+    return (summary.value.member_since ?? "").slice(0, 7);
   }
 });
 </script>
@@ -43,15 +44,18 @@ const since = computed(() => {
 <template>
   <section class="mt-4 rounded-xl border border-gray-100 p-3 dark:border-gray-800" :aria-label="t('market.seller.title')">
     <RouterLink
-      :to="{ name: 'profile-by-id', params: { id: sellerId } }"
+      :to="shopLink ? { name: 'marketplace-seller', params: { id: sellerId } } : { name: 'profile-by-id', params: { id: sellerId } }"
       class="flex items-center gap-3 rounded-lg transition hover:opacity-90"
+      data-testid="seller-link"
     >
       <UserAvatar :name="directory.label(sellerId)" :media-id="directory.avatarOf(sellerId)" :size="44" />
       <div class="min-w-0">
         <p class="text-xs text-gray-500 dark:text-gray-400">{{ t("market.listedBy") }}</p>
         <p class="truncate text-sm font-semibold" dir="auto">{{ directory.label(sellerId) }}</p>
       </div>
-      <span class="ms-auto text-xs font-medium text-brand-600 dark:text-brand-300">{{ t("market.viewSeller") }}</span>
+      <span class="ms-auto text-xs font-medium text-brand-600 dark:text-brand-300">
+        {{ shopLink ? t("market.viewSeller") : t("commerce.shop.viewProfile") }}
+      </span>
     </RouterLink>
 
     <div v-if="summary" class="mt-3 grid grid-cols-1 gap-2 text-xs text-gray-600 dark:text-gray-300 sm:grid-cols-2">
@@ -69,7 +73,14 @@ const since = computed(() => {
       </p>
       <p class="flex items-center gap-1.5">
         <Package class="h-4 w-4 shrink-0 text-brand-500" aria-hidden="true" />
-        {{ t("market.seller.activeListings", summary.active_listings_count) }}
+        <RouterLink
+          v-if="shopLink && summary.active_listings_count"
+          :to="{ name: 'marketplace-seller', params: { id: sellerId } }"
+          class="font-medium text-brand-600 hover:underline dark:text-brand-300"
+        >
+          {{ t("market.seller.activeListings", summary.active_listings_count) }}
+        </RouterLink>
+        <template v-else>{{ t("market.seller.activeListings", summary.active_listings_count) }}</template>
         <span v-if="summary.sold_listings_count" class="text-gray-500 dark:text-gray-400">
           · {{ t("market.seller.sold", summary.sold_listings_count) }}
         </span>

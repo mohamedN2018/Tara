@@ -284,6 +284,19 @@ docker exec tara-feed-1  python manage.py relabel_feed_reasons       # friend/fo
 docker exec tara-search-1 python manage.py reconcile_hashtags        # hashtags only from public posts
 ```
 
+**Wave 3C (settings centre).** Identity gets migration `0007_settings_center`
+(additive: `show_presence`, `login_alerts`, the TOTP replay guard and the
+recovery-code table). New variables: `IDENTITY_TOTP_ENCRYPTION_KEY` (encrypts
+the 2FA secrets at rest; `gen-dokploy-env.sh` generates it; empty derives a key
+from `IDENTITY_SECRET_KEY`; **never rotate it once people use 2FA**, or they
+must sign in with a recovery code and set 2FA up again) and
+`IDENTITY_STAFF_REQUIRE_2FA` (default `false`; set `true` only after every
+staff account has turned on 2FA, or their console access disappears). New
+events `account.deactivated` and `account.reactivated` use the existing
+`IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS` flag and have no consumer yet. Deploy
+realtime with identity: realtime reads the token's new `show_presence` claim
+(an older token without it counts as visible).
+
 **Step 1 wave B (comments v2, notifications v2, messenger, marketplace
 catalogue, account security).** All new variables are optional:
 `GOOGLE_CLIENT_ID`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` and
@@ -613,6 +626,23 @@ it does not conflict.
   `settings/`, `<id>/tags/me/`), which the edge already routes to post. No new
   containers, no one-off commands.
 
+### Upgrading: message requests, message reports, inquiry notifications (plan 08 T5)
+
+- **Migrations (chat, additive, run at boot):** `0005_message_requests` (a
+  `conversation_member.request_status` column with an empty database default,
+  so every existing thread stays in the inbox, and a new `message_report` table).
+- **New variables, optional:** on chat `CHAT_MESSAGE_REQUESTS` (default `true`:
+  a DM a non-friend starts waits in the recipient's message requests; chat asks
+  graph's internal `/internal/v1/relationship/` with the shared
+  `INTERNAL_JWT_SECRET`, and treats graph being down as "not friends") and
+  `CHAT_EMIT_MESSAGE_REPORTED` (default `true`).
+- **Order:** moderation already consumes `message.reported`, and chat now also
+  consumes `friendship.accepted`; `notification-consumer` now consumes
+  `marketplace.inquiry.created`. The producers already emit these, so deploy the
+  consumers (chat-consumer, notification-consumer) and they bind on start. No
+  one-off commands, no new containers. New endpoints are under
+  `/api/v1/conversations/` and `/api/v1/messages/`, already routed to chat.
+
 ### Upgrading: the video pipeline (roadmap 5.2 / 5.3)
 
 - **New containers:** `minio-init` (one-shot: creates the transcoder's MinIO
@@ -674,6 +704,59 @@ it does not conflict.
   block, a removal or a narrowed audience applies within
   `MEDIA_PLAYBACK_ACCESS_CACHE_SECONDS`, and handed-out segment URLs expire
   within `MEDIA_HLS_URL_WINDOW_SECONDS`).
+
+### Upgrading: stories and close friends (roadmap 1.9 / 1.10)
+
+- **Migration (post, additive, run at boot):** `stories 0001_initial` (new
+  tables `story`, `story_view`, `story_reaction`, `story_report` and
+  `close_friend`). Nothing existing changes.
+- **New variable, optional:** on post `POST_EMIT_STORY_EVENTS` (default `true`).
+- **Order (new event types):** on an existing install deploy once with
+  `POST_EMIT_STORY_EVENTS=false`, so `notification-consumer` binds
+  `story.reacted` and `story.deleted` and `moderation-consumer` binds
+  `story.reported`; then set it to `true` and redeploy post. With the flag off,
+  stories, views, reactions and reports still work; nobody is notified and
+  reports open no moderation case.
+- **Edge:** the new endpoints are under `/api/v1/stories/`. The web image's
+  nginx routes that prefix to post (rebuild `web`); the k8s post ingress lists
+  it too. No new containers, no one-off commands.
+- **Media:** a story photo is bound in media to the story id, restricted, and
+  media asks post's `/internal/v1/posts/<id>/visibility/` (which answers for
+  stories too). An expired story's photo is 404 to everyone but its author.
+
+### Upgrading: moderation console, Support inbox and notices (plan 08 T7)
+
+- **New variable, optional:** on admin `ADMIN_EMIT_SYSTEM_NOTICES` (default
+  `true`) emits `system.notice` when staff send an announcement from the
+  console (capability `admin.notices.send`).
+- **Order (two-release rule):** notification already consumes
+  `moderation.actioned`, `appeal.resolved` and `system.notice` in this release.
+  On an install that skips straight here, deploy once with
+  `ADMIN_EMIT_SYSTEM_NOTICES=false` so `notification-consumer` binds first, then
+  set it back to `true` and redeploy.
+- **Migrations (additive):** admin `0006_system_notice`, moderation
+  `0003_report_evidence` (the text snapshot a message report carries).
+- **Check it works:** sign in as a moderator, open Console > Moderation, claim
+  a case; as a member, open Menu > Support inbox.
+
+### Upgrading: reversible deactivation and the account-security throttle (plan 08 3C)
+
+- **New variable, optional:** on post `POST_EMIT_HIDE_EVENTS` (default `true`).
+  Deactivating an account now emits `post.hidden` for each of its posts and
+  reactivating it emits `post.unhidden`, so the posts come back in friends' and
+  followers' home feeds (feed keeps their rows hidden instead of deleting them)
+  and notifications about them are kept.
+- **Order (new event types):** feed and search consume the pair in this
+  release. On an existing install deploy once with `POST_EMIT_HIDE_EVENTS=false`,
+  so `feed-consumer` and `search-consumer` bind `post.hidden` / `post.unhidden`;
+  then set it to `true` and redeploy post. With the flag off, deactivation emits
+  `post.deleted` as before (feed rows and notifications are dropped for good).
+  Posts of accounts deactivated under that older behaviour get their feed rows
+  back when the account signs in again.
+- **Migration (feed, additive, run at boot):** `0007_post_state_hidden`.
+- **New variable, optional:** on identity `ACCOUNT_SECURITY_RATE` (default
+  `30/hour`, per account): two-factor setup, confirm and disable, recovery
+  codes, deactivation and deletion.
 
 ### Backups
 

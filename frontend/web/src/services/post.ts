@@ -38,6 +38,32 @@ export interface Sharer {
   created_at: string;
 }
 
+/** What the author may change on a published post (PostEditSerializer). */
+export interface PostChanges {
+  body?: string;
+  audience?: string;
+  comment_policy?: CommentPolicy;
+  tagged_ids?: string[];
+  location?: string;
+  feeling?: string;
+}
+
+export interface SavedItem {
+  id: string;
+  item_type: string;
+  item_id: string;
+  collection_id: string;
+  created_at: string;
+}
+
+export interface SavedCollection {
+  id: string;
+  name: string;
+  is_default: boolean;
+  item_count: number;
+  created_at: string;
+}
+
 const BATCH_LIMIT = 50;
 // Upper bound on empty pages followed in a row, so one call can't run away.
 const MAX_EMPTY_PAGES = 25;
@@ -75,6 +101,20 @@ export const postService = {
   async edit(id: string, body: string): Promise<Post> {
     const { data } = await api.patch<{ data: Post }>(`/posts/${id}/`, { body });
     return data.data;
+  },
+
+  /** Change a published post (author): text, audience, tags, feeling, location or comment policy. */
+  async update(id: string, changes: PostChanges): Promise<Post> {
+    const { data } = await api.patch<{ data: Post }>(`/posts/${id}/`, changes);
+    return data.data;
+  },
+
+  /** Published video posts the viewer may see, newest first (a page can be short: keep paging). */
+  async videos(cursor?: string | null, authorId?: string): Promise<CursorPage<Post>> {
+    const { data } = await api.get<CursorPage<Post>>("/posts/", {
+      params: { type: "video", cursor: cursor || undefined, author_id: authorId },
+    });
+    return data;
   },
 
   async setCommentPolicy(id: string, policy: CommentPolicy): Promise<Post> {
@@ -230,22 +270,62 @@ export const postService = {
     return posts;
   },
 
-  // SaveView is POST/DELETE.
-  async save(id: string): Promise<void> {
-    await api.post(`/posts/${id}/save/`);
+  // SaveView is POST/DELETE. With a collection, a saved post moves there.
+  async save(id: string, collectionId?: string | null): Promise<SavedItem | null> {
+    const { data } = await api.post<{ data?: SavedItem }>(
+      `/posts/${id}/save/`,
+      collectionId ? { collection_id: collectionId } : undefined,
+    );
+    return data?.data?.item_id ? data.data : null;
   },
   async unsave(id: string): Promise<void> {
     await api.delete(`/posts/${id}/save/`);
   },
 
-  /** One page of saved posts, newest save first. Posts no longer visible are left out. */
-  async savedPage(cursor?: string): Promise<{ posts: Post[]; nextCursor: string | null }> {
-    const { data } = await api.get<CursorPage<{ item_id: string }>>("/saved/", {
-      params: { item_type: "post", cursor },
+  /**
+   * One page of saved posts, newest save first, optionally one collection.
+   * Posts no longer visible are left out; `savedIds` maps a post to its saved-item id.
+   */
+  async savedPage(
+    cursor?: string,
+    collectionId?: string | null,
+  ): Promise<{
+    posts: Post[];
+    nextCursor: string | null;
+    savedIds: Record<string, string>;
+    collectionIds: Record<string, string>;
+  }> {
+    const { data } = await api.get<CursorPage<SavedItem>>("/saved/", {
+      params: { item_type: "post", cursor, collection_id: collectionId || undefined },
     });
     return {
       posts: await this.batch(data.data.map((s) => s.item_id)),
       nextCursor: data.page.next_cursor,
+      savedIds: Object.fromEntries(data.data.map((s) => [s.item_id, s.id])),
+      collectionIds: Object.fromEntries(data.data.map((s) => [s.item_id, s.collection_id])),
     };
+  },
+
+  // ---- saved collections (owner-only; another account's ids are 404) ----
+  async collections(): Promise<SavedCollection[]> {
+    const { data } = await api.get<{ data: SavedCollection[] }>("/saved/collections/");
+    return data.data ?? [];
+  },
+  async createCollection(name: string): Promise<SavedCollection> {
+    const { data } = await api.post<{ data: SavedCollection }>("/saved/collections/", { name });
+    return data.data;
+  },
+  async renameCollection(id: string, name: string): Promise<SavedCollection> {
+    const { data } = await api.patch<{ data: SavedCollection }>(`/saved/collections/${id}/`, { name });
+    return data.data;
+  },
+  /** Its items move back to the default collection. */
+  async deleteCollection(id: string): Promise<void> {
+    await api.delete(`/saved/collections/${id}/`);
+  },
+  /** Move a saved item (by its saved-item id) to a collection; null is the default one. */
+  async moveSaved(savedId: string, collectionId: string | null): Promise<SavedItem> {
+    const { data } = await api.patch<{ data: SavedItem }>(`/saved/${savedId}/`, { collection_id: collectionId });
+    return data.data;
   },
 };

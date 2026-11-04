@@ -21,7 +21,16 @@ from urllib.parse import quote
 
 CHANNELS = ("in_app", "push")
 
-CATEGORIES = ("social", "connections", "messages", "marketplace", "pages", "ads", "groups")
+CATEGORIES = (
+    "social",
+    "connections",
+    "messages",
+    "marketplace",
+    "pages",
+    "ads",
+    "groups",
+    "account",
+)
 
 # Aggregation scopes.
 PER_SUBJECT = "subject"  # one open row per (recipient, kind, subject_ref)
@@ -43,6 +52,9 @@ class Kind:
     push_on_merge: bool = False
     # Outcomes of an inline action the client may record on the row.
     resolutions: frozenset[str] = field(default_factory=frozenset)
+    # False while no consumer writes this kind: Settings does not offer a
+    # toggle that would do nothing (``describe`` leaves it out).
+    live: bool = True
 
 
 _KINDS = [
@@ -73,16 +85,28 @@ _KINDS = [
         window=timedelta(days=7),
         push_on_merge=True,
     ),
+    # A message to a Page you help run (its team is not in the conversation):
+    # one row per thread, opening the page inbox on it.
+    Kind(
+        "message.page",
+        "pages",
+        aggregate=PER_SUBJECT,
+        window=timedelta(days=7),
+        push_on_merge=True,
+    ),
     # Calls (3.7). `call` is the push-only ring: no rows, but its push setting
     # silences ringing. `call.missed` is the in-app row; its own push is off by
     # default because the ring push is replaced by a missed-call push instead.
     Kind("call", "messages", in_app=False, push=True),
     Kind("call.missed", "messages", push=False),
     Kind("listing.status", "marketplace"),
-    # Registered ahead of their producers (consumer first, emission later).
+    # A buyer's first inquiry on a listing (`marketplace.inquiry.created`, commerce_handlers).
     Kind("listing.inquiry", "marketplace", aggregate=PER_SUBJECT),
-    Kind("page.follow", "pages", aggregate=PER_SUBJECT),
-    Kind("ad.review", "ads"),
+    # Registered ahead of their producers, and hidden from Settings until a
+    # consumer writes them: `user.followed` names no page owner, and
+    # `ad.review.decided` names no advertiser.
+    Kind("page.follow", "pages", aggregate=PER_SUBJECT, live=False),
+    Kind("ad.review", "ads", live=False),
     # Events (gatherings in post, 1.13). New RSVPs reach the host as one row per event.
     Kind("gathering.invite", "social"),
     Kind("gathering.reminder", "social"),
@@ -92,12 +116,19 @@ _KINDS = [
     # Groups (profile 1.11; posts and announcements from post). Requests reach the
     # group's staff as one row per group; new posts only reach members who turned
     # them on for that group (``notify_posts``, off by default).
-    Kind("group.invite", "groups", resolutions=frozenset({"joined", "declined"})),
+    Kind("group.invite", "groups", resolutions=frozenset({"joined", "declined", "expired"})),
     Kind("group.request", "groups", aggregate=PER_SUBJECT),
     Kind("group.approved", "groups"),
     Kind("group.post", "groups", aggregate=PER_SUBJECT),
     Kind("group.role", "groups"),
     Kind("group.announcement", "groups"),
+    # Stories (post 1.9): reactions reach the author as one row per story.
+    Kind("story.reaction", "social", aggregate=PER_SUBJECT),
+    # Account status (T7): decisions on your content or account, the outcome of
+    # your appeal, and notices from the Tara team. Rows open the Support inbox.
+    Kind("moderation.decision", "account"),
+    Kind("moderation.appeal", "account"),
+    Kind("system.notice", "account"),
 ]
 
 KINDS: dict[str, Kind] = {k.name: k for k in _KINDS}
@@ -132,6 +163,15 @@ DATA_KEYS = frozenset(
         "group_id",
         "group_handle",
         "role",
+        "story_id",
+        "case_id",
+        "target_type",
+        "notice_id",
+        # A page or support team's reply is from the Page / Tara Support (chat).
+        "sender_kind",
+        "sender_name",
+        # A message to a Page: which page's inbox it is in.
+        "page_name",
     }
 )
 MAX_DATA_BYTES = 1024
@@ -218,21 +258,30 @@ def build_url(
     if subject == "post" and sid:
         url = f"/posts/{sid}"
         return f"{url}?comment={tid}" if target == "comment" and tid else url
+    if kind == "message.page" and sid and data.get("page_id"):
+        page = quote(str(data["page_id"]), safe="")
+        return f"/pages/id/{page}/inbox?conversation={sid}"
     if subject == "conversation" and sid:
         return f"/messages/{sid}"
     if subject == "group" and sid:
         handle = data.get("group_handle")
         return f"/groups/{quote(str(handle), safe='')}" if handle else f"/groups/{sid}"
+    if subject == "story" and sid:
+        return f"/stories/{sid}"
     if subject == "gathering" and sid:
         return f"/events/{sid}"
     if subject == "listing" and sid:
         return f"/marketplace/{sid}"
     if subject == "page" and sid:
         handle = data.get("page_handle")
-        return f"/pages/{quote(str(handle), safe='')}" if handle else f"/pages/{sid}"
+        return f"/pages/{quote(str(handle), safe='')}" if handle else f"/pages/id/{sid}"
     if subject in ("campaign", "ad") and sid:
         campaign = data.get("campaign_id")
         return f"/ads/campaigns/{quote(str(campaign), safe='') if campaign else sid}"
+    if subject == "case" and sid:
+        return f"/support?case={sid}"
+    if subject == "notice" and sid:
+        return "/support?tab=notices"
     if subject == "account" and sid:
         return f"/u/id/{sid}"
     if actor_id:
@@ -262,4 +311,5 @@ def describe() -> list[dict]:
             "resolutions": sorted(k.resolutions),
         }
         for k in _KINDS
+        if k.live
     ]

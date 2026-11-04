@@ -7,6 +7,8 @@ token (HS256), NOT a user token.
 
 from __future__ import annotations
 
+import uuid
+
 from django.db.models import Q
 from rest_framework import serializers
 from rest_framework.permissions import AllowAny
@@ -20,6 +22,7 @@ from tara_common.pagination import CursorPagination
 from tara_common.responses import data_response
 
 from .models import UserProfile
+from .services import page_access, page_team, visible_page_ids
 
 
 def _require_internal(request: Request) -> None:
@@ -165,3 +168,73 @@ class ProfilesByAccountView(APIView):
             account_id__in=serializer.validated_data["account_ids"], deleted_at__isnull=True
         ).values_list("account_id", "handle", "display_name")
         return data_response({str(a): {"handle": h, "display_name": n} for a, h, n in rows})
+
+
+class PageAccessView(APIView):
+    """May ``account_id`` publish or delete posts as this page? Post asks before
+    it writes a page post (and fails closed when profile cannot answer)."""
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+    throttle_classes: list = []  # internal: no per-IP throttle (roadmap 3.3)
+
+    def get(self, request: Request, page_id) -> Response:
+        _require_internal(request)
+        try:
+            account_id = str(uuid.UUID(request.query_params.get("account_id", "")))
+        except ValueError as exc:
+            raise TaraAPIError(
+                "account_id must be a UUID.", code="validation_error", http_status_code=400
+            ) from exc
+        found = page_access(str(page_id), account_id)
+        if found is None:
+            raise TaraAPIError("Page not found.", code="not_found", http_status_code=404)
+        return data_response(found)
+
+
+class PageTeamView(APIView):
+    """Who is on this page's team, with their role. Chat asks when a member
+    writes to the page, so the team hears of the message (page inbox)."""
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+    throttle_classes: list = []  # internal
+
+    def get(self, request: Request, page_id) -> Response:
+        _require_internal(request)
+        found = page_team(str(page_id))
+        if found is None:
+            raise TaraAPIError("Page not found.", code="not_found", http_status_code=404)
+        return data_response({"members": found})
+
+
+MAX_PAGE_IDS = 200
+
+
+class _PageVisibilitySerializer(serializers.Serializer):
+    page_ids = serializers.ListField(
+        child=serializers.UUIDField(), allow_empty=True, max_length=MAX_PAGE_IDS
+    )
+    viewer_id = serializers.UUIDField(required=False, allow_null=True)
+
+
+class PageVisibilityView(APIView):
+    """Which of these pages may ``viewer_id`` see? Post asks before it shows a
+    page's posts (detail, timelines, feed hydration, comments, the media check),
+    so a draft, suspended or deleted page's posts are hidden from everyone
+    outside the page's team. Without ``viewer_id``: published, live pages only.
+
+    ``{"visible": [page_id, ...]}``; unknown ids are simply not listed.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+    throttle_classes: list = []  # internal: no per-IP throttle (roadmap 3.3)
+
+    def post(self, request: Request) -> Response:
+        _require_internal(request)
+        serializer = _PageVisibilitySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        v = serializer.validated_data
+        viewer = str(v["viewer_id"]) if v.get("viewer_id") else None
+        return data_response({"visible": visible_page_ids(v["page_ids"], viewer)})

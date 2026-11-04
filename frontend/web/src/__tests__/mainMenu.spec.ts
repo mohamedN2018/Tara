@@ -56,7 +56,10 @@ describe("menu catalogue", () => {
     expect(all).not.toContain("memories");
     expect(all).not.toContain("reels");
     const categories = menuSections([]).map((s) => s.category);
-    expect(categories).not.toContain("creator");
+    // The creator studio is built (T8) with its insights; monetization stays hidden.
+    expect(categories).toContain("creator");
+    expect(all).toContain("analytics");
+    expect(all).not.toContain("monetization");
     expect(categories).not.toContain("professional");
     // The rest keep the spec's order.
     expect(categories).toEqual(MENU_CATEGORIES.filter((c) => categories.includes(c)));
@@ -97,7 +100,7 @@ describe("menu catalogue", () => {
   });
 
   it("only offers creation flows that exist", () => {
-    expect(createItems([]).map((i) => i.id)).toEqual(["post", "page", "group", "event", "listing"]);
+    expect(createItems([]).map((i) => i.id)).toEqual(["post", "story", "page", "group", "event", "listing"]);
   });
 
   it("has every label in both languages", () => {

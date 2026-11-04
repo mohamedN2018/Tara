@@ -40,6 +40,8 @@ onMounted(() => {
           @read="actions.read"
           @dismiss="actions.dismiss"
           @action="actions.act"
+          @turn-off="(n, done) => actions.turnOff(n).then(done)"
+          @undo-turn-off="(n, done) => actions.undoTurnOff(n).then(done)"
         />
       </li>
     </ul>

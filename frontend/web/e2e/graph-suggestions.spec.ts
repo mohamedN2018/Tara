@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { type APIRequestContext, type Browser, type Page, expect, request, test } from "@playwright/test";
 
-import { type Account, API, apiAs, befriend, pageAs, signupData, unique, verificationToken } from "./helpers";
+import { type Account, API, apiAs, befriend, pageAs, signupData, unique, useLocale, verificationToken } from "./helpers";
 
 // Wave 2D: "People you may know" and "Suggested pages" in the right column, and
 // mute (graph emits relationship.muted, feed drops the author's posts).
@@ -41,7 +41,7 @@ async function freshAccount(first: string): Promise<Account> {
 
 async function openHome(browser: Browser, account: Account, lang: "ar" | "en"): Promise<Page> {
   const page = await pageAs(browser, account);
-  await page.addInitScript((locale) => localStorage.setItem("tara.locale", locale), lang);
+  await useLocale(page, lang);
   await page.setViewportSize(DESKTOP);
   await page.goto("/home");
   await expect(page.locator("html")).toHaveAttribute("dir", lang === "ar" ? "rtl" : "ltr");

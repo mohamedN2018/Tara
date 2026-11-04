@@ -7,11 +7,23 @@ from .models import AdCreative, AdSet, Campaign
 
 # Budget currencies ads accepts (ISO 4217); billing in others is not supported.
 CAMPAIGN_CURRENCIES = ("AED", "BHD", "EGP", "EUR", "GBP", "JOD", "KWD", "OMR", "QAR", "SAR", "USD")
+# What the advertiser wants. Delivery is not optimised by it yet: it picks the
+# headline result of the campaign report (reach: impressions; traffic and
+# engagement: clicks).
+CAMPAIGN_OBJECTIVES = ("reach", "traffic", "engagement")
+# Placements something actually asks a slot for: feed (feed service) and
+# marketplace (the browse grid, ``GET /ads/slot/``). Search has no slot yet, so
+# a new ad set cannot pick it; old rows keep the model's wider choices.
+SERVED_PLACEMENTS = ("feed", "marketplace")
+# Placements the web client may ask a slot for directly (feed's comes from feed).
+CLIENT_SLOT_PLACEMENTS = ("marketplace",)
 
 
 class CampaignCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=160)
-    objective = serializers.CharField(max_length=40, required=False, default="reach")
+    objective = serializers.ChoiceField(
+        choices=CAMPAIGN_OBJECTIVES, required=False, default="reach"
+    )
     budget = serializers.DecimalField(max_digits=19, decimal_places=4, min_value=0)
     currency = serializers.CharField(max_length=3, required=False, default="USD")
     schedule_start = serializers.DateTimeField(required=False, allow_null=True)
@@ -52,9 +64,7 @@ class CampaignSerializer(serializers.ModelSerializer):
 class AdSetCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=160, required=False, allow_blank=True, default="")
     targeting = serializers.DictField(required=False, default=dict)
-    placement = serializers.ChoiceField(
-        choices=AdSet.Placement.values, default=AdSet.Placement.FEED
-    )
+    placement = serializers.ChoiceField(choices=SERVED_PLACEMENTS, default=AdSet.Placement.FEED)
     cpc = serializers.DecimalField(max_digits=19, decimal_places=4, min_value=0, default=0)
     cpm = serializers.DecimalField(max_digits=19, decimal_places=4, min_value=0, default=0)
     frequency_cap = serializers.IntegerField(min_value=0, default=0)
@@ -90,7 +100,25 @@ class CreativeCreateSerializer(serializers.Serializer):
     )
 
 
+class CreativeUpdateSerializer(serializers.Serializer):
+    """Edit and resubmit: every field optional, the same rules as create."""
+
+    headline = serializers.CharField(max_length=120, required=False)
+    body = serializers.CharField(max_length=400, required=False, allow_blank=True)
+    media_id = serializers.UUIDField(required=False, allow_null=True)
+    cta = serializers.CharField(max_length=40, required=False)
+    link_url = serializers.URLField(
+        max_length=500,
+        required=False,
+        allow_blank=True,
+        validators=[URLValidator(schemes=["https"])],
+    )
+
+
 class CreativeSerializer(serializers.ModelSerializer):
+    # The reviewer's reason, shown to the advertiser while the ad stays rejected.
+    review_notes = serializers.SerializerMethodField()
+
     class Meta:
         model = AdCreative
         fields = [
@@ -102,8 +130,16 @@ class CreativeSerializer(serializers.ModelSerializer):
             "cta",
             "link_url",
             "review_status",
+            "review_notes",
             "created_at",
         ]
+
+    def get_review_notes(self, obj) -> str | None:
+        if obj.review_status != AdCreative.Review.REJECTED:
+            return None
+        # Prefetched by the owner's listing; newest decision first.
+        reviews = sorted(obj.reviews.all(), key=lambda r: (r.created_at, str(r.id)), reverse=True)
+        return reviews[0].notes if reviews else ""
 
 
 class AdSetDetailSerializer(AdSetSerializer):
@@ -131,6 +167,16 @@ class ReviewSerializer(serializers.Serializer):
         choices=[AdCreative.Review.APPROVED, AdCreative.Review.REJECTED]
     )
     notes = serializers.CharField(max_length=2000, required=False, allow_blank=True, default="")
+
+    def validate(self, attrs):
+        # The advertiser sees this reason: a rejection without one tells them nothing.
+        if attrs["decision"] == AdCreative.Review.REJECTED and not attrs["notes"].strip():
+            raise serializers.ValidationError({"notes": "Say why the ad is rejected."})
+        return attrs
+
+
+class SlotQuerySerializer(serializers.Serializer):
+    placement = serializers.ChoiceField(choices=CLIENT_SLOT_PLACEMENTS)
 
 
 class EventSerializer(serializers.Serializer):

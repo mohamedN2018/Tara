@@ -34,7 +34,7 @@ const isMember = computed(() => props.group.viewer?.state === "active");
     <div class="space-y-3 p-4 sm:p-6">
       <div class="flex flex-wrap items-start gap-3">
         <div class="min-w-0 flex-1 space-y-1">
-          <h1 id="group-title" class="text-2xl font-extrabold leading-tight" dir="auto">{{ group.name }}</h1>
+          <h1 id="group-title" class="break-words text-2xl font-extrabold leading-tight" data-testid="group-name"><bdi>{{ group.name }}</bdi></h1>
           <p class="flex flex-wrap items-center gap-x-2 text-sm text-gray-500 dark:text-gray-400">
             <PrivacyBadge :privacy="group.privacy" />
             <span aria-hidden="true">·</span>

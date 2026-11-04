@@ -538,7 +538,7 @@ services:
       retries: 10
     labels:
       - traefik.enable=true
-      - "traefik.http.routers.post.rule=PathPrefix(`/api/v1/posts`) || PathPrefix(`/api/v1/comments`) || PathPrefix(`/api/v1/saved`) || PathPrefix(`/api/v1/events`)"
+      - "traefik.http.routers.post.rule=PathPrefix(`/api/v1/posts`) || PathPrefix(`/api/v1/comments`) || PathPrefix(`/api/v1/saved`) || PathPrefix(`/api/v1/events`) || PathPrefix(`/api/v1/stories`)"
       - traefik.http.routers.post.entrypoints=web
       - traefik.http.services.post.loadbalancer.server.port=8000
 

@@ -113,6 +113,8 @@ function ban(m: Membership) {
   if (!window.confirm(t("groups.members.banConfirm", { name: name(m) }))) return;
   act(m, () => groupsService.ban(groupRef.value, m.account_id), t("groups.members.banned", { name: name(m) }));
 }
+const revoke = (m: Membership) =>
+  act(m, () => groupsService.revokeInvite(groupRef.value, m.account_id), t("groups.members.revoked", { name: name(m) }));
 const unban = (m: Membership) =>
   act(m, () => groupsService.unban(groupRef.value, m.account_id), t("groups.members.unbanned", { name: name(m) }));
 
@@ -170,7 +172,10 @@ onMounted(load);
           <UserAvatar :name="name(m)" :media-id="directory.avatarOf(m.account_id)" :size="40" />
           <span class="min-w-0">
             <span class="block truncate text-sm font-semibold" dir="auto">{{ name(m) }}</span>
-            <span class="block text-xs text-gray-500 dark:text-gray-400">{{ t(`groups.roles.${m.role}`) }}</span>
+            <span v-if="state === 'invited' && m.invited_by" class="block text-xs text-gray-500 dark:text-gray-400" dir="auto">
+              {{ t("groups.members.invitedBy", { name: directory.label(m.invited_by) }) }}
+            </span>
+            <span v-else class="block text-xs text-gray-500 dark:text-gray-400">{{ t(`groups.roles.${m.role}`) }}</span>
           </span>
         </RouterLink>
 
@@ -206,6 +211,18 @@ onMounted(load);
               </button>
             </template>
           </div>
+
+          <button
+            v-else-if="state === 'invited' && group.viewer.can.approve_requests"
+            type="button"
+            class="btn-outline"
+            :disabled="busy === m.account_id"
+            :aria-label="t('groups.members.revokeNamed', { name: name(m) })"
+            data-testid="group-invite-revoke"
+            @click="revoke(m)"
+          >
+            <X class="h-4 w-4" aria-hidden="true" /> {{ t("groups.members.revoke") }}
+          </button>
 
           <button
             v-else-if="state === 'banned' && group.viewer.can.moderate"

@@ -1,6 +1,6 @@
 import { type Page, expect, test } from "@playwright/test";
 
-import { API, apiAs, befriend, expectNoUuid, pageAs, sharedAccounts, unique } from "./helpers";
+import { API, apiAs, befriend, expectNoUuid, pageAs, sharedAccounts, unique, useLocale } from "./helpers";
 
 // Events (roadmap 1.13, 1.14): create, invite, RSVP, capacity full, cancel.
 // Arabic (RTL) is the default locale; the last test runs the list in English.
@@ -105,7 +105,7 @@ test("the events list in English, with a hosted event under Hosting", async ({ b
   expect(created.status(), await created.text()).toBe(201);
 
   const page = await pageAs(browser, a);
-  await page.addInitScript(() => localStorage.setItem("tara.locale", "en"));
+  await useLocale(page, "en");
   await page.goto("/events");
   await expect(page.locator("html")).toHaveAttribute("dir", "ltr");
   const tabs = page.getByRole("tablist", { name: "Events" });

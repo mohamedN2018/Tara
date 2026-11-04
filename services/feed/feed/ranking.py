@@ -39,7 +39,7 @@ from django.db.models import Count, Q
 from django.utils.dateparse import parse_datetime
 
 from . import feedback, readmodels
-from .models import Affinity, FeedItem, PostHide, PostStats, RelationshipFlag
+from .models import Affinity, FeedItem, PostHide, PostState, PostStats, RelationshipFlag
 
 logger = logging.getLogger("tara.feed.ranking")
 
@@ -64,9 +64,11 @@ class InvalidCursor(Exception):
 
 
 def visible_items(viewer_id):
-    """The viewer's feed rows minus what they hid, snoozed or muted. Every mode starts here."""
+    """The viewer's feed rows minus what they hid, snoozed or muted, and posts of
+    deactivated accounts. Every mode starts here."""
     return (
         FeedItem.objects.filter(recipient_id=viewer_id)
+        .exclude(post_id__in=PostState.objects.filter(hidden=True).values("post_id"))
         .exclude(post_id__in=feedback.hidden_post_ids(viewer_id))
         .exclude(author_id__in=feedback.snoozed_author_ids(viewer_id))
         .exclude(author_id__in=readmodels.flagged_ids(viewer_id, RelationshipFlag.Kind.MUTE))

@@ -6,14 +6,17 @@ import {
   Home,
   type LucideIcon,
   Megaphone,
+  Newspaper,
   MessageCircle,
   Search,
   Settings,
   Shield,
   ShoppingBag,
+  Sparkles,
   UserCheck,
   Users,
   UsersRound,
+  Video,
 } from "lucide-vue-next";
 
 export interface NavItem {
@@ -44,7 +47,10 @@ export const navItems: NavItem[] = [
   { name: "friends", route: "/friends", labelKey: "nav.friends", icon: Users, tone: PURPLE },
   { name: "saved", route: "/saved", labelKey: "nav.saved", icon: Bookmark, tone: PINK },
   { name: "groups", route: "/groups", labelKey: "nav.groups", icon: UsersRound, tone: VIOLET },
+  { name: "videos", route: "/videos", labelKey: "menu.items.videos", icon: Video, tone: PINK },
   { name: "marketplace", route: "/marketplace", labelKey: "nav.marketplace", icon: ShoppingBag, tone: PURPLE },
+  // Feeds: Home sorted For you / Latest / Favorites / Following, plus feed preferences.
+  { name: "feeds", route: "/home?mode=for_you", labelKey: "postsFeed.feeds.nav", icon: Newspaper, tone: VIOLET },
   { name: "home", route: "/home", labelKey: "nav.home", icon: Home, tone: LAVENDER },
   { name: "events", route: "/events", labelKey: "nav.events", icon: CalendarDays, tone: PINK },
   { name: "pages", route: "/pages", labelKey: "nav.pages", icon: Flag, tone: VIOLET },
@@ -53,6 +59,7 @@ export const navItems: NavItem[] = [
   { name: "search", route: "/search", labelKey: "nav.explore", icon: Search, tone: LAVENDER },
   { name: "connections", route: "/connections", labelKey: "nav.connections", icon: UserCheck, tone: VIOLET },
   { name: "ads", route: "/ads", labelKey: "nav.ads", icon: Megaphone, tone: PINK },
+  { name: "studio", route: "/studio", labelKey: "menu.items.creatorStudio", icon: Sparkles, tone: VIOLET },
   { name: "settings", route: "/settings", labelKey: "nav.settings", icon: Settings, tone: LAVENDER },
   { name: "admin", route: "/admin", labelKey: "nav.admin", icon: Shield, tone: PURPLE, staff: true },
 ];
@@ -60,6 +67,27 @@ export const navItems: NavItem[] = [
 /** The items this viewer may see, in order. */
 export function visibleNavItems(items: readonly NavItem[], viewer: { isStaff: boolean }): NavItem[] {
   return items.filter((item) => !item.staff || viewer.isStaff);
+}
+
+/**
+ * The one item to highlight for the current location. Items that share a path
+ * (Home and Feeds are both /home) are told apart by query: an item whose route
+ * carries a query (`?mode=`) wins when those keys are present, the plain item
+ * otherwise, so two entries never light up together.
+ */
+export function activeNavName(
+  items: readonly NavItem[],
+  path: string,
+  query: Record<string, unknown>,
+): string | null {
+  const split = (r: string) => {
+    const [p, q = ""] = r.split("?");
+    return { p, keys: [...new URLSearchParams(q).keys()] };
+  };
+  const same = items.map((item) => ({ item, ...split(item.route) })).filter((x) => x.p === path);
+  const withQuery = same.find((x) => x.keys.length && x.keys.every((k) => query[k] !== undefined && query[k] !== null));
+  if (withQuery) return withQuery.item.name;
+  return same.find((x) => !x.keys.length)?.item.name ?? null;
 }
 
 /** How many items show before "See more". */

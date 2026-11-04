@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 
 import AuthLayout from "@/components/brand/AuthLayout.vue";
+import ResendVerification from "@/components/auth/ResendVerification.vue";
 import { markProfileToComplete } from "@/lib/completeProfile";
 import { identityService } from "@/services/identity";
 
@@ -43,6 +44,7 @@ onMounted(async () => {
       <div v-else class="flex flex-col items-center gap-2 py-4">
         <XCircle class="h-10 w-10 text-red-500" />
         <p class="text-sm text-red-600" role="alert">{{ t("auth.verifyFailed") }}</p>
+        <ResendVerification class="mt-2 w-full text-start" />
       </div>
 
       <RouterLink to="/login" class="btn-gradient mt-2 w-full py-3 text-base">{{ t("auth.loginCta") }}</RouterLink>

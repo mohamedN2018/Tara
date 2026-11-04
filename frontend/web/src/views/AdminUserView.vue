@@ -4,10 +4,9 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 
-import AdminNav from "@/components/admin/AdminNav.vue";
+import AdminLayout from "@/components/admin/AdminLayout.vue";
 import ConfirmDialog from "@/components/admin/ConfirmDialog.vue";
 import { useAdminLabels } from "@/components/admin/labels";
-import AppShell from "@/components/layout/AppShell.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
@@ -214,9 +213,7 @@ onMounted(load);
 </script>
 
 <template>
-  <AppShell>
-    <h1 class="mb-4 text-xl font-bold">{{ t("nav.admin") }}</h1>
-    <AdminNav />
+  <AdminLayout :title="t('admin.sections.users')">
 
     <RouterLink to="/admin/users" class="btn-ghost mb-3 inline-flex items-center gap-1.5 text-sm">
       <ArrowLeft class="h-4 w-4 rtl:rotate-180" aria-hidden="true" /> {{ t("admin.users.back") }}
@@ -481,5 +478,5 @@ onMounted(load);
         @cancel="dialog = null"
       />
     </template>
-  </AppShell>
+  </AdminLayout>
 </template>

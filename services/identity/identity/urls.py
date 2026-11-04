@@ -2,7 +2,7 @@
 
 from django.urls import path
 
-from . import security_views, views
+from . import security_views, settings_views, views
 
 app_name = "identity"
 
@@ -48,5 +48,35 @@ urlpatterns = [
         "me/phone/telegram/",
         security_views.TelegramPhoneStartView.as_view(),
         name="me-phone-telegram",
+    ),
+    # Settings centre (plan 08 wave 3C)
+    path("me/2fa/", settings_views.TwoFactorView.as_view(), name="me-2fa"),
+    path("me/2fa/setup/", settings_views.TwoFactorSetupView.as_view(), name="me-2fa-setup"),
+    path("me/2fa/confirm/", settings_views.TwoFactorConfirmView.as_view(), name="me-2fa-confirm"),
+    path("me/2fa/disable/", settings_views.TwoFactorDisableView.as_view(), name="me-2fa-disable"),
+    path(
+        "me/2fa/recovery-codes/",
+        settings_views.RecoveryCodesView.as_view(),
+        name="me-2fa-recovery-codes",
+    ),
+    path(
+        "me/security/activity/",
+        settings_views.SecurityActivityView.as_view(),
+        name="me-security-activity",
+    ),
+    path("me/devices/", settings_views.DeviceListView.as_view(), name="me-devices"),
+    path(
+        "me/devices/<uuid:device_id>/",
+        settings_views.DeviceDetailView.as_view(),
+        name="me-device",
+    ),
+    path("me/deactivate/", settings_views.DeactivateView.as_view(), name="me-deactivate"),
+    path("me/delete/", settings_views.DeleteAccountView.as_view(), name="me-delete"),
+    # What the caller may see of someone's birthday and gender. Under /me/ so
+    # the edge's identity route covers it.
+    path(
+        "me/people/<uuid:account_id>/personal/",
+        settings_views.PersonalDetailsView.as_view(),
+        name="personal-details",
     ),
 ]

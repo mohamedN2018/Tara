@@ -8,7 +8,15 @@ from .models import Appeal, ModerationAction, ModerationCase, Report
 class ReportSerializer(serializers.ModelSerializer):
     class Meta:
         model = Report
-        fields = ["id", "reporter_id", "target_type", "target_id", "reason", "created_at"]
+        fields = [
+            "id",
+            "reporter_id",
+            "target_type",
+            "target_id",
+            "reason",
+            "evidence",
+            "created_at",
+        ]
 
 
 class CaseSerializer(serializers.ModelSerializer):
@@ -65,3 +73,55 @@ class AppealCreateSerializer(serializers.Serializer):
 
 class AppealResolveSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=[Appeal.Status.UPHELD, Appeal.Status.OVERTURNED])
+
+
+class MyCaseSerializer(serializers.ModelSerializer):
+    """A decision about the member's own content or account (``account_status.my_cases``).
+
+    ``reason`` is what the moderator chose to share with the owner. Never the
+    reporters, the report count, the assignee or the moderator.
+    """
+
+    decision = serializers.CharField(read_only=True)
+    reason = serializers.CharField(source="decision_reason", read_only=True)
+    decided_at = serializers.DateTimeField(read_only=True)
+    appeal_status = serializers.CharField(read_only=True, allow_null=True)
+    appealed_at = serializers.DateTimeField(read_only=True, allow_null=True)
+    can_appeal = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ModerationCase
+        fields = [
+            "id",
+            "target_type",
+            "target_id",
+            "decision",
+            "reason",
+            "decided_at",
+            "appeal_status",
+            "appealed_at",
+            "can_appeal",
+        ]
+
+    def get_can_appeal(self, obj) -> bool:
+        return obj.appeal_status is None
+
+
+class MyReportSerializer(serializers.ModelSerializer):
+    """One report the member filed, with the coarse state of the case it joined."""
+
+    state = serializers.SerializerMethodField()
+    outcome = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Report
+        fields = ["id", "target_type", "target_id", "reason", "created_at", "state", "outcome"]
+
+    def _status(self, obj) -> tuple:
+        return self.context.get("outcomes", {}).get(obj.id, ("open", None))
+
+    def get_state(self, obj) -> str:
+        return self._status(obj)[0]
+
+    def get_outcome(self, obj) -> str | None:
+        return self._status(obj)[1]

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/story.reported.v1.json",
+  "title": "story.reported v1 payload",
+  "description": "An account reported a story it can see; once per reporter per story. reason is an enum, owner_id the author.",
+  "type": "object",
+  "properties": {
+    "story_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reporter": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "spam",
+        "scam",
+        "hate",
+        "violence",
+        "nudity",
+        "harassment",
+        "false_information",
+        "other"
+      ]
+    },
+    "owner_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "story_id",
+    "reporter",
+    "reason",
+    "owner_id"
+  ],
+  "additionalProperties": false
+}

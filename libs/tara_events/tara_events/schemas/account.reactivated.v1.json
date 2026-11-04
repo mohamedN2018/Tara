@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/account.reactivated.v1.json",
+  "title": "account.reactivated v1 payload",
+  "description": "A deactivated account signed in again with valid credentials (and its second factor), which reactivated it (plan 08 3C). subject_id and actor_id are the account.",
+  "type": "object",
+  "properties": {
+    "account_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "account_id"
+  ],
+  "additionalProperties": false
+}

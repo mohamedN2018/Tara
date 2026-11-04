@@ -8,6 +8,9 @@
 //   shown again. `notification.read` / `notification.deleted` frames are handled
 //   too, for when the realtime bridge forwards those events (follow-up).
 // * The unread badge always comes from the server, never from loaded rows.
+// * Filters (the page's Unread and category chips) are answered by the server
+//   (`unread=1`, `category=`) into a second list, so the dropdown keeps the
+//   unfiltered one; reads, dismissals and resolutions apply to both.
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
 
@@ -26,6 +29,18 @@ type SyncMessage =
   | { type: "upsert"; item: Notification };
 
 const sortKey = (n: Notification) => n.last_event_at ?? n.created_at;
+
+export interface NotificationFilter {
+  unread: boolean;
+  category: string;
+}
+
+/** Whether a row belongs in a filtered list. */
+export function matchesFilter(n: Notification, f: NotificationFilter): boolean {
+  if (f.unread && n.read_at) return false;
+  if (f.category && n.category !== f.category) return false;
+  return true;
+}
 
 const isIdList = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
 
@@ -61,6 +76,17 @@ export const useNotificationStore = defineStore("notifications", () => {
   const quietHours = ref<QuietHours>({});
   const busy = ref<Record<string, boolean>>({});
 
+  // The filtered list (only while a filter is on).
+  const filter = ref<NotificationFilter>({ unread: false, category: "" });
+  const filtered = ref<Notification[]>([]);
+  const filteredCursor = ref<string | null>(null);
+  const filteredHasMore = ref(false);
+  const filteredLoading = ref(false);
+  const filteredError = ref(false);
+  const filteredLoadingMore = ref(false);
+  let filterGeneration = 0;
+  const filtering = computed(() => filter.value.unread || !!filter.value.category);
+
   let bound = false;
   // Bumped by load(): a loadMore() or head refresh started before it is stale.
   let listGeneration = 0;
@@ -88,12 +114,26 @@ export const useNotificationStore = defineStore("notifications", () => {
     }, COUNT_DEBOUNCE_MS);
   }
 
-  function upsert(item: Notification) {
-    const rest = items.value.filter((n) => n.id !== item.id);
+  function placed(list: Notification[], item: Notification): Notification[] {
+    const rest = list.filter((n) => n.id !== item.id);
     const key = sortKey(item);
     const at = rest.findIndex((n) => sortKey(n) < key);
     rest.splice(at === -1 ? rest.length : at, 0, item);
-    items.value = rest;
+    return rest;
+  }
+
+  function upsert(item: Notification) {
+    items.value = placed(items.value, item);
+    if (!filtering.value) return;
+    // A row already shown stays (marking it read must not make it jump away);
+    // a new one joins only when it matches.
+    if (filtered.value.some((n) => n.id === item.id) || matchesFilter(item, filter.value)) {
+      filtered.value = placed(filtered.value, item);
+    }
+  }
+
+  function find(id: string): Notification | undefined {
+    return items.value.find((n) => n.id === id) ?? filtered.value.find((n) => n.id === id);
   }
 
   function post(message: SyncMessage) {
@@ -106,12 +146,73 @@ export const useNotificationStore = defineStore("notifications", () => {
 
   function applyRead(ids: string[], at: string) {
     const set = new Set(ids);
-    items.value = items.value.map((n) => (set.has(n.id) && !n.read_at ? { ...n, read_at: at } : n));
+    const mark = (n: Notification) => (set.has(n.id) && !n.read_at ? { ...n, read_at: at } : n);
+    items.value = items.value.map(mark);
+    filtered.value = filtered.value.map(mark);
+  }
+
+  function applyUnread(id: string) {
+    const unmark = (n: Notification) => (n.id === id ? { ...n, read_at: null } : n);
+    items.value = items.value.map(unmark);
+    filtered.value = filtered.value.map(unmark);
   }
 
   function applyDeleted(ids: string[]) {
     const set = new Set(ids);
     items.value = items.value.filter((n) => !set.has(n.id));
+    filtered.value = filtered.value.filter((n) => !set.has(n.id));
+  }
+
+  /** Switch the page's filter; the server answers it (later pages included). */
+  async function setFilter(next: NotificationFilter) {
+    filter.value = { ...next };
+    if (!filtering.value) {
+      ++filterGeneration;
+      filtered.value = [];
+      filteredCursor.value = null;
+      filteredHasMore.value = false;
+      filteredError.value = false;
+      filteredLoading.value = false;
+      return;
+    }
+    await loadFiltered();
+  }
+
+  async function loadFiltered() {
+    const generation = ++filterGeneration;
+    filteredLoading.value = true;
+    filteredError.value = false;
+    try {
+      const page = await notificationService.list({ unread: filter.value.unread, category: filter.value.category });
+      if (generation !== filterGeneration) return;
+      filtered.value = page.data;
+      filteredCursor.value = page.page.next_cursor;
+      filteredHasMore.value = page.page.has_more;
+    } catch {
+      if (generation === filterGeneration) filteredError.value = true;
+    } finally {
+      if (generation === filterGeneration) filteredLoading.value = false;
+    }
+  }
+
+  async function loadMoreFiltered() {
+    if (!filteredCursor.value || filteredLoadingMore.value) return;
+    const generation = filterGeneration;
+    filteredLoadingMore.value = true;
+    try {
+      const page = await notificationService.list({
+        cursor: filteredCursor.value,
+        unread: filter.value.unread,
+        category: filter.value.category,
+      });
+      if (generation !== filterGeneration) return;
+      const known = new Set(filtered.value.map((n) => n.id));
+      filtered.value = [...filtered.value, ...page.data.filter((n) => !known.has(n.id))];
+      filteredCursor.value = page.page.next_cursor;
+      filteredHasMore.value = page.page.has_more;
+    } finally {
+      filteredLoadingMore.value = false;
+    }
   }
 
   async function load() {
@@ -194,7 +295,7 @@ export const useNotificationStore = defineStore("notifications", () => {
   }
 
   async function markRead(id: string) {
-    const item = items.value.find((n) => n.id === id);
+    const item = find(id);
     if (!item || item.read_at) return;
     const at = new Date().toISOString();
     applyRead([id], at);
@@ -203,7 +304,7 @@ export const useNotificationStore = defineStore("notifications", () => {
       await notificationService.markRead(id);
       post({ type: "read", ids: [id], at });
     } catch (e) {
-      items.value = items.value.map((n) => (n.id === id ? { ...n, read_at: null } : n));
+      applyUnread(id);
       unread.value += 1;
       throw e;
     }
@@ -212,23 +313,25 @@ export const useNotificationStore = defineStore("notifications", () => {
   async function markAllRead() {
     const at = new Date().toISOString();
     const previous = items.value;
+    const previousFiltered = filtered.value;
     const previousCount = unread.value;
     items.value = items.value.map((n) => (n.read_at ? n : { ...n, read_at: at }));
+    filtered.value = filtered.value.map((n) => (n.read_at ? n : { ...n, read_at: at }));
     unread.value = 0;
     try {
       await notificationService.markAllRead();
       post({ type: "read-all", at });
     } catch (e) {
       items.value = previous;
+      filtered.value = previousFiltered;
       unread.value = previousCount;
       throw e;
     }
   }
 
   async function remove(id: string) {
-    const index = items.value.findIndex((n) => n.id === id);
-    if (index === -1) return;
-    const item = items.value[index];
+    const item = find(id);
+    if (!item) return;
     applyDeleted([id]);
     if (!item.read_at) unread.value = Math.max(0, unread.value - 1);
     try {
@@ -243,7 +346,7 @@ export const useNotificationStore = defineStore("notifications", () => {
 
   /** Store an inline action's outcome on the server (the row also becomes read). */
   async function resolve(id: string, resolution: string) {
-    const was = items.value.find((n) => n.id === id);
+    const was = find(id);
     const item = await notificationService.resolve(id, resolution);
     upsert(item);
     if (was && !was.read_at) unread.value = Math.max(0, unread.value - 1);
@@ -267,6 +370,7 @@ export const useNotificationStore = defineStore("notifications", () => {
       applyRead(message.ids, message.at);
     } else if (message.type === "read-all") {
       items.value = items.value.map((n) => (n.read_at ? n : { ...n, read_at: message.at }));
+      filtered.value = filtered.value.map((n) => (n.read_at ? n : { ...n, read_at: message.at }));
     } else if (message.type === "deleted") {
       applyDeleted(message.ids);
     } else if (message.type === "upsert") {
@@ -347,6 +451,16 @@ export const useNotificationStore = defineStore("notifications", () => {
     quietHours,
     busy,
     hasUnreadLoaded,
+    filter,
+    filtering,
+    filtered,
+    filteredHasMore,
+    filteredLoading,
+    filteredError,
+    filteredLoadingMore,
+    setFilter,
+    loadFiltered,
+    loadMoreFiltered,
     refresh,
     load,
     ensureLoaded,

@@ -6,10 +6,12 @@ import { releasePush, resumePush } from "@/lib/pwa";
 import { browserSessionEnded, forgetSignIn, rememberSignIn } from "@/lib/rememberMe";
 import { capabilitiesFromClaims, opensConsole } from "@/lib/capabilities";
 import { jwtClaims, tokenStore } from "@/lib/tokens";
+import { clearBlockedCards } from "@/lib/blockedCards";
 import { realtime } from "@/lib/ws";
 import { identityService } from "@/services/identity";
 import { useCallStore } from "@/stores/calls";
 import { useDirectoryStore } from "@/stores/directory";
+import { useUiStore } from "@/stores/ui";
 import type { Account, Profile, Tokens } from "@/types";
 
 // register returns the new account in "pending" state (email verification
@@ -78,6 +80,7 @@ export const useAuthStore = defineStore("auth", () => {
   /** Forget the previous account's cached names, recent searches and comparisons. */
   function clearAccountData(nextOwner: string | null = null) {
     useDirectoryStore().clear();
+    clearBlockedCards();
     try {
       ACCOUNT_KEYS.forEach((key) => localStorage.removeItem(key));
       if (nextOwner) localStorage.setItem(DATA_OWNER_KEY, nextOwner);
@@ -95,9 +98,15 @@ export const useAuthStore = defineStore("auth", () => {
 
   // login returns the tokens directly (flat). The account is fetched from /me/.
   // `identifier` is an email or a username (5.6). Unticked `remember`: the
-  // session ends when the browser closes (lib/rememberMe.ts).
-  async function login(identifier: string, password: string, remember = true) {
-    const { data } = await api.post<{ data: Tokens }>("/auth/login/", { identifier, password, remember });
+  // session ends when the browser closes (lib/rememberMe.ts). `otp` is the
+  // second factor, sent on the retry after a `two_factor_required` answer.
+  async function login(identifier: string, password: string, remember = true, otp = "") {
+    const { data } = await api.post<{ data: Tokens }>("/auth/login/", {
+      identifier,
+      password,
+      remember,
+      ...(otp ? { otp } : {}),
+    });
     applyTokens(data.data);
     rememberSignIn(remember);
     await loadAccount();
@@ -106,8 +115,8 @@ export const useAuthStore = defineStore("auth", () => {
   }
 
   /** Sign in (or sign up) with a Google ID token. Returns true for a new account. */
-  async function loginWithGoogle(credential: string, language: string): Promise<boolean> {
-    const result = await identityService.googleSignIn(credential, language);
+  async function loginWithGoogle(credential: string, language: string, otp = ""): Promise<boolean> {
+    const result = await identityService.googleSignIn(credential, language, otp);
     applyTokens(result);
     rememberSignIn(true);
     await loadAccount();
@@ -120,6 +129,8 @@ export const useAuthStore = defineStore("auth", () => {
     const { data } = await api.get<{ data: Account }>("/me/");
     account.value = data.data;
     if (storedOwner() !== data.data.id) clearAccountData(data.data.id);
+    // Language and theme follow the account across devices (settings centre).
+    useUiStore().applyAccount(data.data);
     // Login and boot: drop another account's push subscription, re-bind ours.
     void resumePush(data.data.id);
   }
@@ -175,6 +186,7 @@ export const useAuthStore = defineStore("auth", () => {
         if (isAuthFailure(e)) {
           tokenStore.clear();
           clearAccountData();
+          useUiStore().applyAccount(null);
           void releasePush(); // the session expired while the app was closed
         } else sessionUnavailable.value = true;
       }
@@ -207,6 +219,8 @@ export const useAuthStore = defineStore("auth", () => {
     forgetSignIn();
     realtime.close();
     clearAccountData();
+    // Signed out: theme and language clicks stay in this browser (no PATCH /me/).
+    useUiStore().applyAccount(null);
     window.location.assign("/login");
   }
 

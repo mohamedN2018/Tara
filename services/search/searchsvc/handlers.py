@@ -7,11 +7,15 @@ everything else through ``DocState`` (indexing.py).
 
 from __future__ import annotations
 
+from django.db import transaction
+from django.db.models import Q
+from django.utils import timezone
+
 from tara_events import on_event
 from tara_events.envelope import EventEnvelope
 
-from . import clients, indexing, posts
-from .models import BlockedPair
+from . import backend, clients, indexing, posts
+from .models import BlockedPair, DocState, RecentSearch, SearchDocument
 
 # ---- people and pages (profile service) -----------------------------------------
 
@@ -25,6 +29,7 @@ def on_profile_updated(e: EventEnvelope) -> None:
 @on_event("page.created")
 def on_page_created(e: EventEnvelope) -> None:
     indexing.apply("page", e.subject_id, indexing.occurred(e), indexing.page_doc(e.payload))
+    posts.sync_page_posts(e.subject_id)
 
 
 @on_event("page.updated")
@@ -32,6 +37,8 @@ def on_page_updated(e: EventEnvelope) -> None:
     # Carries the page's full searchable state (name, category, status, owner),
     # so a draft or suspended page leaves search and the owner is never cleared.
     indexing.apply("page", e.subject_id, indexing.occurred(e), indexing.page_doc(e.payload))
+    # Its posts follow: parked while it is hidden, back when it is published.
+    posts.sync_page_posts(e.subject_id)
 
 
 # ---- groups (profile `groups` app) ------------------------------------------------
@@ -74,6 +81,13 @@ def on_post_deleted(e: EventEnvelope) -> None:
 
 @on_event("post.updated")
 def on_post_updated(e: EventEnvelope) -> None:
+    posts.apply_post_event(e)
+
+
+@on_event("post.hidden")  # the author's account was deactivated
+def on_post_hidden(e: EventEnvelope) -> None:
+    """Out of the index, without a tombstone: the payload has no audience, so it
+    reads as not public. Reactivation's newer ``post.updated`` indexes it again."""
     posts.apply_post_event(e)
 
 
@@ -164,3 +178,82 @@ def on_user_blocked(e: EventEnvelope) -> None:
 def on_user_unblocked(e: EventEnvelope) -> None:
     p = e.payload
     BlockedPair.objects.filter(blocker_id=p["blocker_id"], blocked_id=p["blocked_id"]).delete()
+
+
+# ---- account lifecycle (identity, plan 08 3C) ------------------------------------------
+# Deactivation (and a deletion's 30-day grace) parks the person's own documents
+# (their person card, their listings, the events they host) under ``~<type>``:
+# every query names the real types, so a parked document is never found, and
+# reactivation puts it back unchanged. Posts are not parked here: post emits
+# ``post.deleted`` / ``post.updated`` for each one it hides and restores. Pages
+# and groups are shared with other admins and stay.
+PARKED = "~"
+PARKABLE = ("listing", "gathering")
+
+
+def _account(e: EventEnvelope) -> str:
+    return str(e.payload.get("account_id") or e.subject_id)
+
+
+def _own(account_id: str, prefix: str = "") -> Q:
+    return Q(doc_type=f"{prefix}user", doc_id=account_id) | Q(
+        owner_id=account_id, doc_type__in=[prefix + t for t in PARKABLE]
+    )
+
+
+@on_event("account.deactivated")
+def on_account_deactivated(e: EventEnvelope) -> None:
+    account_id = _account(e)
+    with transaction.atomic():
+        for doc in SearchDocument.objects.select_for_update().filter(_own(account_id)):
+            kind, doc_id = doc.doc_type, doc.doc_id
+            SearchDocument.objects.filter(doc_type=PARKED + kind, doc_id=doc_id).delete()
+            SearchDocument.objects.filter(pk=doc.pk).update(doc_type=PARKED + kind)
+            if backend.opensearch_enabled():
+                transaction.on_commit(lambda k=kind, i=doc_id: backend._os_delete(k, i))  # noqa: SLF001
+
+
+@on_event("account.reactivated")
+def on_account_reactivated(e: EventEnvelope) -> None:
+    account_id = _account(e)
+    with transaction.atomic():
+        for doc in SearchDocument.objects.select_for_update().filter(_own(account_id, PARKED)):
+            kind = doc.doc_type[len(PARKED) :]
+            state = DocState.objects.filter(doc_type=kind, doc_id=doc.doc_id).first()
+            newer = SearchDocument.objects.filter(doc_type=kind, doc_id=doc.doc_id).exists()
+            if newer or (state is not None and not state.live):
+                # Indexed again, or removed at its source, while parked: that wins.
+                doc.delete()
+                continue
+            SearchDocument.objects.filter(pk=doc.pk).update(doc_type=kind)
+            if backend.opensearch_enabled():
+                transaction.on_commit(
+                    lambda d=doc, k=kind: backend._os_index(  # noqa: SLF001
+                        k, d.doc_id, d.title, d.body, d.owner_id, d.extra
+                    )
+                )
+
+
+@on_event("account.deleted")
+def on_account_deleted(e: EventEnvelope) -> None:
+    """Erase the person from search, idempotently: their person card (with a
+    tombstone, so a late ``profile.updated`` cannot bring it back), every
+    document they own of any type but pages and groups, parked or not, their
+    recent searches, others' recent searches that opened them, and block rows.
+    Their posts and hashtags leave through post's own ``post.deleted`` events.
+    """
+    account_id = _account(e)
+    with transaction.atomic():
+        indexing.apply("user", account_id, timezone.now(), None)
+        owned = SearchDocument.objects.filter(
+            Q(doc_type__in=["user", PARKED + "user"], doc_id=account_id) | Q(owner_id=account_id)
+        ).exclude(doc_type__in=["page", "group"])
+        for doc in owned:
+            if doc.doc_type.startswith(PARKED):
+                doc.delete()
+            else:
+                backend.delete_document(doc.doc_type, doc.doc_id)
+        RecentSearch.objects.filter(
+            Q(account_id=account_id) | Q(doc_type="user", doc_id=account_id)
+        ).delete()
+        BlockedPair.objects.filter(Q(blocker_id=account_id) | Q(blocked_id=account_id)).delete()

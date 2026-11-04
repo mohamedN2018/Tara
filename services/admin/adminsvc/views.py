@@ -27,7 +27,7 @@ from tara_common.permissions import HasCapability
 from tara_common.responses import data_response
 from tara_common.throttling import ReadThrottle, WriteThrottle
 
-from . import audit, identity_client, services, users
+from . import audit, identity_client, notices, services, users
 from .models import FeatureFlag
 from .serializers import (
     AuditEntrySerializer,
@@ -38,6 +38,8 @@ from .serializers import (
     ReasonSerializer,
     RoleSerializer,
     SuspendSerializer,
+    SystemNoticeSerializer,
+    SystemNoticeWriteSerializer,
     UserSearchSerializer,
 )
 
@@ -398,3 +400,31 @@ class UserResendVerificationView(APIView):
     @extend_schema(responses={202: None}, tags=["admin"])
     def post(self, request: Request, account_id) -> Response:
         return data_response(users.resend_verification(str(account_id), _me(request)), status=202)
+
+
+# ---- administrative notices (system.notice) -----------------------------------
+
+
+@_non_atomic
+class SystemNoticesView(APIView):
+    """Send a notice to some accounts, and list what was sent (``admin.notices.send``)."""
+
+    permission_classes = [HasCapability("admin.notices.send")]
+
+    @extend_schema(responses={200: SystemNoticeSerializer(many=True)}, tags=["admin"])
+    def get(self, request: Request) -> Response:
+        paginator = CursorPagination()
+        page = paginator.paginate_queryset(notices.sent(), request)
+        return paginator.get_paginated_response(SystemNoticeSerializer(page, many=True).data)
+
+    @extend_schema(
+        request=SystemNoticeWriteSerializer, responses={201: SystemNoticeSerializer}, tags=["admin"]
+    )
+    def post(self, request: Request) -> Response:
+        serializer = SystemNoticeWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        v = serializer.validated_data
+        notice = notices.send(
+            actor_id=_me(request), recipient_ids=v["recipient_ids"], body=v["body"]
+        )
+        return data_response(SystemNoticeSerializer(notice).data, status=201)

@@ -54,6 +54,7 @@ class MyProfileSerializer(serializers.ModelSerializer):
             "avatar_media_id",
             "cover_media_id",
             "visibility",
+            "searchable",
             "completion_pct",
             "links",
             "education",
@@ -90,6 +91,7 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             "avatar_media_id",
             "cover_media_id",
             "visibility",
+            "searchable",
         ]
 
 
@@ -160,6 +162,9 @@ class PageUpdateSerializer(serializers.Serializer):
     )
     contact = ContactField(required=False)
     location = serializers.CharField(max_length=160, required=False, allow_blank=True)
+    # The editor's own image uploads (checked with media); null clears them.
+    avatar_media_id = serializers.UUIDField(required=False, allow_null=True)
+    cover_media_id = serializers.UUIDField(required=False, allow_null=True)
     # `suspended` belongs to moderation, so it can be neither set nor lifted here.
     status = serializers.ChoiceField(
         choices=[Page.Status.DRAFT, Page.Status.PUBLISHED], required=False
@@ -175,12 +180,18 @@ class PageCreateSerializer(serializers.Serializer):
     )
     contact = ContactField(required=False)
     location = serializers.CharField(max_length=160, required=False, allow_blank=True)
+    avatar_media_id = serializers.UUIDField(required=False, allow_null=True)
+    cover_media_id = serializers.UUIDField(required=False, allow_null=True)
 
 
 class PageSerializer(serializers.ModelSerializer):
-    """Pass ``context={"viewer_id": ...}`` for ``my_role``."""
+    """Pass ``context={"viewer_id": ...}`` for ``my_role``, and
+    ``context={"stats": page_graph.page_stats(...)}`` for the follow state and
+    follower count (``None`` when graph could not answer)."""
 
     my_role = serializers.SerializerMethodField()
+    viewer_following = serializers.SerializerMethodField()
+    followers_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Page
@@ -197,10 +208,23 @@ class PageSerializer(serializers.ModelSerializer):
             "status",
             "owner_account_id",
             "my_role",
+            "viewer_following",
+            "followers_count",
             "created_at",
             "updated_at",
         ]
         read_only_fields = ["id", "owner_account_id", "created_at", "updated_at"]
+
+    def _stats(self, obj: Page) -> dict | None:
+        return (self.context.get("stats") or {}).get(str(obj.id))
+
+    def get_viewer_following(self, obj: Page) -> bool | None:
+        stats = self._stats(obj)
+        return stats["following"] if stats else None
+
+    def get_followers_count(self, obj: Page) -> int | None:
+        stats = self._stats(obj)
+        return stats["followers_count"] if stats else None
 
     def get_my_role(self, obj: Page) -> str | None:
         viewer = str(self.context.get("viewer_id"))

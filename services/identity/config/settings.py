@@ -140,6 +140,11 @@ REST_FRAMEWORK = {
         "auth_register": os.getenv("AUTH_REGISTER_RATE", "10/hour"),
         "auth_login": os.getenv("AUTH_LOGIN_RATE", "20/min"),
         "auth_password": os.getenv("AUTH_PASSWORD_RATE", "5/hour"),
+        # Two-factor setup/confirm/disable, recovery codes, deactivation and
+        # deletion (3C): every one re-checks a password or code itself, so a
+        # mistyped code must not lock the owner out of the password change.
+        # `or`: compose passes an unset variable as "" and "" is not a rate.
+        "account_security": os.getenv("ACCOUNT_SECURITY_RATE") or "30/hour",
         "auth_refresh": "60/min",
         # Per targeted email, however many IPs the attempts come from.
         # `or`: compose passes an unset variable as "" and "" is not a rate.
@@ -213,6 +218,16 @@ IDENTITY_EMIT_AUDIT_EVENTS = env_bool("IDENTITY_EMIT_AUDIT_EVENTS", True)
 # (admin-consumer now, the 8.5 propagation consumers later) ship first.
 IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS = env_bool("IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS", True)
 
+# ---- Settings centre (plan 08 wave 3C) --------------------------------------
+# Key for the TOTP secrets at rest. Empty: derived from IDENTITY_SECRET_KEY
+# (rotating either then needs every 2FA user to sign in with a recovery code).
+TOTP_ENCRYPTION_KEY = os.getenv("IDENTITY_TOTP_ENCRYPTION_KEY", "").strip()
+# When on, staff roles reach the token only after the account turns on 2FA.
+STAFF_REQUIRE_2FA = env_bool("IDENTITY_STAFF_REQUIRE_2FA", False)
+# Birthday/gender shown to friends: graph says who is a friend.
+GRAPH_INTERNAL_URL = os.getenv("GRAPH_INTERNAL_URL", "http://graph:8000")
+GRAPH_CALL_TIMEOUT = float(os.getenv("GRAPH_CALL_TIMEOUT", "2"))
+
 # ---- Events / outbox (ADR-003) ----------------------------------------------
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")
 TARA_EVENT_PUBLISHER = "rabbitmq" if RABBITMQ_URL else "null"
@@ -235,6 +250,11 @@ CELERY_BEAT_SCHEDULE = {
     "lift-expired-suspensions": {
         "task": "identity.lift_expired_suspensions",
         "schedule": float(os.getenv("IDENTITY_SUSPENSION_EXPIRY_SECONDS", "60")),
+    },
+    # Accounts whose 30-day deletion grace has ended are erased (3C).
+    "purge-scheduled-deletions": {
+        "task": "identity.purge_scheduled_deletions",
+        "schedule": 3600.0,
     },
 }
 

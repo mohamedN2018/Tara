@@ -1,6 +1,9 @@
 from django.urls import include, path
 
 from .internal_views import (
+    PageAccessView,
+    PageTeamView,
+    PageVisibilityView,
     ProfilesByAccountView,
     ProfilesByHandleView,
     ProfileSearchView,
@@ -16,5 +19,8 @@ urlpatterns = [
         ProfileSnapshotView.as_view(),
         name="profile-snapshot",
     ),
+    path("pages/visibility/", PageVisibilityView.as_view(), name="page-visibility"),
+    path("pages/<uuid:page_id>/access/", PageAccessView.as_view(), name="page-access"),
+    path("pages/<uuid:page_id>/team/", PageTeamView.as_view(), name="page-team"),
     path("search/", include("profiles.search_urls")),  # search's backfill (1.15)
 ]

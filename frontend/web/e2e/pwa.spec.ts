@@ -134,7 +134,7 @@ test("settings subscribe this browser, and the server delivers to it", async ({ 
       return current as PushSubscription;
     };
   }, endpoint);
-  await page.goto(`${PREVIEW}/settings`);
+  await page.goto(`${PREVIEW}/settings/notifications`);
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.reload();
 

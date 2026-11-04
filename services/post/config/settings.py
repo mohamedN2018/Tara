@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     "django_prometheus",
     "posts",
     "gatherings",
+    "stories",
 ]
 
 MIDDLEWARE = [
@@ -87,6 +88,13 @@ POST_REPORT_RATE = os.getenv("POST_REPORT_RATE", "20/hour")
 POST_EMIT_GROUP_EVENTS = env_bool("POST_EMIT_GROUP_EVENTS", True)
 # post.tagged (2C): two-release rollout; notification's post.tag consumer ships first.
 POST_EMIT_TAG_EVENTS = env_bool("POST_EMIT_TAG_EVENTS", True)
+# story.reacted / story.deleted / story.reported (1.9): two-release rollout; the
+# notification and moderation consumers ship first.
+POST_EMIT_STORY_EVENTS = env_bool("POST_EMIT_STORY_EVENTS", True)
+# post.hidden / post.unhidden (account deactivation, plan 08 3C): two-release
+# rollout; feed's and search's consumers ship first. Off: deactivation emits
+# post.deleted, which feed cannot undo on reactivation.
+POST_EMIT_HIDE_EVENTS = env_bool("POST_EMIT_HIDE_EVENTS", True)
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Tara Post API",

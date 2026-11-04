@@ -61,6 +61,8 @@ class PostCreateSerializer(serializers.Serializer):
     # A draft is kept for its author; ``publish_at`` schedules it instead.
     draft = serializers.BooleanField(required=False, default=False)
     publish_at = serializers.DateTimeField(required=False, allow_null=True, default=None)
+    # Posting as a page the author helps run (owner, admin or editor; profile decides).
+    page_id = serializers.UUIDField(required=False, allow_null=True, default=None)
 
     def validate(self, attrs):
         if attrs.get("poll") and not attrs.get("body", "").strip():
@@ -316,7 +318,17 @@ class SaveSerializer(serializers.Serializer):
 class SavedItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = SavedItem
-        fields = ["id", "item_type", "item_id", "created_at"]
+        fields = ["id", "item_type", "item_id", "collection_id", "created_at"]
+
+
+class SaveIntoSerializer(serializers.Serializer):
+    """Optional body of ``POST /posts/<id>/save/``: the collection to save into."""
+
+    collection_id = serializers.UUIDField(required=False, allow_null=True)
+
+
+class SavedFilterSerializer(serializers.Serializer):
+    collection_id = serializers.UUIDField(required=False)
 
 
 class ReportSerializer(serializers.Serializer):

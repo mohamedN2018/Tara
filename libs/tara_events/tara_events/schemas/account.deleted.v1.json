@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/account.deleted.v1.json",
+  "title": "account.deleted v1 payload",
+  "description": "The account's 30-day deletion grace ended (the owner asked from Settings > Account after re-authenticating, then did not sign in again), so identity erased it: every personal field wiped, credentials, sessions and devices deleted; the row stays as a tombstone with status deleted. Emitted by identity's beat task in the erasure transaction; actor_id is null. Every service erases or anonymises what the account owns, idempotently; the account never comes back.",
+  "type": "object",
+  "properties": {
+    "account_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "account_id"
+  ],
+  "additionalProperties": false
+}

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { Compass, Mail, Newspaper, Plus, Search, UsersRound } from "lucide-vue-next";
+import { Compass, Mail, Newspaper, Plus, Search, Send, Settings2, ShieldCheck, UsersRound } from "lucide-vue-next";
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 
 import GroupCard from "@/components/groups/GroupCard.vue";
+import JoinButton from "@/components/groups/JoinButton.vue";
 import AppShell from "@/components/layout/AppShell.vue";
 import PostCard from "@/components/post/PostCard.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
@@ -14,6 +15,7 @@ import {
   GROUP_CATEGORIES,
   type Group,
   groupPath,
+  type GroupScope,
   groupsService,
   isStaff,
   myGroupsFeed,
@@ -22,14 +24,24 @@ import { useToastStore } from "@/stores/toasts";
 import type { Post } from "@/types";
 
 // /groups: the newest posts of my groups, discovery (suggestions and browse),
-// my groups and my invitations, with a side panel like the reference layout.
-type Tab = "feed" | "discover" | "mine" | "invites";
+// my groups, the groups I manage (each opens its dashboard), my invitations and
+// the join requests I sent, with a side panel like the reference layout.
+type Tab = "feed" | "discover" | "mine" | "manage" | "invites" | "requests";
 const TABS: { id: Tab; icon: typeof Compass; label: string }[] = [
   { id: "feed", icon: Newspaper, label: "groups.tabs.feed" },
   { id: "discover", icon: Compass, label: "groups.tabs.discover" },
   { id: "mine", icon: UsersRound, label: "groups.tabs.mine" },
+  { id: "manage", icon: ShieldCheck, label: "groups.tabs.manage" },
   { id: "invites", icon: Mail, label: "groups.tabs.invites" },
+  { id: "requests", icon: Send, label: "groups.tabs.requests" },
 ];
+const SCOPES: Record<"mine" | "manage" | "invites" | "requests", GroupScope> = {
+  mine: "mine",
+  manage: "managed",
+  invites: "invited",
+  requests: "requested",
+};
+const listScope = (x: Tab): GroupScope => (x === "discover" || x === "feed" ? "discover" : SCOPES[x]);
 
 const { t } = useI18n();
 const route = useRoute();
@@ -83,7 +95,7 @@ async function load() {
       cursor.value = page.page.next_cursor;
       suggestions.value = suggested;
     } else {
-      const page = await groupsService.list(tab.value === "mine" ? "mine" : "invited");
+      const page = await groupsService.list(listScope(tab.value));
       if (run !== generation) return;
       items.value = page.data;
       cursor.value = page.page.next_cursor;
@@ -100,8 +112,7 @@ async function loadMore() {
   loadingMore.value = true;
   const run = generation;
   try {
-    const scope = tab.value === "discover" ? "discover" : tab.value === "mine" ? "mine" : "invited";
-    const page = await groupsService.list(scope, cursor.value, query.value.trim(), category.value);
+    const page = await groupsService.list(listScope(tab.value), cursor.value, query.value.trim(), category.value);
     if (run !== generation) return;
     items.value = [...items.value, ...page.data];
     cursor.value = page.page.next_cursor;
@@ -177,7 +188,7 @@ onMounted(async () => {
             <li v-for="g in mine.slice(0, 12)" :key="g.id">
               <RouterLink :to="groupPath(g)" class="nav-item">
                 <UsersRound class="h-4 w-4 shrink-0 text-brand-600 dark:text-brand-300" aria-hidden="true" />
-                <span class="min-w-0 flex-1 truncate" dir="auto">{{ g.name }}</span>
+                <span class="min-w-0 flex-1 truncate"><bdi>{{ g.name }}</bdi></span>
                 <span v-if="isStaff(g.viewer.role)" class="text-[10px] text-gray-500 dark:text-gray-400">{{ t(`groups.roles.${g.viewer.role}`) }}</span>
               </RouterLink>
             </li>
@@ -217,8 +228,8 @@ onMounted(async () => {
             </template>
           </EmptyState>
           <div v-for="item in feed" :key="item.post.id" class="space-y-1">
-            <RouterLink :to="groupPath(item.group)" class="flex items-center gap-1 px-1 text-sm font-semibold text-brand-700 hover:underline dark:text-brand-300" dir="auto">
-              <UsersRound class="h-4 w-4" aria-hidden="true" /> {{ item.group.name }}
+            <RouterLink :to="groupPath(item.group)" class="flex items-center gap-1 px-1 text-sm font-semibold text-brand-700 hover:underline dark:text-brand-300">
+              <UsersRound class="h-4 w-4" aria-hidden="true" /> <bdi>{{ item.group.name }}</bdi>
             </RouterLink>
             <PostCard
               :post="item.post"
@@ -238,8 +249,18 @@ onMounted(async () => {
           </section>
           <h3 v-if="tab === 'discover'" class="section-title px-1">{{ t("groups.browse") }}</h3>
           <EmptyState v-if="!items.length">{{ t(`groups.empty.${tab}`) }}</EmptyState>
-          <div v-else class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            <GroupCard v-for="g in items" :key="g.id" :group="g" />
+          <div v-else class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" :data-testid="`groups-list-${tab}`">
+            <GroupCard v-for="g in items" :key="g.id" :group="g">
+              <template v-if="tab === 'manage'" #actions>
+                <span class="text-xs font-semibold text-brand-700 dark:text-brand-300">{{ t(`groups.roles.${g.viewer.role}`) }}</span>
+                <RouterLink :to="`${groupPath(g)}/manage`" class="btn-soft ms-auto px-3 py-1.5 text-sm" data-testid="group-manage-link">
+                  <Settings2 class="h-4 w-4" aria-hidden="true" /> {{ t("groups.manage.link") }}
+                </RouterLink>
+              </template>
+              <template v-else-if="tab === 'requests' || tab === 'invites'" #actions>
+                <JoinButton :group="g" @changed="load" />
+              </template>
+            </GroupCard>
           </div>
           <button v-if="cursor" class="btn-ghost mx-auto mt-3 block" :disabled="loadingMore" @click="loadMore">
             {{ loadingMore ? t("states.loading") : t("states.loadMore") }}

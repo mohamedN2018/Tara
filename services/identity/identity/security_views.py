@@ -77,6 +77,7 @@ class GoogleSignInView(APIView):
         meta = _client_meta(request)
         issued, created = account_security.google_sign_in(
             credential=data["credential"],
+            otp=data["otp"],
             language=data["language"],
             theme=data["theme"],
             ip_region=meta["ip_region"],

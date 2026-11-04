@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/post.hidden.v1.json",
+  "title": "post.hidden v1 payload",
+  "description": "A published post left every read path because its author's account was deactivated (plan 08 3C); it is not deleted. Feed keeps its rows but shows them nowhere, search drops it without a tombstone, post restricts its media. Reversed by post.unhidden. Ids and enums only. Behind POST_EMIT_HIDE_EVENTS.",
+  "type": "object",
+  "properties": {
+    "post_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "author_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reason": {
+      "type": "string",
+      "enum": ["account_deactivated"]
+    }
+  },
+  "required": [
+    "post_id",
+    "author_id",
+    "reason"
+  ],
+  "additionalProperties": false
+}

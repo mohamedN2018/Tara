@@ -27,6 +27,7 @@ from tara_common.responses import data_response
 from tara_common.search_export import SearchExportView
 from tara_common.stats import require_internal_token
 
+from . import pages
 from .models import Audience, Post
 from .services import search_fields
 
@@ -79,13 +80,25 @@ class GatheringSearchStateView(APIView):
 
 
 def _public_posts():
-    return Post.objects.filter(
+    posts = Post.objects.filter(
         deleted_at__isnull=True,
         moderation_status=Post.ModerationStatus.OK,
         audience=Audience.PUBLIC,
         group_id__isnull=True,
         state="published",  # never a draft or a scheduled post (2C)
-    ).prefetch_related("hashtags__hashtag", "media")
+    )
+    # A page's posts only while the page is published and live; profile down:
+    # no page posts this round (fail closed).
+    page_ids = set(
+        posts.filter(author_type=pages.AUTHOR_TYPE)
+        .values_list("author_id", flat=True)
+        .distinct()
+        .order_by()
+    )
+    hidden = {str(p) for p in page_ids} - pages.visible_pages(None, page_ids)
+    if hidden:
+        posts = posts.exclude(author_type=pages.AUTHOR_TYPE, author_id__in=hidden)
+    return posts.prefetch_related("hashtags__hashtag", "media")
 
 
 def _post_item(post: Post) -> tuple:

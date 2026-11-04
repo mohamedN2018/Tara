@@ -23,6 +23,8 @@ const BATCH_SIZE = 100;
 const DEBOUNCE_MS = 40;
 const MAX_AGE_MS = 60 * 60 * 1000;
 const FAILURE_COOLDOWN_MS = 5000;
+const MISS_RETRIES = 3;
+const MISS_RETRY_MS = 2000;
 
 function load(): Record<string, Entry> {
   try {
@@ -37,6 +39,7 @@ function load(): Record<string, Entry> {
 export const useDirectoryStore = defineStore("directory", () => {
   const entries = ref<Record<string, Entry>>(load());
   const unavailable = ref<Record<string, true>>({});
+  const misses = new Map<string, number>();
   let saveTimer: number | null = null;
 
   const queued = new Set<string>();
@@ -87,7 +90,19 @@ export const useDirectoryStore = defineStore("directory", () => {
       cards.forEach(rememberCard);
       const found = new Set(cards.map((c) => c.account_id));
       for (const id of ids) {
-        if (found.has(id)) continue;
+        if (found.has(id)) {
+          misses.delete(id);
+          continue;
+        }
+        // A brand-new account's profile is created a moment after sign-up, so
+        // a miss is retried a few times (the label stays "…") before the
+        // neutral "Tara user" label is shown.
+        const count = (misses.get(id) ?? 0) + 1;
+        misses.set(id, count);
+        if (count < MISS_RETRIES) {
+          window.setTimeout(() => request(id), MISS_RETRY_MS * count);
+          continue;
+        }
         unavailable.value[id] = true;
         if (entries.value[id]) delete entries.value[id];
       }
@@ -133,6 +148,12 @@ export const useDirectoryStore = defineStore("directory", () => {
     return nameOf(id) || (unavailable.value[id] ? i18n.global.t("profile.unknownUser") : "…");
   }
 
+  /** True while a name is still being looked up (show a skeleton, not a label). */
+  function pending(id?: string | null): boolean {
+    if (!id) return false;
+    return !nameOf(id) && !unavailable.value[id];
+  }
+
   /** Forget everything (logout): nothing may carry over to the next account. */
   function clear() {
     generation += 1;
@@ -142,6 +163,7 @@ export const useDirectoryStore = defineStore("directory", () => {
     flushTimer = null;
     queued.clear();
     inflight.clear();
+    misses.clear();
     entries.value = {};
     unavailable.value = {};
     try {
@@ -151,5 +173,5 @@ export const useDirectoryStore = defineStore("directory", () => {
     }
   }
 
-  return { entries, remember, nameOf, avatarOf, label, clear };
+  return { entries, remember, nameOf, avatarOf, label, pending, clear };
 });

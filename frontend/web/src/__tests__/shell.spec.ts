@@ -156,7 +156,7 @@ describe("Your shortcuts", () => {
     });
     signIn();
     const el = await mountWithPinia(LeftSidebar);
-    const names = [...el.querySelectorAll('[data-testid="sidebar-shortcuts"] a > span[dir="auto"]')].map((s) => s.textContent?.trim());
+    const names = [...el.querySelectorAll('[data-testid="sidebar-shortcuts"] a bdi')].map((s) => s.textContent?.trim());
     expect(names).toEqual(["Readers"]);
   });
 

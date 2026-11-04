@@ -121,3 +121,41 @@ def test_export_requires_an_internal_token(api_client):
     assert api_client.get(reverse("search-export-people")).status_code == 401
     wrong = _internal(api_client, audience="graph-internal")
     assert wrong.get(reverse("search-export-pages")).status_code == 401
+
+
+# ---- searchable: the discoverability flag (1.6, spec B) -------------------------------
+
+
+def test_searchable_defaults_to_true_and_is_carried_in_profile_updated(auth_client):
+    me = _acct()
+    profile = services.ensure_profile(me)
+    assert profile.searchable is True
+    assert _last("profile.updated")["searchable"] is True
+    client = auth_client(me)
+    assert client.get(reverse("profiles:me")).json()["data"]["searchable"] is True
+
+    resp = client.patch(reverse("profiles:me"), {"searchable": False}, format="json")
+    assert resp.status_code == 200, resp.content
+    assert resp.json()["data"]["searchable"] is False
+    event = _last("profile.updated")
+    assert event["searchable"] is False
+    assert "searchable" in event["changed"]
+
+    client.patch(reverse("profiles:me"), {"searchable": True}, format="json")
+    assert _last("profile.updated")["searchable"] is True
+
+
+def test_searchable_must_be_a_boolean(auth_client):
+    me = _acct()
+    services.ensure_profile(me)
+    resp = auth_client(me).patch(reverse("profiles:me"), {"searchable": "maybe"}, format="json")
+    assert resp.status_code == 400
+
+
+def test_export_leaves_out_unsearchable_people(api_client):
+    shown, hidden = _acct(), _acct()
+    services.ensure_profile(shown)
+    services.update_profile(services.ensure_profile(hidden), {"searchable": False})
+    items = _internal(api_client).get(reverse("search-export-people")).json()["data"]["items"]
+    ids = [i["id"] for i in items]
+    assert shown in ids and hidden not in ids

@@ -141,6 +141,8 @@ test("pages can be created, found, edited, and their team managed", async ({ bro
   await expect(page).toHaveURL(new RegExp(`/pages/cafe_${tag}$`));
   await expect(page.getByTestId("page-name")).toHaveText(`مقهى ${tag}`);
 
+  // The team is its own tab of the page (T3), shown to the page's team only.
+  await page.getByTestId("page-tab-team").click();
   await page.getByRole("textbox", { name: "@المعرّف" }).fill(b.handle);
   await page.getByRole("button", { name: "إضافة", exact: true }).click();
   await expect(page.getByTestId("page-members")).toContainText(b.name);
@@ -151,16 +153,17 @@ test("pages can be created, found, edited, and their team managed", async ({ bro
     .selectOption("analyst");
 
   const other = await pageAs(browser, b);
-  await other.goto("/pages");
-  await other.getByRole("button", { name: "صفحاتي" }).click();
+  await other.goto("/pages?tab=manage");
   await expect(other.getByRole("main").getByText(`مقهى ${tag}`)).toBeVisible();
   await other.getByRole("main").getByText(`مقهى ${tag}`).click();
+  await other.getByTestId("page-tab-team").click();
   await expect(other.getByTestId("page-members")).toContainText("محلل");
   await expect(other.getByRole("textbox", { name: "@المعرّف" })).toHaveCount(0);
 
-  await page.getByRole("button", { name: "تعديل" }).click();
+  await page.getByTestId("page-edit").click();
   await page.getByRole("textbox", { name: "نبذة" }).fill(`عن المقهى ${tag}`);
-  await page.getByRole("button", { name: "حفظ التغييرات" }).click();
+  await page.getByTestId("page-edit-save").click();
+  await page.getByTestId("page-tab-about").click();
   await expect(page.getByText(`عن المقهى ${tag}`)).toBeVisible();
   await expectNoUuid(page);
 });

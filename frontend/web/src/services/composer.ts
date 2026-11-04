@@ -141,6 +141,12 @@ export const composerService = {
     return data;
   },
 
+  /** One of my drafts or scheduled posts (404 for anything else): deep links. */
+  async draft(id: string): Promise<ComposerPost> {
+    const { data } = await api.get<{ data: ComposerPost }>(`/posts/drafts/${id}/`);
+    return data.data;
+  },
+
   async editDraft(id: string, changes: DraftChanges): Promise<ComposerPost> {
     const { data } = await api.patch<{ data: ComposerPost }>(`/posts/drafts/${id}/`, changes);
     return data.data;

@@ -60,6 +60,8 @@ def test_remove_is_sent_to_post_with_the_gathering_target():
             "target_type": "gathering",
             "target_id": gathering,
             "action": "remove",
+            "owner_id": host,
+            "reason": "",  # additive: the note shared with the owner, none here
         }
     ]
 

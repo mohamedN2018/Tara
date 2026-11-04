@@ -56,6 +56,8 @@ export interface ListOptions {
   cursor?: string | null;
   unread?: boolean;
   category?: string;
+  /** One kind, filtered on the server (e.g. "system.notice"). */
+  kind?: string;
 }
 
 function normalisePrefs(raw: Partial<NotificationPreferences> | undefined): NotificationPreferences {
@@ -102,6 +104,7 @@ export const notificationService = {
         cursor: opts.cursor || undefined,
         unread: opts.unread ? "1" : undefined,
         category: opts.category || undefined,
+        kind: opts.kind || undefined,
       },
     });
     return data;

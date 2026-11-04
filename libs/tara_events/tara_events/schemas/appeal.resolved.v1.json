@@ -33,6 +33,11 @@
         "approve",
         null
       ]
+    },
+    "account_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "The appellant (added by T7, optional): notification tells them the outcome."
     }
   },
   "required": [

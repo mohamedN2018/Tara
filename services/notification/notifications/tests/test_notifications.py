@@ -197,6 +197,69 @@ def test_muted_member_gets_no_message_notification():
     assert Notification.objects.filter(recipient_id=listening, kind="message").exists()
 
 
+def test_a_message_to_a_page_notifies_its_team_and_opens_the_page_inbox(client_for):
+    visitor, owner, editor = _acct(), _acct(), _acct()
+    conversation, page = str(uuid.uuid4()), str(uuid.uuid4())
+
+    def deliver(message_id: str, preview: str) -> None:
+        on_message_created(
+            EventEnvelope(
+                event_type="message.created",
+                subject_id=message_id,
+                producer="chat-service",
+                payload={
+                    "conversation_id": conversation,
+                    "message_id": message_id,
+                    "sender": visitor,
+                    "type": "text",
+                    "recipients": [visitor],
+                    "muted": [],
+                    "preview": preview,
+                    "team": {
+                        "kind": "page",
+                        "page_id": page,
+                        "name": "Nile Bakery",
+                        "recipients": [owner, editor, visitor],
+                    },
+                },
+            )
+        )
+
+    deliver(str(uuid.uuid4()), "Do you deliver?")
+    deliver(str(uuid.uuid4()), "To Giza?")
+    assert not Notification.objects.filter(recipient_id=visitor).exists()  # never yourself
+    for member in (owner, editor):
+        row = Notification.objects.get(recipient_id=member)  # one row per thread
+        assert row.kind == "message.page" and row.category == "pages"
+        assert str(row.actor_id) == visitor and row.body == "To Giza?"
+        assert row.data["page_id"] == page and row.data["page_name"] == "Nile Bakery"
+    item = client_for(owner).get(reverse("notifications:list")).json()["data"][0]
+    assert item["url"] == f"/pages/id/{page}/inbox?conversation={conversation}"
+
+
+def test_a_support_thread_and_an_old_event_notify_no_team():
+    sender = _acct()
+    for team in ({"kind": "support", "page_id": None, "name": "", "recipients": []}, None):
+        payload = {
+            "conversation_id": str(uuid.uuid4()),
+            "sender": sender,
+            "recipients": [sender],
+            "muted": [],
+            "preview": "help",
+        }
+        if team is not None:
+            payload["team"] = team
+        on_message_created(
+            EventEnvelope(
+                event_type="message.created",
+                subject_id=str(uuid.uuid4()),
+                producer="chat-service",
+                payload=payload,
+            )
+        )
+    assert not Notification.objects.exists()
+
+
 def test_mention_and_share_notify():
     actor, target = _acct(), _acct()
     post_id = str(uuid.uuid4())

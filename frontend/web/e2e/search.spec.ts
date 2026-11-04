@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { type APIRequestContext, type Page, expect, test } from "@playwright/test";
 
-import { type Account, API, apiAs, expectNoUuid, pageAs, sharedAccounts, unique } from "./helpers";
+import { type Account, API, apiAs, expectNoUuid, pageAs, sharedAccounts, unique, useLocale } from "./helpers";
 
 // Unified search v2 (roadmap 1.15): Arabic normalisation, the top-bar dropdown
 // (keyboard, recent searches), the results page tabs, people actions, axe.
@@ -174,7 +174,7 @@ test("the results page in English is left-to-right with English tabs", async ({ 
   await viewer.dispose();
 
   const page = await pageAs(browser, b);
-  await page.addInitScript(() => localStorage.setItem("tara.locale", "en"));
+  await useLocale(page, "en");
   await page.goto(`/search?q=${encodeURIComponent(`ALEXANDRIA ${marker}`)}&type=posts`);
   await expect(page.locator("html")).toHaveAttribute("dir", "ltr");
   const tabs = page.getByRole("navigation", { name: "Search categories" });
@@ -192,8 +192,9 @@ test("no horizontal overflow on a phone, and search opens from the bar icon", as
   await page.goto("/home");
   await page.getByRole("link", { name: "فتح البحث" }).click();
   await expect(page).toHaveURL(/\/search$/);
-  await page.getByRole("textbox", { name: "بحث" }).fill("تارا");
-  await page.getByRole("textbox", { name: "بحث" }).press("Enter");
+  // The phone's search screen uses the same live field as the top bar (T4).
+  await page.getByTestId("search-mobile-field").getByRole("combobox", { name: "بحث" }).fill("تارا");
+  await page.getByTestId("search-mobile-field").getByRole("combobox", { name: "بحث" }).press("Enter");
   await expect(page).toHaveURL(/q=/);
   await expect(page.getByRole("navigation", { name: "فئات البحث" })).toBeVisible();
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);

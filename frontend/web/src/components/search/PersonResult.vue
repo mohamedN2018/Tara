@@ -22,7 +22,7 @@ const action = computed(() => personAction(rel.value));
 const followable = computed(() => canFollow(rel.value));
 const mutual = computed(() => props.result.mutual_count ?? 0);
 
-async function run(fn: () => Promise<void>, next: Partial<Relationship>) {
+async function run(fn: () => Promise<unknown>, next: Partial<Relationship>) {
   if (busy.value || !rel.value) return;
   busy.value = true;
   try {
@@ -35,7 +35,7 @@ async function run(fn: () => Promise<void>, next: Partial<Relationship>) {
   }
 }
 
-const addFriend = () => run(() => graphService.sendFriendRequest(props.result.id), { state: "pending_out" });
+const addFriend = () => run(async () => void (await graphService.sendFriendRequest(props.result.id)), { state: "pending_out" });
 const confirm = () =>
   run(() => graphService.acceptFriendRequest(rel.value?.request_id ?? ""), { state: "friends", request_id: null });
 const toggleFollow = () =>

@@ -99,6 +99,10 @@ class Listing(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
+    # The moderation case behind the last rejection or removal, so the seller can
+    # see why and appeal it. The reason is filled only when moderation sends one.
+    moderation_case_id = models.UUIDField(null=True, blank=True)
+    moderation_reason = models.CharField(max_length=2000, blank=True, default="")
 
     class Meta:
         db_table = "listing"
@@ -193,6 +197,8 @@ class ListingInquiry(models.Model):
         ]
         indexes = [
             models.Index(fields=["seller_id", "-last_activity_at"], name="inquiry_seller_idx"),
+            # The buyer's "Buying" inbox.
+            models.Index(fields=["buyer_id", "-last_activity_at"], name="inquiry_buyer_idx"),
         ]
 
 

@@ -51,6 +51,12 @@ export function viaStorageProxy(url: string | null): string | null {
 }
 
 export const mediaService = {
+  /** A short-lived signed URL for the original file (404 for a transcoded video, 409 while processing). */
+  async downloadUrl(id: string): Promise<string> {
+    const { data } = await api.get<{ data: { download_url: string } }>(`/media/${id}/download-url/`);
+    return data.data.download_url;
+  },
+
   /**
    * Presigned upload: sign → PUT bytes straight to object storage → complete.
    * Returns the asset (status will be "processing" until the worker finishes).

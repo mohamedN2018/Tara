@@ -45,7 +45,12 @@ class RelationshipView(APIView):
             raise TaraAPIError(
                 "Both 'a' and 'b' must be UUIDs.", code="validation_error", http_status_code=400
             ) from exc
-        return data_response(services.relationship(a, b))
+        data = services.relationship(a, b)
+        if request.query_params.get("mutual") == "1":
+            # Chat's "friends of friends may message me" (spec B). Only when asked:
+            # profile's privacy lookups call this endpoint far more often.
+            data["has_mutual_friends"] = bool(services.mutual_friends(a, b))
+        return data_response(data)
 
 
 class FanoutAudienceView(APIView):
@@ -62,8 +67,12 @@ class FanoutAudienceView(APIView):
 
     def get(self, request: Request, account_id: str) -> Response:
         _require_internal(request)
-        followers = set(services.follower_ids(account_id))
-        friends = set(services.list_friend_ids(account_id))
+        if request.query_params.get("target_type") == "page":
+            # A page post goes to the page's followers; a page has no friends.
+            followers, friends = set(services.follower_ids(account_id, "page")), set()
+        else:
+            followers = set(services.follower_ids(account_id))
+            friends = set(services.list_friend_ids(account_id))
         return data_response(
             {
                 "account_id": str(account_id),

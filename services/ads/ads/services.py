@@ -76,7 +76,7 @@ def set_campaign_status(owner_account_id: str, campaign_id: str, status: str) ->
 
 def campaign_ad_sets(owner_account_id: str, campaign_id: str):
     campaign = _own_campaign(owner_account_id, campaign_id)
-    return campaign.ad_sets.prefetch_related("creatives").order_by("created_at")
+    return campaign.ad_sets.prefetch_related("creatives__reviews").order_by("created_at")
 
 
 def _own_campaign(owner_account_id: str, campaign_id: str, *, lock: bool = False) -> Campaign:
@@ -140,6 +140,38 @@ def create_creative(owner_account_id: str, ad_set_id: str, data: dict) -> AdCrea
     if settings.ADS_AUTO_APPROVE:
         creative.review_status = AdCreative.Review.APPROVED
         creative.save(update_fields=["review_status"])
+    return creative
+
+
+# Only an ad still waiting for, or refused by, review can be edited: an approved
+# one would otherwise change after a reviewer looked at it.
+EDITABLE_REVIEW_STATES = (AdCreative.Review.PENDING, AdCreative.Review.REJECTED)
+
+
+def update_creative(owner_account_id: str, creative_id: str, data: dict) -> AdCreative:
+    """Edit and resubmit: the creative goes back to review (unless auto-approve)."""
+    creative = (
+        AdCreative.objects.select_related("ad_set__campaign__advertiser")
+        .filter(id=creative_id)
+        .first()
+    )
+    owner = creative and creative.ad_set.campaign.advertiser.owner_account_id
+    if creative is None or str(owner) != str(owner_account_id):
+        raise TaraAPIError("Ad not found.", code="not_found", http_status_code=404)
+    if creative.review_status not in EDITABLE_REVIEW_STATES:
+        raise Conflict("An approved ad cannot be edited.", code="conflict")
+    media_id = data.get("media_id")
+    if media_id and str(media_id) != str(creative.media_id or ""):
+        _check_media(owner_account_id, str(media_id))  # remote: before any write
+    for key in ("headline", "body", "cta", "link_url"):
+        if key in data:
+            setattr(creative, key, data[key])
+    if "media_id" in data:
+        creative.media_id = data["media_id"] or None
+    creative.review_status = (
+        AdCreative.Review.APPROVED if settings.ADS_AUTO_APPROVE else AdCreative.Review.PENDING
+    )
+    creative.save()
     return creative
 
 

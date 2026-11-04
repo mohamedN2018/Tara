@@ -24,6 +24,16 @@ class Conversation(models.Model):
     title = models.CharField(max_length=160, blank=True, default="")
     created_by = models.UUIDField()
     listing_id = models.UUIDField(null=True, blank=True)  # marketplace conversations
+    # Marketplace conversations: the listing's title and cover when last heard
+    # of (the contact request, then `listing.updated` / `listing.status.changed`),
+    # so the Marketplace folder can tell threads apart without a call per row.
+    listing_title = models.CharField(max_length=160, blank=True, default="", db_default="")
+    listing_cover_media_id = models.UUIDField(null=True, blank=True)
+    # Page conversations: the Page a member wrote to. Its team answers as the Page.
+    page_id = models.UUIDField(null=True, blank=True)
+    # Page and support conversations: how far the answering team has read
+    # (one pointer shared by the team; the member who wrote has their own).
+    team_read_seq = models.BigIntegerField(default=0, db_default=0)
     # Canonical dedup key: sorted account pair for DMs, or
     # "mkt:<listing>:<buyer>:<seller>" for marketplace threads. Sized for the latter.
     dm_key = models.CharField(max_length=160, null=True, blank=True, unique=True)
@@ -37,13 +47,26 @@ class Conversation(models.Model):
 
     class Meta:
         db_table = "conversation"
-        indexes = [models.Index(fields=["type"], name="conversation_type_idx")]
+        indexes = [
+            models.Index(fields=["type"], name="conversation_type_idx"),
+            models.Index(
+                fields=["type", "page_id", "-last_message_at"], name="conversation_team_idx"
+            ),
+        ]
 
 
 class ConversationMember(models.Model):
     class Role(models.TextChoices):
         MEMBER = "member", "Member"
         ADMIN = "admin", "Admin"
+
+    class Request(models.TextChoices):
+        """A DM a non-friend started is a message request for its recipient
+        (plan 08 3D). Empty: an ordinary thread in the inbox."""
+
+        NONE = "", "None"
+        PENDING = "pending", "Pending"
+        SPAM = "spam", "Declined (spam folder)"
 
     id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
     conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name="members")
@@ -61,6 +84,9 @@ class ConversationMember(models.Model):
     archived_at = models.DateTimeField(null=True, blank=True)
     cleared_at = models.DateTimeField(null=True, blank=True)
     left_at = models.DateTimeField(null=True, blank=True)
+    request_status = models.CharField(
+        max_length=8, choices=Request.choices, blank=True, default="", db_default=""
+    )
 
     class Meta:
         db_table = "conversation_member"
@@ -108,6 +134,10 @@ class Message(models.Model):
     moderation_removed_at = models.DateTimeField(null=True, blank=True)
     # Never serialized: forwarding must not leak where the original lives.
     forwarded_from_message_id = models.UUIDField(null=True, blank=True)
+    # A page or support team's reply is sent as the Page (``sender_id`` is the
+    # page id) or as Tara Support; ``author_id`` is the team member who wrote
+    # it, shown to the team only.
+    author_id = models.UUIDField(null=True, blank=True)
 
     class Meta:
         db_table = "message"
@@ -182,6 +212,21 @@ class MessageHidden(models.Model):
         indexes = [models.Index(fields=["account_id"], name="message_hidden_account_idx")]
 
 
+class MessageReport(models.Model):
+    """One report per reporter per message; moderation gets ``message.reported``."""
+
+    message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name="reports")
+    reporter_id = models.UUIDField()
+    reason = models.CharField(max_length=24)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "message_report"
+        constraints = [
+            models.UniqueConstraint(fields=["message", "reporter_id"], name="message_report_uniq"),
+        ]
+
+
 class PinnedMessage(models.Model):
     conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name="pins")
     message = models.ForeignKey(Message, on_delete=models.CASCADE)
@@ -207,6 +252,30 @@ class BlockedPair(models.Model):
                 fields=["blocker_id", "blocked_id"], name="chat_blocked_pair_uniq"
             ),
         ]
+
+
+class ChatSettings(models.Model):
+    """Who may start a conversation with this account (spec B, "who can message me").
+
+    No row means the default, ``everyone``: friends land in the inbox and
+    anyone else in message requests. ``friends_of_friends``: people with a
+    mutual friend land in requests, others cannot start a chat. ``friends``:
+    only friends can start one. Existing conversations are never cut off.
+    """
+
+    class MessageFrom(models.TextChoices):
+        EVERYONE = "everyone", "Everyone"
+        FRIENDS_OF_FRIENDS = "friends_of_friends", "Friends of friends"
+        FRIENDS = "friends", "Friends"
+
+    account_id = models.UUIDField(primary_key=True)
+    message_from = models.CharField(
+        max_length=20, choices=MessageFrom.choices, default=MessageFrom.EVERYONE
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "chat_settings"
 
 
 class OutboxEvent(AbstractOutboxEvent):

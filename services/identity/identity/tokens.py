@@ -77,6 +77,11 @@ def issue_access_token(account: Account, session_id: str) -> tuple[str, int]:
     ttl = settings.ACCESS_TOKEN_TTL_SECONDS
     now = _now()
     roles = roles_for(account)
+    if roles and getattr(settings, "STAFF_REQUIRE_2FA", False):
+        from .two_factor import is_enabled  # two_factor imports emails -> tasks
+
+        if not is_enabled(account):
+            roles = []  # staff powers only behind a second factor (plan 08 3C)
     # No email: the token travels to every service and sits in browser storage,
     # and nothing reads it there (roadmap 8.12). /me/ returns it to its owner.
     claims = {
@@ -89,6 +94,8 @@ def issue_access_token(account: Account, session_id: str) -> tuple[str, int]:
         # Roadmap 2.12: the only way age leaves identity (no age event).
         "is_minor": is_minor(account.date_of_birth),
         "age_band": age_band(account.date_of_birth),
+        # Settings > Privacy "Show when you're active": realtime reads it (3C).
+        "show_presence": bool(getattr(account, "show_presence", True)),
         "iss": settings.JWT_ISSUER,
         "aud": settings.JWT_AUDIENCE,
         "iat": int(now.timestamp()),

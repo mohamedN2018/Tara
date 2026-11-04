@@ -13,7 +13,9 @@ from .models import BlockedPair
 def on_moderation_actioned(event: EventEnvelope) -> None:
     p = event.payload
     if p.get("target_type") == "listing" and p.get("target_id"):
-        services.apply_moderation(p["target_id"], p.get("action", ""))
+        services.apply_moderation(
+            p["target_id"], p.get("action", ""), p.get("case_id"), p.get("reason") or ""
+        )
     elif p.get("target_type") == "listing_review" and p.get("target_id"):
         services.apply_review_moderation(p["target_id"], p.get("action", ""))
 

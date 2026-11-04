@@ -622,6 +622,7 @@ def test_overturning_a_content_removal_emits_approve(target_type):
         "target_type": target_type,
         "target_id": case.target_id,
         "action": "approve",
+        "owner_id": owner,
     }
     assert _overturn_audit(case) == {"status": "overturned", "reversal": "approve"}
 

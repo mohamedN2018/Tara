@@ -5,7 +5,7 @@ import { useI18n } from "vue-i18n";
 
 import ChatAttachment from "@/components/chat/ChatAttachment.vue";
 import VoicePlayer from "@/components/chat/VoicePlayer.vue";
-import { type DeliveryStatus, reactionSummary, typePreview } from "@/lib/chat";
+import { bodySegments, type DeliveryStatus, reactionSummary, typePreview } from "@/lib/chat";
 import { relativeTime } from "@/lib/format";
 import { MESSAGE_REACTIONS, reactionByKey } from "@/lib/reactions";
 import { useEscapeKey } from "@/lib/useEscapeKey";
@@ -24,6 +24,8 @@ const props = defineProps<{
   status?: DeliveryStatus | null;
   canEdit?: boolean;
   canDeleteForEveryone?: boolean;
+  /** Others' messages can be reported to moderation. */
+  canReport?: boolean;
 }>();
 const emit = defineEmits<{
   reply: [message: Message];
@@ -32,6 +34,7 @@ const emit = defineEmits<{
   edit: [message: Message];
   forward: [message: Message];
   delete: [message: Message, scope: "me" | "everyone"];
+  report: [message: Message];
 }>();
 const { t } = useI18n();
 
@@ -80,6 +83,9 @@ function preview(m: Message): string {
   if (m.body) return m.body;
   return typePreview(m.attachments[0]?.kind ?? m.type, t);
 }
+
+// Links to Tara's own stories, listings and posts read as a short link.
+const segments = computed(() => bodySegments(props.message.body ?? "", window.location.origin));
 
 const statusLabel = computed(() =>
   props.status ? t(`messages.status${props.status[0].toUpperCase()}${props.status.slice(1)}`) : "",
@@ -134,8 +140,8 @@ const statusLabel = computed(() =>
 
           <div class="px-3 py-2">
             <VoicePlayer v-if="voiceNote" :media-id="voiceNote.media_id" :message-id="message.id" :duration-ms="voiceNote.duration_ms" />
-            <p v-if="message.body" class="whitespace-pre-wrap break-words" dir="auto">{{ message.body }}</p>
-            <time class="mt-0.5 flex items-center gap-1 text-[10px] opacity-70">
+            <p v-if="message.body" class="whitespace-pre-wrap break-words" dir="auto"><template v-for="(s, i) in segments" :key="i"><RouterLink v-if="'to' in s" :to="s.to" class="font-semibold underline" data-testid="message-app-link">{{ t(`chatTeam.links.${s.kind}`) }}</RouterLink><template v-else>{{ s.text }}</template></template></p>
+            <time class="mt-0.5 flex items-center gap-1 text-[10px]" :class="mine ? 'text-white' : 'text-gray-600 dark:text-gray-300'">
               {{ relativeTime(message.created_at) }}
               <span v-if="message.edited_at"> · {{ t("messages.edited") }}</span>
               <span v-if="status" class="inline-flex" :title="statusLabel" data-testid="message-status" :data-status="status">
@@ -247,6 +253,15 @@ const statusLabel = computed(() =>
             @click="act(() => emit('delete', message, 'everyone'))"
           >
             {{ t("messages.deleteForEveryone") }}
+          </button>
+          <button
+            v-if="canReport && !mine && !message.deleted"
+            :class="[ROW, 'text-red-600']"
+            role="menuitem"
+            data-testid="message-report"
+            @click="act(() => emit('report', message))"
+          >
+            {{ t("messenger.reportMessage") }}
           </button>
         </div>
       </template>

@@ -31,7 +31,7 @@ def _isolated_settings(settings):
     return settings
 
 
-def make_access_token(account_id: str) -> str:
+def make_access_token(account_id: str, **claims) -> str:
     now = int(time.time())
     return jwt.encode(
         {
@@ -42,6 +42,7 @@ def make_access_token(account_id: str) -> str:
             "aud": "tara",
             "iat": now,
             "exp": now + 900,
+            **claims,
         },
         _PRIVATE_PEM,
         algorithm="RS256",

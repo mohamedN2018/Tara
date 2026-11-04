@@ -22,6 +22,39 @@ from .groups import user_group
 logger = logging.getLogger("tara.realtime.bridge")
 
 
+@on_event("account.presence.updated")
+def on_presence_updated(event: EventEnvelope) -> None:
+    """Identity's current "show when you're active" choice (3C), newest wins.
+
+    Stored so a socket opened with an older token's claim still obeys it; the
+    hidden flag and peers are updated now, and the owner's open sockets told.
+    """
+    from datetime import UTC, datetime
+
+    from . import presence
+    from .consumers import announce
+
+    p = event.payload
+    account_id = str(p["account_id"])
+    show = bool(p["show_presence"])
+    try:
+        moment = datetime.fromisoformat(str(event.occurred_at).replace("Z", "+00:00"))
+        at = (moment if moment.tzinfo else moment.replace(tzinfo=UTC)).timestamp()
+    except (TypeError, ValueError):
+        at = 0.0
+    if not presence.set_preference(account_id, show, at):
+        return  # an older event than the choice already stored
+    was_hidden = presence.set_hidden(account_id, not show)
+    layer = get_channel_layer()
+    async_to_sync(layer.group_send)(
+        user_group(account_id), {"type": "presence.pref", "show_presence": show}
+    )
+    if not show and not was_hidden:
+        async_to_sync(announce)(account_id, False)
+    elif show and was_hidden and presence.is_online(account_id):
+        async_to_sync(announce)(account_id, True)
+
+
 def _push_to_user(account_id: str, data: dict) -> None:
     layer = get_channel_layer()
     async_to_sync(layer.group_send)(user_group(str(account_id)), {"type": "push", "data": data})

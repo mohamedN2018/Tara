@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CheckCircle2, Clock, EyeOff, Undo2 } from "lucide-vue-next";
+import { CheckCircle2, Clock, EyeOff, Flag, Undo2, UserMinus } from "lucide-vue-next";
 import { onMounted, ref, useId } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -14,11 +14,23 @@ const props = withDefaults(
     snoozed?: boolean;
     /** The author can be snoozed (not the viewer, not a page post). */
     canSnooze?: boolean;
+    /** The post reached the feed because the viewer follows the author. */
+    canUnfollow?: boolean;
+    /** The viewer already reported this post / unfollowed its author here. */
+    reported?: boolean;
+    unfollowed?: boolean;
     busy?: boolean;
   }>(),
-  { reason: null, snoozed: false, canSnooze: true, busy: false },
+  { reason: null, snoozed: false, canSnooze: true, canUnfollow: false, reported: false, unfollowed: false, busy: false },
 );
-const emit = defineEmits<{ undo: []; reason: [reason: HideReason]; snooze: []; unsnooze: [] }>();
+const emit = defineEmits<{
+  undo: [];
+  reason: [reason: HideReason];
+  snooze: [];
+  unsnooze: [];
+  report: [reason: string];
+  unfollow: [];
+}>();
 
 const { t } = useI18n();
 const titleId = useId();
@@ -35,6 +47,20 @@ const REASON_KEY: Record<HideReason, string> = {
   dislike_creator: "homeFeed.hide.reasons.dislikeCreator",
   other: "homeFeed.hide.reasons.other",
 };
+
+// Report: a short reason box, as from the post's own menu.
+const reporting = ref(false);
+const reportText = ref("");
+function sendReport() {
+  const text = reportText.value.trim();
+  if (!text || props.busy) return;
+  emit("report", text);
+  reporting.value = false;
+  reportText.value = "";
+}
+
+const row =
+  "-mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-lg px-2 py-2 text-start text-sm font-medium transition hover:bg-gray-100 disabled:opacity-60 dark:hover:bg-gray-800";
 
 function choose(r: HideReason) {
   if (props.busy || r === props.reason) return;
@@ -88,8 +114,9 @@ function choose(r: HideReason) {
       </p>
     </div>
 
-    <div v-if="canSnooze" class="border-t border-gray-100 pt-3 dark:border-gray-800">
+    <div class="border-t border-gray-100 pt-3 dark:border-gray-800">
       <p class="mb-1 text-sm font-semibold">{{ t("homeFeed.hide.otherSteps") }}</p>
+      <template v-if="canSnooze">
       <div v-if="snoozed" class="flex items-center gap-3 py-1.5 text-sm" role="status">
         <Clock class="h-5 w-5 shrink-0" aria-hidden="true" />
         <span class="min-w-0 flex-1" dir="auto">{{ t("homeFeed.hide.snoozed", { name: authorName }) }}</span>
@@ -107,6 +134,44 @@ function choose(r: HideReason) {
         <Clock class="h-5 w-5 shrink-0" aria-hidden="true" />
         <span dir="auto">{{ t("homeFeed.hide.snooze", { name: authorName }) }}</span>
       </button>
+      </template>
+
+      <!-- Unfollow (follow items only: feed drops those for an unfollow). -->
+      <template v-if="canUnfollow">
+        <p v-if="unfollowed" class="flex items-center gap-3 py-1.5 text-sm" role="status" data-testid="hide-unfollowed">
+          <UserMinus class="h-5 w-5 shrink-0" aria-hidden="true" />
+          <span dir="auto">{{ t("postsFeed.hide.unfollowed", { name: authorName }) }}</span>
+        </p>
+        <button v-else type="button" :class="row" :disabled="busy" data-testid="hide-unfollow" @click="emit('unfollow')">
+          <UserMinus class="h-5 w-5 shrink-0" aria-hidden="true" />
+          <span class="min-w-0">
+            <span class="block" dir="auto">{{ t("postsFeed.hide.unfollow", { name: authorName }) }}</span>
+            <span class="block text-xs font-normal text-gray-500 dark:text-gray-400" dir="auto">{{ t("postsFeed.hide.unfollowHint", { name: authorName }) }}</span>
+          </span>
+        </button>
+      </template>
+
+      <!-- Report -->
+      <p v-if="reported" class="flex items-center gap-3 py-1.5 text-sm" role="status" data-testid="hide-reported">
+        <CheckCircle2 class="h-5 w-5 shrink-0 text-green-600" aria-hidden="true" /> {{ t("post.reportSent") }}
+      </p>
+      <template v-else>
+        <button type="button" :class="row" :disabled="busy" :aria-expanded="reporting" data-testid="hide-report" @click="reporting = !reporting">
+          <Flag class="h-5 w-5 shrink-0" aria-hidden="true" />
+          <span class="min-w-0">
+            <span class="block">{{ t("postsFeed.hide.report") }}</span>
+            <span class="block text-xs font-normal text-gray-500 dark:text-gray-400">{{ t("postsFeed.hide.reportHint") }}</span>
+          </span>
+        </button>
+        <form v-if="reporting" class="mt-1 space-y-2" @submit.prevent="sendReport">
+          <label class="block text-sm font-medium" :for="`hide-report-${postId}`">{{ t("postsFeed.hide.reportReason") }}</label>
+          <textarea :id="`hide-report-${postId}`" v-model="reportText" class="input min-h-16" rows="2" dir="auto" />
+          <div class="flex justify-end gap-2">
+            <button type="button" class="btn-ghost" @click="reporting = false">{{ t("feed.cancel") }}</button>
+            <button type="submit" class="btn-primary" :disabled="!reportText.trim() || busy">{{ t("postsFeed.hide.reportSend") }}</button>
+          </div>
+        </form>
+      </template>
     </div>
   </section>
 </template>

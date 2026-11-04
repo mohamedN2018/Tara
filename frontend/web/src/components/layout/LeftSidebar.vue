@@ -2,6 +2,7 @@
 import { ChevronDown, ChevronUp } from "lucide-vue-next";
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRoute } from "vue-router";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import { legalPath } from "@/lib/legal";
@@ -10,6 +11,7 @@ import { useChatUnreadStore } from "@/stores/chatUnread";
 import { useNotificationStore } from "@/stores/notifications";
 
 import {
+  activeNavName,
   loadSidebarExpanded,
   navItems,
   saveSidebarExpanded,
@@ -24,6 +26,9 @@ const notifications = useNotificationStore();
 const chatUnread = useChatUnreadStore();
 
 const items = computed(() => visibleNavItems(navItems, auth));
+const route = useRoute();
+// One highlighted entry: Home and Feeds share /home, so the query decides.
+const activeName = computed(() => activeNavName(items.value, route.path, route.query));
 const expanded = ref(loadSidebarExpanded());
 const shown = computed(() => (expanded.value ? items.value : items.value.slice(0, SIDEBAR_COLLAPSED_COUNT)));
 const canCollapse = computed(() => items.value.length > SIDEBAR_COLLAPSED_COUNT);
@@ -63,12 +68,18 @@ const active = "bg-brand-50 text-brand-700 dark:bg-brand-950/60 dark:text-brand-
     <!-- Profile shortcut -->
     <RouterLink v-if="auth.profile" :to="profileTo" :class="row" data-testid="sidebar-profile">
       <UserAvatar :name="auth.profile.display_name" :media-id="auth.profile.avatar_media_id" :size="36" />
-      <span class="min-w-0 flex-1 truncate" dir="auto">{{ auth.profile.display_name }}</span>
+      <!-- bdi isolates a name in the other script without flipping the row's alignment. -->
+      <span class="min-w-0 flex-1 truncate text-start"><bdi>{{ auth.profile.display_name }}</bdi></span>
     </RouterLink>
 
     <ul class="mt-1 space-y-0.5" data-testid="sidebar-items">
       <li v-for="item in shown" :key="item.name">
-        <RouterLink :to="item.route" :class="row" :exact-active-class="active" :data-testid="`sidebar-${item.name}`">
+        <RouterLink
+          :to="item.route"
+          :class="[row, activeName === item.name ? active : '']"
+          :aria-current="activeName === item.name ? 'page' : undefined"
+          :data-testid="`sidebar-${item.name}`"
+        >
           <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full" :class="item.tone">
             <component :is="item.icon" class="h-5 w-5" aria-hidden="true" />
           </span>
@@ -96,23 +107,27 @@ const active = "bg-brand-50 text-brand-700 dark:bg-brand-950/60 dark:text-brand-
 
     <!-- Your shortcuts: pages you manage and groups you belong to -->
     <section v-if="shortcuts.length" class="mt-2 border-t border-gray-200 pt-3 dark:border-gray-800" aria-labelledby="ls-shortcuts">
-      <h2 id="ls-shortcuts" class="px-2 pb-1 text-[15px] font-semibold text-gray-500 dark:text-gray-400">
+      <h2 id="ls-shortcuts" class="px-2 pb-1 text-[15px] font-semibold text-gray-600 dark:text-gray-400">
         {{ t("shell.shortcuts") }}
       </h2>
       <ul class="space-y-0.5" data-testid="sidebar-shortcuts">
         <li v-for="s in shortcuts" :key="`${s.kind}-${s.id}`">
           <RouterLink :to="s.to" :class="row" :title="s.kind === 'page' ? t('shell.shortcutPage') : t('shell.shortcutGroup')">
             <UserAvatar :name="s.name" :media-id="s.mediaId" :size="36" />
-            <span class="min-w-0 flex-1 truncate" dir="auto">{{ s.name }}</span>
+            <span class="min-w-0 flex-1 truncate text-start"><bdi>{{ s.name }}</bdi></span>
           </RouterLink>
         </li>
       </ul>
     </section>
 
-    <footer class="mt-auto px-2 pb-2 pt-5 text-xs leading-relaxed text-gray-500 dark:text-gray-400" data-testid="sidebar-footer">
+    <footer class="mt-auto px-2 pb-2 pt-5 text-xs leading-relaxed text-gray-600 dark:text-gray-400" data-testid="sidebar-footer">
       <RouterLink :to="legalPath('privacy')" class="hover:underline">{{ t("shell.footer.privacy") }}</RouterLink>
       <span aria-hidden="true"> · </span>
       <RouterLink :to="legalPath('terms')" class="hover:underline">{{ t("shell.footer.terms") }}</RouterLink>
+      <span aria-hidden="true"> · </span>
+      <RouterLink to="/legal/community-standards" class="hover:underline" data-testid="footer-standards">{{ t("menu.items.communityStandards") }}</RouterLink>
+      <span aria-hidden="true"> · </span>
+      <RouterLink to="/support" class="hover:underline" data-testid="footer-support">{{ t("safety.support.title") }}</RouterLink>
       <span aria-hidden="true"> · </span>
       <RouterLink to="/ads" class="hover:underline">{{ t("nav.ads") }}</RouterLink>
       <span aria-hidden="true"> · </span>

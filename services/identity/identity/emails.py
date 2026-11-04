@@ -91,6 +91,70 @@ def send_password_changed_notice(email: str) -> None:
     )
 
 
+def send_login_alert(email: str, *, device: str, region: str, when) -> None:
+    where = f" from {region}" if region else ""
+    _enqueue(
+        email,
+        "New sign-in to your Tara account",
+        f"Your Tara account was signed in to on a new device{where}"
+        f" at {when:%Y-%m-%d %H:%M} UTC.\n\nDevice: {device[:120] or 'unknown'}"
+        "\n\nIf this was you, there's nothing to do. If not, change your password and"
+        f" remove the device in Settings:\n\n{settings.FRONTEND_BASE_URL}/settings/security",
+    )
+
+
+def send_two_factor_changed_notice(email: str, *, enabled: bool) -> None:
+    state = "turned on" if enabled else "turned off"
+    _enqueue(
+        email,
+        f"Two-factor authentication {state}",
+        f"Two-factor authentication was just {state} for your Tara account."
+        "\n\nIf this wasn't you, change your password now:"
+        f"\n\n{settings.FRONTEND_BASE_URL}/forgot-password",
+    )
+
+
+def send_deactivated_notice(email: str) -> None:
+    _enqueue(
+        email,
+        "Your Tara account was deactivated",
+        "Your Tara account was deactivated and signed out everywhere. Sign in again"
+        f" any time to reactivate it:\n\n{settings.FRONTEND_BASE_URL}/login"
+        "\n\nIf this wasn't you, reset your password:"
+        f"\n\n{settings.FRONTEND_BASE_URL}/forgot-password",
+    )
+
+
+def send_deletion_scheduled_notice(email: str, *, when) -> None:
+    _enqueue(
+        email,
+        "Your Tara account will be deleted",
+        "You asked to delete your Tara account. It is hidden and signed out"
+        f" everywhere now, and will be deleted for good on {when:%Y-%m-%d}."
+        " To keep it, just sign in before then:"
+        f"\n\n{settings.FRONTEND_BASE_URL}/login"
+        "\n\nIf this wasn't you, sign in and change your password.",
+    )
+
+
+def send_deletion_cancelled_notice(email: str) -> None:
+    _enqueue(
+        email,
+        "Your Tara account will not be deleted",
+        "You signed in, so the deletion of your Tara account was cancelled and"
+        " the account is active again.",
+    )
+
+
+def send_deleted_notice(email: str) -> None:
+    _enqueue(
+        email,
+        "Your Tara account was deleted",
+        "Your Tara account and the information tied to it have been deleted,"
+        " as you asked 30 days ago.",
+    )
+
+
 def mask_email(email: str) -> str:
     """j***@example.com: enough to recognise, not enough to harvest."""
     local, _, domain = email.partition("@")

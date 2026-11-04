@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/post.unhidden.v1.json",
+  "title": "post.unhidden v1 payload",
+  "description": "A post hidden by post.hidden is shown again because its author's account was reactivated (plan 08 3C). Carries post.created's fan-out fields as the post is now, so feed can show its kept rows again and fan it out to anyone without one. Post emits post.updated right after it, which search re-indexes from. Behind POST_EMIT_HIDE_EVENTS.",
+  "type": "object",
+  "properties": {
+    "post_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "author_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "author_type": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string"
+    },
+    "audience": {
+      "type": "string"
+    },
+    "excerpt": {
+      "type": "string",
+      "maxLength": 280
+    },
+    "media_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "group_id": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "reason": {
+      "type": "string",
+      "enum": ["account_reactivated"]
+    }
+  },
+  "required": [
+    "post_id",
+    "author_id",
+    "author_type",
+    "type",
+    "audience",
+    "excerpt",
+    "media_ids",
+    "created_at",
+    "reason"
+  ],
+  "additionalProperties": false
+}

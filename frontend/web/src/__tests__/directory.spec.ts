@@ -69,19 +69,26 @@ describe("directory store", () => {
     const directory = useDirectoryStore();
     const id = "01a19ed4-9364-7abf-828d-aa6ae845af83";
     expect(directory.label(id)).toBe("…");
+    expect(directory.pending(id)).toBe(true);
     await settle();
+    // A miss is retried (a brand-new account's profile lags sign-up): still "…".
+    expect(directory.label(id)).toBe("…");
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(directory.pending(id)).toBe(false);
     expect(directory.label(id)).not.toContain(id.slice(0, 8));
     expect(directory.label(id)).not.toBe("…");
   });
 
-  it("doesn't re-request ids the server omitted", async () => {
+  it("retries an omitted id a few times, then doesn't re-request it", async () => {
     const lookup = vi.spyOn(profileService, "lookup").mockResolvedValue([]);
     const directory = useDirectoryStore();
     directory.nameOf("blocked");
-    await settle();
+    await vi.advanceTimersByTimeAsync(10_000);
+    // Three tries in all (the first and two retries), then never again.
+    expect(lookup).toHaveBeenCalledTimes(3);
     directory.nameOf("blocked");
-    await settle();
-    expect(lookup).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(lookup).toHaveBeenCalledTimes(3);
   });
 
   it("backs off after a failed lookup, then tries again", async () => {

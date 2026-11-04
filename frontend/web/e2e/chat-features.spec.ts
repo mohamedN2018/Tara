@@ -93,7 +93,8 @@ test("a group is created from friends, chats, and manages members", async ({ bro
   await alice.getByRole("button", { name: "إضافة أعضاء" }).click();
   await alice.getByRole("dialog").getByText(c.name).click();
   await alice.getByRole("button", { name: "إضافة", exact: true }).click();
-  await expect(bob.locator("header").getByText("3")).toBeVisible();
+  // The chat header's subtitle (the top bar's badges may hold a 3 too).
+  await expect(bob.getByTestId("conversation-subtitle")).toContainText("3");
 
   // A member has no admin controls; removing Bob kicks him out live.
   await bob.getByRole("button", { name: "معلومات المجموعة" }).click();

@@ -207,6 +207,9 @@ class GroupRequestActionView(_GroupView):
         if action == "approve":
             member = services.approve_request(_me(request), group, str(account_id))
             return data_response(MembershipSerializer(member).data)
+        if action == "revoke":
+            services.revoke_invite(_me(request), group, str(account_id))
+            return Response(status=status.HTTP_204_NO_CONTENT)
         services.decline_request(_me(request), group, str(account_id))
         return Response(status=status.HTTP_204_NO_CONTENT)
 

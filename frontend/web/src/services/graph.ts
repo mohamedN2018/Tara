@@ -36,8 +36,11 @@ export const graphService = {
   // NOTE: there is no "am I following X" endpoint; follow state defaults to
   // unknown. Use GET /follows/following/ and check membership if needed.
 
-  async sendFriendRequest(userId: string): Promise<void> {
-    await api.post(`/friends/requests/`, { to_user_id: userId });
+  /** Returns the new request's id (needed to cancel it through reject/). */
+  async sendFriendRequest(userId: string): Promise<string | undefined> {
+    const { data } = await api.post<{ data?: Friendship } | Friendship>(`/friends/requests/`, { to_user_id: userId });
+    const row = data && "data" in data ? data.data : (data as Friendship | undefined);
+    return row?.id;
   },
   async acceptFriendRequest(requestId: string): Promise<void> {
     await api.post(`/friends/requests/${requestId}/accept/`);
@@ -99,6 +102,13 @@ export const graphService = {
       `/social/${userId}/followers/`,
     );
     return data.data.followers;
+  },
+  /** What another account follows (people and pages); 404 while hidden from you. */
+  async socialFollowing(userId: string): Promise<{ target_id: string; target_type: string }[]> {
+    const { data } = await api.get<{ data: { following: { target_id: string; target_type: string }[] } }>(
+      `/social/${userId}/following/`,
+    );
+    return data.data.following;
   },
   async mutualFriends(userId: string): Promise<string[]> {
     const { data } = await api.get<{ data: { mutual: string[] } }>(`/social/${userId}/mutual/`);

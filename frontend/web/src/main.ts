@@ -8,6 +8,7 @@ import { setUpPwa } from "./lib/pwa";
 import { jwtClaims, onTokensChangedElsewhere, tokenStore } from "./lib/tokens";
 import { router } from "./router";
 import { useAuthStore } from "./stores/auth";
+import { installFlagSync } from "./stores/flags";
 import { useUiStore } from "./stores/ui";
 import "./style.css";
 
@@ -20,6 +21,8 @@ app.use(router);
 
 // Apply persisted theme + locale/direction before first paint.
 useUiStore().init();
+// Feature flags follow the signed-in account (menu gating, useFlag).
+installFlagSync();
 
 // When the server rejects the refresh token, drop to the login screen. During
 // boot there is no account yet and the router guard routes there by itself.

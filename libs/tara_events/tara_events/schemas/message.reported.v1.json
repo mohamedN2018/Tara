@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/message.reported.v1.json",
+  "title": "message.reported v1 payload",
+  "description": "A conversation member reported a message they can see and did not send; once per reporter per message. The snapshot is text only: chat attachments stay private, so no media ids are carried.",
+  "type": "object",
+  "properties": {
+    "message_id": {"type": "string", "format": "uuid"},
+    "conversation_id": {"type": "string", "format": "uuid"},
+    "reporter": {"type": "string", "format": "uuid"},
+    "reason": {
+      "type": "string",
+      "enum": ["spam", "scam", "hate", "violence", "nudity", "harassment", "false_information", "other"]
+    },
+    "owner_id": {"type": "string", "format": "uuid"},
+    "snapshot": {
+      "type": "object",
+      "properties": {
+        "type": {"type": "string"},
+        "body": {"type": "string", "maxLength": 1000},
+        "created_at": {"type": "string", "format": "date-time"},
+        "attachment_count": {"type": "integer", "minimum": 0}
+      },
+      "required": ["type", "body", "created_at", "attachment_count"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["message_id", "conversation_id", "reporter", "reason", "owner_id", "snapshot"],
+  "additionalProperties": false
+}

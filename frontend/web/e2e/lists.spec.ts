@@ -50,7 +50,7 @@ test("comments page with a load-more button", async ({ browser }) => {
 test("quiet hours save only as a whole window", async ({ browser }) => {
   const { a } = await sharedAccounts();
   const page = await pageAs(browser, a);
-  await page.goto("/settings");
+  await page.goto("/settings/notifications");
   const patches: string[] = [];
   page.on("request", (r) => {
     if (r.method() === "PATCH" && r.url().includes("/notifications/preferences/")) {

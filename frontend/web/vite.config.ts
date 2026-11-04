@@ -35,6 +35,8 @@ export default defineConfig({
           if (id.includes("livekit-client") || id.includes("@livekit")) return "livekit";
           // Video playback only: fetched when a video first plays (VideoPlayer).
           if (id.includes("/hls.js/")) return "hls";
+          // Two-factor setup only: the QR encoder and its deps (TwoFactorSettings).
+          if (/[\\/]node_modules[\\/](qrcode|dijkstrajs|pngjs|encode-utf8)[\\/]/.test(id)) return "qrcode";
           if (id.includes("/vue") || id.includes("pinia") || id.includes("@intlify") || id.includes("vue-i18n")) {
             return "vue";
           }

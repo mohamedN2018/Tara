@@ -70,6 +70,11 @@ export const relationshipsService = {
     await api.post(`/social/suggestions/${targetId}/dismiss/`, { target_type: targetType });
   },
 
+  /** Undo a dismissal: the person or page can be suggested again. */
+  async undismiss(targetId: string, targetType: "user" | "page" = "user"): Promise<void> {
+    await api.delete(`/social/suggestions/${targetId}/dismiss/`, { params: { target_type: targetType } });
+  },
+
   /** Owner-only lists: who I muted, restricted or marked as a favorite. */
   async list(kind: Preference): Promise<string[]> {
     const { data } = await api.get<{ data: Record<string, string[]> }>(`/social/${kind}/`);

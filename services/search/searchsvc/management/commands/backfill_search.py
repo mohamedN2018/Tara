@@ -61,7 +61,9 @@ def apply_item(kind: str, item: dict, as_of: str) -> int:
     if kind == "people":
         return int(indexing.apply("user", item_id, version, indexing.person_doc(item_id, payload)))
     if kind == "pages":
-        return int(indexing.apply("page", item_id, version, indexing.page_doc(payload)))
+        applied = indexing.apply("page", item_id, version, indexing.page_doc(payload))
+        posts.sync_page_posts(item_id)
+        return int(applied)
     if kind == "groups":
         return int(indexing.apply("group", item_id, version, indexing.group_doc(payload)))
     if kind == "listings":

@@ -1,29 +1,24 @@
 <script setup lang="ts">
-import { Bell, CalendarDays, Home, Menu, MessageCircle, Search, Store, Users, UsersRound } from "lucide-vue-next";
+import { Bell, CalendarDays, Home, Menu, Search, Store, Users, UsersRound } from "lucide-vue-next";
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 
-import MessagesPanel from "@/components/chat/MessagesPanel.vue";
+import MessengerDropdown from "@/components/chat/MessengerDropdown.vue";
 import MainMenu from "@/components/layout/MainMenu.vue";
 import ProfileMenu from "@/components/layout/ProfileMenu.vue";
 import TaraLogo from "@/components/brand/TaraLogo.vue";
 import NotificationPanel from "@/components/notifications/NotificationPanel.vue";
 import GlobalSearch from "@/components/search/GlobalSearch.vue";
 import { useEscapeKey } from "@/lib/useEscapeKey";
-import { badgeText } from "@/lib/chat";
-import { useChatUnreadStore } from "@/stores/chatUnread";
 import { useNotificationStore } from "@/stores/notifications";
 import { useUiStore } from "@/stores/ui";
 
 const { t } = useI18n();
 const ui = useUiStore();
 const notifications = useNotificationStore();
-const chatUnread = useChatUnreadStore();
 
 const showNotifs = ref(false);
-const showMessages = ref(false);
 useEscapeKey(showNotifs, () => (showNotifs.value = false));
-useEscapeKey(showMessages, () => (showMessages.value = false));
 
 // Centre tabs. No video or gaming tab: neither module exists (owner decision 5.5).
 const navIcons = [
@@ -96,35 +91,8 @@ const navIcons = [
       <!-- Main menu: every service by category, plus the Create column -->
       <MainMenu />
 
-      <!-- Messages dropdown (mobile uses the bottom bar instead) -->
-      <div class="relative hidden sm:block">
-        <button
-          class="icon-btn relative"
-          :class="showMessages ? '!bg-brand-50 !text-brand-700 dark:!bg-brand-950/70 dark:!text-brand-300' : ''"
-          :aria-label="chatUnread.conversations > 0 ? t('messages.unreadBadge', chatUnread.conversations) : t('nav.messages')"
-          :title="t('nav.messages')"
-          aria-haspopup="menu"
-          :aria-expanded="showMessages"
-          @click="showMessages = !showMessages"
-        >
-          <MessageCircle class="h-5 w-5" />
-          <span v-if="chatUnread.conversations > 0" class="badge absolute -end-1 -top-1 !bg-accent-700 ring-2 ring-white dark:ring-gray-950" data-testid="messages-badge">
-            {{ badgeText(chatUnread.conversations) }}
-          </span>
-        </button>
-        <template v-if="showMessages">
-          <div class="fixed inset-0 z-40" @click="showMessages = false" />
-          <div class="popover absolute end-0 z-50 mt-2 w-[22rem] max-w-[92vw] p-2">
-            <div class="flex items-center justify-between px-2 pb-2 pt-1">
-              <h3 class="section-title">{{ t("nav.messages") }}</h3>
-              <RouterLink to="/messages" class="text-xs font-semibold text-brand-600 dark:text-brand-300" @click="showMessages = false">
-                {{ t("notifications.viewAll") }}
-              </RouterLink>
-            </div>
-            <MessagesPanel :limit="6" @navigate="showMessages = false" />
-          </div>
-        </template>
-      </div>
+      <!-- Messenger: dropdown from sm up, a link to the inbox on phones (components/chat/MessengerDropdown.vue) -->
+      <MessengerDropdown />
 
       <!-- Notifications dropdown -->
       <div class="relative">

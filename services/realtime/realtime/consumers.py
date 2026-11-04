@@ -62,6 +62,8 @@ async def announce(account_id: str, online: bool) -> None:
     from channels.layers import get_channel_layer
 
     try:
+        if online and await _off_loop(presence.is_hidden)(account_id):
+            return  # active status turned off: never announced as online
         audience = await _off_loop(peers.audience)(account_id)
         last_seen = None if online else (await _off_loop(presence.state)(account_id))["last_seen"]
     except Exception:  # noqa: BLE001 - presence is best-effort, never break the socket
@@ -95,6 +97,16 @@ class TaraConsumer(AsyncJsonWebsocketConsumer):
             return
 
         self.account_id = str(claims["sub"])
+        # Settings > Privacy "Show when you're active": the choice identity last
+        # reported (account.presence.updated) beats the token's claim, which is
+        # stale in a tab that kept its token across the change.
+        self.show_presence = claims.get("show_presence", True) is not False
+        try:
+            current = await _off_loop(presence.preference)(self.account_id)
+        except Exception:  # noqa: BLE001 - Redis down: the claim is all there is
+            current = None
+        if current is not None:
+            self.show_presence = current
         self.subscriptions: set[str] = set()
         self.typing_at: dict[str, float] = {}
         self.allowance = float(settings.WS_FRAME_BURST)
@@ -104,8 +116,27 @@ class TaraConsumer(AsyncJsonWebsocketConsumer):
         await self.channel_layer.group_add(user_group(self.account_id), self.channel_name)
         # A browser drops the handshake unless the server echoes an offered subprotocol.
         await self.accept(subprotocol=subprotocol)
-        await self.send_json({"event": "connected", "account_id": self.account_id})
+        # Presence is settled before "connected": a client (or a test) acting on
+        # that frame never races this socket's own registration.
+        await self._apply_visibility()
         await self._heartbeat(first=True)
+        await self.send_json({"event": "connected", "account_id": self.account_id})
+
+    async def _apply_visibility(self) -> None:
+        """The newest socket's claim wins: hide (peers see offline) or show again."""
+        try:
+            was_hidden = await _off_loop(presence.set_hidden)(
+                self.account_id, not self.show_presence
+            )
+            already_online = await _off_loop(presence.is_online)(self.account_id)
+        except Exception:  # noqa: BLE001 - Redis down: no presence, socket still works
+            logger.warning("presence visibility update failed", exc_info=True)
+            return
+        if not self.show_presence and not was_hidden:
+            await announce(self.account_id, online=False)
+        elif self.show_presence and was_hidden and already_online:
+            # Other tabs kept it online while hidden; the first heartbeat won't say so.
+            await announce(self.account_id, online=True)
 
     async def disconnect(self, code) -> None:
         account_id = getattr(self, "account_id", None)
@@ -128,6 +159,8 @@ class TaraConsumer(AsyncJsonWebsocketConsumer):
             came_online = await _off_loop(presence.connect if first else presence.heartbeat)(
                 self.account_id, self.channel_name
             )
+            if not self.show_presence:
+                await _off_loop(presence.extend_hidden)(self.account_id)
         except Exception:  # noqa: BLE001 - Redis down: no presence, socket still works
             logger.warning("presence heartbeat failed", exc_info=True)
             return
@@ -211,6 +244,11 @@ class TaraConsumer(AsyncJsonWebsocketConsumer):
         if not isinstance(account_ids, list):
             return
         wanted = {str(a) for a in account_ids[: settings.PRESENCE_QUERY_MAX] if a}
+        if not self.show_presence:
+            # Like the reference apps: with your active status off you don't
+            # see anyone else's either.
+            await self.send_json({"event": "presence.state", "states": []})
+            return
 
         def lookup() -> list[dict]:
             visible = sorted(wanted & peers.audience(self.account_id))
@@ -232,6 +270,11 @@ class TaraConsumer(AsyncJsonWebsocketConsumer):
 
     async def push(self, event) -> None:
         await self.send_json(event["data"])
+
+    async def presence_pref(self, event) -> None:
+        """The owner changed "Show when you're active": every open tab follows
+        now (the bridge already set or cleared the hidden flag)."""
+        self.show_presence = bool(event.get("show_presence", True))
 
     async def typing_event(self, event) -> None:
         # Not echoed: the typist's own tabs already know.

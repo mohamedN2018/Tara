@@ -36,6 +36,60 @@ export interface TelegramLink {
   expires_in: number;
 }
 
+/** PATCH /me/: the fields the owner may change (settings centre, 3C). */
+export type AccountChanges = Partial<
+  Pick<
+    Account,
+    | "language"
+    | "theme"
+    | "gender"
+    | "gender_custom"
+    | "birthday_visibility"
+    | "gender_visibility"
+    | "show_presence"
+    | "login_alerts"
+  >
+>;
+
+export interface TwoFactorStatus {
+  enabled: boolean;
+  method: "totp" | null;
+  enabled_at: string | null;
+  recovery_codes_remaining: number;
+}
+
+export interface TwoFactorSetup {
+  secret: string;
+  otpauth_uri: string;
+  digits: number;
+  period: number;
+}
+
+export interface SecurityActivity {
+  id: string;
+  type: string;
+  ip_region: string;
+  created_at: string;
+}
+
+export interface RecognizedDevice {
+  id: string;
+  platform: string;
+  label: string;
+  created_at: string;
+  last_seen_at: string;
+  ip_region: string;
+  active_sessions: number;
+  is_current: boolean;
+}
+
+/** What the viewer may see of someone's birthday and gender (null: hidden or unset). */
+export interface PersonalDetails {
+  account_id: string;
+  birthday: { month: number; day: number } | null;
+  gender: { value: string; custom: string | null } | null;
+}
+
 const PROVIDERS_OFF: AuthProviders = {
   password: true,
   google: { enabled: false, client_id: "" },
@@ -57,10 +111,11 @@ export const identityService = {
       });
     return providersRequest;
   },
-  async googleSignIn(credential: string, language: string): Promise<Tokens & { created: boolean }> {
+  async googleSignIn(credential: string, language: string, otp = ""): Promise<Tokens & { created: boolean }> {
     const { data } = await api.post<{ data: Tokens & { created: boolean } }>("/auth/google/", {
       credential,
       language,
+      ...(otp ? { otp } : {}),
     });
     return data.data;
   },
@@ -131,5 +186,67 @@ export const identityService = {
   },
   async revokeSession(id: string): Promise<void> {
     await api.delete(`/auth/sessions/${id}/`);
+  },
+
+  // ---- Settings centre (plan 08 wave 3C) ----------------------------------
+  async updateAccount(changes: AccountChanges): Promise<Account> {
+    const { data } = await api.patch<{ data: Account }>("/me/", changes);
+    return data.data;
+  },
+  /** Always resolves the same way: the server never says whether the address exists. */
+  async resendVerification(email: string): Promise<void> {
+    await api.post("/auth/verify-email/resend/", { email });
+  },
+  async twoFactor(): Promise<TwoFactorStatus> {
+    const { data } = await api.get<{ data: TwoFactorStatus }>("/me/2fa/");
+    return data.data;
+  },
+  async startTwoFactor(password: string): Promise<TwoFactorSetup> {
+    const { data } = await api.post<{ data: TwoFactorSetup }>("/me/2fa/setup/", { password });
+    return data.data;
+  },
+  async confirmTwoFactor(code: string): Promise<TwoFactorStatus & { recovery_codes: string[] }> {
+    const { data } = await api.post<{ data: TwoFactorStatus & { recovery_codes: string[] } }>(
+      "/me/2fa/confirm/",
+      { code },
+    );
+    return data.data;
+  },
+  async disableTwoFactor(password: string, code: string): Promise<TwoFactorStatus> {
+    const { data } = await api.post<{ data: TwoFactorStatus }>("/me/2fa/disable/", { password, code });
+    return data.data;
+  },
+  async newRecoveryCodes(password: string): Promise<TwoFactorStatus & { recovery_codes: string[] }> {
+    const { data } = await api.post<{ data: TwoFactorStatus & { recovery_codes: string[] } }>(
+      "/me/2fa/recovery-codes/",
+      { password },
+    );
+    return data.data;
+  },
+  async securityActivity(before?: string): Promise<{ results: SecurityActivity[]; next: string | null }> {
+    const { data } = await api.get<{ data: { results: SecurityActivity[]; next: string | null } }>(
+      "/me/security/activity/",
+      { params: { before } },
+    );
+    return data.data;
+  },
+  async devices(): Promise<RecognizedDevice[]> {
+    const { data } = await api.get<{ data: RecognizedDevice[] }>("/me/devices/");
+    return data.data;
+  },
+  async removeDevice(id: string): Promise<void> {
+    await api.delete(`/me/devices/${id}/`);
+  },
+  async deactivate(password: string, confirm = ""): Promise<void> {
+    await api.post("/me/deactivate/", { password, confirm });
+  },
+  /** Schedule deletion: hidden and signed out now, erased after the grace period. */
+  async deleteAccount(password: string, confirm = ""): Promise<{ deletion_scheduled_for: string }> {
+    const { data } = await api.post<{ data: { deletion_scheduled_for: string } }>("/me/delete/", { password, confirm });
+    return data.data;
+  },
+  async personalDetails(accountId: string): Promise<PersonalDetails> {
+    const { data } = await api.get<{ data: PersonalDetails }>(`/me/people/${accountId}/personal/`);
+    return data.data;
   },
 };

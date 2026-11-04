@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { MessageSquare, Share2, ThumbsUp } from "lucide-vue-next";
-import { computed, onBeforeUnmount, ref } from "vue";
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { topReactions } from "@/lib/reactionCounts";
-import { REACTIONS, reactionByKey } from "@/lib/reactions";
+import ReactionPicker from "@/components/post/ReactionPicker.vue";
+import { reactionByKey } from "@/lib/reactions";
 
 const props = defineProps<{
   myReaction: string | null;
@@ -34,51 +35,10 @@ const summaryEmojis = computed(() => {
   return top.length ? top : [current.value?.emoji ?? "👍"];
 });
 
-// --- Reaction picker: hover (desktop) + long-press (touch). ---
-const pickerOpen = ref(false);
-let openTimer: number | undefined;
-let closeTimer: number | undefined;
-let pressTimer: number | undefined;
-let suppressClick = false;
-
-function openSoon() {
-  window.clearTimeout(closeTimer);
-  openTimer = window.setTimeout(() => (pickerOpen.value = true), 300);
-}
-function closeSoon() {
-  window.clearTimeout(openTimer);
-  closeTimer = window.setTimeout(() => (pickerOpen.value = false), 250);
-}
-function cancelClose() {
-  window.clearTimeout(closeTimer);
-}
-function choose(type: string) {
-  pickerOpen.value = false;
-  emit("react", type);
-}
 function toggleMain() {
-  if (suppressClick) {
-    suppressClick = false;
-    return;
-  }
   if (props.myReaction) emit("unreact");
   else emit("react", "like");
 }
-function touchStart() {
-  pressTimer = window.setTimeout(() => {
-    pickerOpen.value = true;
-    suppressClick = true;
-  }, 400);
-}
-function touchEnd() {
-  window.clearTimeout(pressTimer);
-}
-
-onBeforeUnmount(() => {
-  window.clearTimeout(openTimer);
-  window.clearTimeout(closeTimer);
-  window.clearTimeout(pressTimer);
-});
 </script>
 
 <template>
@@ -114,43 +74,25 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="grid grid-cols-3 border-t border-gray-100 pt-1 text-sm dark:border-gray-800">
-      <!-- Like + reaction picker -->
-      <div class="relative" @mouseenter="openSoon" @mouseleave="closeSoon">
-        <template v-if="pickerOpen">
-          <div class="fixed inset-0 z-40" @click="pickerOpen = false" />
-        </template>
-        <div
-          v-if="pickerOpen"
-          class="absolute bottom-full start-0 z-50 mb-2 flex animate-pop-in items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-2 shadow-pop dark:border-gray-700 dark:bg-gray-800"
-          @mouseenter="cancelClose"
-          @mouseleave="closeSoon"
-        >
+      <!-- Like + reaction picker (hover, long press, or ArrowUp) -->
+      <ReactionPicker @pick="emit('react', $event)" @toggle="toggleMain">
+        <template #default="pick">
           <button
-            v-for="r in REACTIONS"
-            :key="r.key"
-            type="button"
-            class="text-2xl leading-none transition hover:-translate-y-1 hover:scale-125"
-            :title="t(r.labelKey)"
-            :aria-label="t(r.labelKey)"
-            @click="choose(r.key)"
+            class="btn-ghost w-full justify-center"
+            :class="current ? current.color + ' font-semibold' : ''"
+            :aria-pressed="!!current"
+            :aria-keyshortcuts="'ArrowUp'"
+            @click="pick.onClick"
+            @keydown="pick.onKeydown"
+            @touchstart.passive="pick.onTouchstart"
+            @touchend="pick.onTouchend"
           >
-            {{ r.emoji }}
+            <span v-if="current" class="text-lg leading-none">{{ current.emoji }}</span>
+            <ThumbsUp v-else class="h-5 w-5" />
+            {{ current ? t(current.labelKey) : t("post.like") }}
           </button>
-        </div>
-
-        <button
-          class="btn-ghost w-full justify-center"
-          :class="current ? current.color + ' font-semibold' : ''"
-          :aria-pressed="!!current"
-          @click="toggleMain"
-          @touchstart.passive="touchStart"
-          @touchend="touchEnd"
-        >
-          <span v-if="current" class="text-lg leading-none">{{ current.emoji }}</span>
-          <ThumbsUp v-else class="h-5 w-5" />
-          {{ current ? t(current.labelKey) : t("post.like") }}
-        </button>
-      </div>
+        </template>
+      </ReactionPicker>
 
       <button class="btn-ghost justify-center" @click="$emit('comment')">
         <MessageSquare class="h-5 w-5" /> {{ t("post.comment") }}

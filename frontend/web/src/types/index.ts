@@ -7,6 +7,19 @@ export interface Account {
   status: string;
   language: string;
   theme: string;
+  // Settings centre (3C). Optional: older servers don't send them.
+  created_at?: string;
+  last_login_at?: string | null;
+  date_of_birth?: string | null;
+  gender?: "" | "female" | "male" | "custom" | "prefer_not_to_say";
+  gender_custom?: string;
+  birthday_visibility?: "friends" | "only_me";
+  gender_visibility?: "friends" | "only_me";
+  show_presence?: boolean;
+  login_alerts?: boolean;
+  phone?: string;
+  phone_verified?: boolean;
+  two_factor_enabled?: boolean;
 }
 
 export interface Tokens {
@@ -54,6 +67,8 @@ export interface Profile {
   city?: string;
   country?: string;
   visibility: string;
+  /** Own profile only: shown in people search and suggestions (spec B). */
+  searchable?: boolean;
   completion_pct?: number;
   links?: ProfileLink[];
   education?: ProfileEducation[];
@@ -138,6 +153,8 @@ export interface SponsoredSlot {
   body?: string;
   cta?: string;
   link_url?: string;
+  /** The ad's image, when it has one. */
+  media_id?: string | null;
   token: string;
   sponsored: boolean;
 }
@@ -156,6 +173,26 @@ export interface Conversation {
   /** For the viewer. */
   unread_count?: number;
   archived?: boolean;
+  /** Marketplace threads: the listing they are about. */
+  listing_id?: string | null;
+  /** Marketplace threads: the listing's title and cover when chat last heard of it. */
+  listing_title?: string;
+  listing_cover_media_id?: string | null;
+  /** Page threads: the Page written to (its team answers as the Page). */
+  page_id?: string | null;
+  /** The viewer's own message-request state. */
+  request_status?: "none" | "pending" | "spam";
+  /** The newest message the viewer can see (inbox row preview). */
+  last_message?: ConversationPreview | null;
+}
+
+export interface ConversationPreview {
+  id: string;
+  sender_id: string;
+  type: string;
+  body: string;
+  deleted: boolean;
+  created_at: string;
 }
 
 export interface PinnedMessage {

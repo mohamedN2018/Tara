@@ -30,6 +30,7 @@ ACTIONS_BY_TARGET: dict[str, frozenset[str]] = {
     "listing": _CONTENT_ACTIONS,
     "listing_review": _CONTENT_ACTIONS,
     "gathering": _CONTENT_ACTIONS,  # an event (post service, 1.13)
+    "story": _CONTENT_ACTIONS,  # a story (post service, 1.9)
     "group": _CONTENT_ACTIONS,  # a group (profile service, 1.11): remove suspends it
     "page": frozenset({"remove", "restrict", "warn", "dismiss"}),
     "user": frozenset({"restrict", "shadow", "warn", "dismiss"}),
@@ -56,6 +57,7 @@ REVERSALS: dict[tuple[str, str], str] = {
         "listing_review",
         "gathering",
         "group",
+        "story",
     )
 }
 
@@ -120,6 +122,7 @@ def ingest_report(
     target_id: str,
     reason: str = "",
     owner_id: str | None = None,
+    evidence: dict | None = None,
 ) -> ModerationCase:
     """Record a report and attach it to the open case for that target (created if none).
 
@@ -146,18 +149,25 @@ def ingest_report(
             target_type=target_type,
             target_id=target_id,
             reason=reason[:200],
+            evidence=evidence or {},
         )
         ModerationCase.objects.filter(id=case.id).update(report_count=F("report_count") + 1)
         case.refresh_from_db()
     return case
 
 
-def queue(state: str | None = None):
+def queue(state: str | None = None, assigned_to: str | None = None):
+    """The case queue: unresolved cases by default, or one state; optionally one assignee."""
     qs = ModerationCase.objects.all()
     if state:
         qs = qs.filter(state=state)
     else:
         qs = qs.exclude(state=ModerationCase.State.RESOLVED)
+    if assigned_to is not None:
+        qs = qs.filter(assigned_to=assigned_to)
+    if state == ModerationCase.State.RESOLVED:
+        # The history reads newest decision first.
+        return qs.order_by("-updated_at", "-id")
     return qs.order_by("-report_count", "-created_at", "-id")
 
 
@@ -209,6 +219,13 @@ def take_action(case_id: str, moderator_id: str, action: str, reason: str = "") 
                 "target_type": case.target_type,
                 "target_id": case.target_id,
                 "action": action,
+                # Who the decision is about, so notification can tell them
+                # (additive; null when the case never learned its owner).
+                "owner_id": str(case.owner_id) if case.owner_id else None,
+                # The note the moderator chose to share with the owner (the same
+                # text account_status.my_cases shows them; additive, "" when none).
+                # Marketplace keeps it on a rejected/removed listing for the seller.
+                "reason": reason or "",
             },
             actor_id=str(moderator_id),
         )
@@ -359,6 +376,7 @@ def resolve_appeal(appeal_id: str, moderator_id: str, status: str) -> Appeal:
                     "target_type": case.target_type,
                     "target_id": case.target_id,
                     "action": reversal,
+                    "owner_id": str(case.owner_id) if case.owner_id else None,
                 },
                 actor_id=str(moderator_id),
             )
@@ -375,6 +393,8 @@ def resolve_appeal(appeal_id: str, moderator_id: str, status: str) -> Appeal:
                     "target_type": case.target_type,
                     "status": status,
                     "reversal": reversal,
+                    # The appellant, so notification can tell them the outcome.
+                    "account_id": str(appeal.account_id),
                 },
                 actor_id=str(moderator_id),
             )
@@ -391,6 +411,7 @@ _REPORT_EVENT_TARGETS = {
     "marketplace.review.reported": ("listing_review", "review_id"),
     "gathering.reported": ("gathering", "gathering_id"),
     "group.reported": ("group", "group_id"),
+    "story.reported": ("story", "story_id"),
 }
 
 
@@ -411,4 +432,20 @@ def ingest_report_event(event_type: str, payload: dict) -> None:
         target_id=str(target_id),
         reason=str(payload.get("reason") or ""),
         owner_id=payload.get("owner_id"),  # absent on events from before 1.2
+        evidence=_evidence(payload.get("snapshot")),
     )
+
+
+_EVIDENCE_KEYS = {"type": str, "body": str, "created_at": str, "attachment_count": int}
+
+
+def _evidence(snapshot) -> dict:
+    """The text snapshot a report event carries (message.reported), bounded; {} otherwise."""
+    if not isinstance(snapshot, dict):
+        return {}
+    out: dict = {}
+    for key, kind in _EVIDENCE_KEYS.items():
+        value = snapshot.get(key)
+        if isinstance(value, kind) and not isinstance(value, bool):
+            out[key] = value[:1000] if isinstance(value, str) else value
+    return out

@@ -87,7 +87,9 @@ EDITABLE_FIELDS = (
     "post_approval",
     "cover_media_id",
 )
-LIST_SCOPES = ("mine", "discover", "invited", "requested")
+# ``managed``: my active groups where I am staff (moderator and up), for the
+# "Groups you manage" hub.
+LIST_SCOPES = ("mine", "discover", "invited", "requested", "managed")
 
 
 # ---- errors ------------------------------------------------------------------------
@@ -659,6 +661,22 @@ def decline_request(actor_id: str, group: Group, account_id: str) -> None:
         )
 
 
+def revoke_invite(actor_id: str, group: Group, account_id: str) -> None:
+    """Staff who see the pending invitations withdraw one. The account keeps no
+    relation with the group (``removed``, ``invited`` -> ``none``); nobody is told."""
+    with transaction.atomic():
+        group = _lock(group)
+        _require(membership(group, actor_id), "approve_requests")
+        row = _target(group, account_id)
+        if row.state != State.INVITED:
+            raise _not_found("Invitation")
+        previous = _snapshot(row)
+        row.delete()
+        _emit_member(
+            group, account_id, action="removed", actor_id=actor_id, member=None, previous=previous
+        )
+
+
 def _check_can_act(actor_role: str, row: GroupMember, group: Group) -> None:
     if row.state == State.ACTIVE:
         if not roles.can_act_on(actor_role, row.role):
@@ -896,6 +914,9 @@ def list_queryset(viewer_id: str, scope: str = "mine", *, q: str = "", category:
             .exclude(id__in=_blocked_owner_groups(viewer))
             .order_by("-created_at", "-id")
         )
+    if scope == "managed":
+        staff = mine.filter(state=State.ACTIVE, role__in=(Role.OWNER, Role.ADMIN, Role.MODERATOR))
+        return base.filter(id__in=staff.values("group_id")).order_by("-updated_at", "-id")
     state = {"mine": State.ACTIVE, "invited": State.INVITED, "requested": State.REQUESTED}[scope]
     return base.filter(id__in=mine.filter(state=state).values("group_id")).order_by(
         "-updated_at", "-id"

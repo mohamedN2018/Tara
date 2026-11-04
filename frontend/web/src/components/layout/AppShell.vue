@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { MessageCirclePlus } from "lucide-vue-next";
-import { computed, onMounted, ref } from "vue";
+import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute } from "vue-router";
 
+import ChatDock from "@/components/chat/ChatDock.vue";
 import AppNavbar from "@/components/layout/AppNavbar.vue";
 import LeftSidebar from "@/components/layout/LeftSidebar.vue";
 import MobileBottomNavigation from "@/components/layout/MobileBottomNavigation.vue";
@@ -15,8 +14,9 @@ import { useNotificationStore } from "@/stores/notifications";
 import { usePresenceStore } from "@/stores/presence";
 import { useUiStore } from "@/stores/ui";
 
-// `right=false` lets a view drop the right rail (e.g. full-width pages like chat).
-withDefaults(defineProps<{ right?: boolean }>(), { right: true });
+// `right=false` lets a view drop the right rail (e.g. full-width pages like chat);
+// `left=false` drops the start rail (profile, friends hub: their own navigation).
+withDefaults(defineProps<{ right?: boolean; left?: boolean }>(), { right: true, left: true });
 
 const { t } = useI18n();
 const ui = useUiStore();
@@ -26,9 +26,6 @@ const notifications = useNotificationStore();
 const presence = usePresenceStore();
 const auth = useAuthStore();
 const chatUnread = useChatUnreadStore();
-const route = useRoute();
-// The floating messenger button (desktop): everywhere but the inbox itself.
-const showMessengerFab = computed(() => !route.path.startsWith("/messages"));
 
 onMounted(() => {
   notifications.bind();
@@ -70,7 +67,7 @@ onMounted(() => {
 
     <div class="relative mx-auto flex w-full max-w-[1600px] gap-5 px-2 pt-16 sm:px-4 xl:px-6">
       <!-- Start rail (desktop) -->
-      <aside class="sticky top-16 hidden h-[calc(100vh-4rem)] w-60 shrink-0 overflow-y-auto pt-3 lg:block xl:w-[17.5rem] 2xl:w-[21rem]">
+      <aside v-if="left" class="sticky top-16 hidden h-[calc(100vh-4rem)] w-60 shrink-0 overflow-y-auto pt-3 lg:block xl:w-[17.5rem] 2xl:w-[21rem]">
         <LeftSidebar />
       </aside>
 
@@ -91,20 +88,8 @@ onMounted(() => {
 
     <MobileBottomNavigation />
 
-    <!-- Floating messenger button (desktop; mobile reaches messages from the top bar) -->
-    <RouterLink
-      v-if="showMessengerFab"
-      to="/messages"
-      class="fixed bottom-6 end-6 z-30 hidden h-14 w-14 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-800 shadow-pop transition hover:text-brand-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100 dark:hover:text-brand-300 lg:flex"
-      :aria-label="t('nav.messages')"
-      :title="t('nav.messages')"
-      data-testid="messenger-fab"
-    >
-      <MessageCirclePlus class="h-6 w-6" aria-hidden="true" />
-      <span v-if="chatUnread.conversations > 0" class="badge absolute -top-1 -end-1">
-        {{ chatUnread.conversations > 99 ? "99+" : chatUnread.conversations }}
-      </span>
-    </RouterLink>
+    <!-- Docked mini chats and the New message button (desktop, not on the inbox): components/chat/ChatDock.vue -->
+    <ChatDock />
   </div>
 </template>
 

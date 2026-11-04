@@ -74,6 +74,7 @@ def test_unread_counts_per_conversation_and_total_badge(client_for):
     assert client.get(reverse("chat:unread")).json()["data"] == {
         "messages": 4,
         "conversations": 2,
+        "requests": 0,
     }
     # The sender has nothing unread in what they sent.
     assert _conv(client_for(peer), conv)["unread_count"] == 0
@@ -83,6 +84,7 @@ def test_unread_counts_per_conversation_and_total_badge(client_for):
     assert client.get(reverse("chat:unread")).json()["data"] == {
         "messages": 1,
         "conversations": 1,
+        "requests": 0,
     }
 
 
@@ -594,7 +596,11 @@ def test_added_group_member_sees_no_earlier_history_and_nothing_unread(client_fo
 
     assert client.get(reverse("chat:messages", args=[group.id])).json()["data"] == []
     assert _conv(client, group)["unread_count"] == 0
-    assert client.get(reverse("chat:unread")).json()["data"] == {"messages": 0, "conversations": 0}
+    assert client.get(reverse("chat:unread")).json()["data"] == {
+        "messages": 0,
+        "conversations": 0,
+        "requests": 0,
+    }
     search = client.get(reverse("chat:message-search"), {"q": "joined"}).json()["data"]
     assert search == []
     after = _send(admin, group, "welcome")

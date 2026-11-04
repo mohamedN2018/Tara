@@ -4,8 +4,10 @@ export default { name: "HomeView" };
 </script>
 
 <script setup lang="ts">
+import { Clock, Settings2, Undo2 } from "lucide-vue-next";
 import { nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useRoute, useRouter } from "vue-router";
 
 import CompleteProfileCard from "@/components/auth/CompleteProfileCard.vue";
 import AppShell from "@/components/layout/AppShell.vue";
@@ -14,11 +16,16 @@ import CreatePostCard from "@/components/post/CreatePostCard.vue";
 import HideFeedbackCard from "@/components/post/HideFeedbackCard.vue";
 import PostCard from "@/components/post/PostCard.vue";
 import SponsoredCard from "@/components/post/SponsoredCard.vue";
+import VideosRail from "@/components/post/VideosRail.vue";
+import PeopleYouMayKnowStrip from "@/components/social/PeopleYouMayKnowStrip.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
+import StoriesRail from "@/components/stories/StoriesRail.vue";
 import { realtime } from "@/lib/ws";
-import { FEED_MODES, type FeedMode, feedService, type HideReason, hydrateFeed } from "@/services/feed";
+import { FEED_MODES, type FeedMode, type FeedReason, feedService, type HideReason, hydrateFeed } from "@/services/feed";
+import { graphService } from "@/services/graph";
+import { postService, REPORT_ERRORS } from "@/services/post";
 import { useDirectoryStore } from "@/stores/directory";
 import { useToastStore } from "@/stores/toasts";
 import type { Post, SponsoredSlot } from "@/types";
@@ -26,6 +33,8 @@ import type { Post, SponsoredSlot } from "@/types";
 const { t } = useI18n();
 const toasts = useToastStore();
 const directory = useDirectoryStore();
+const route = useRoute();
+const router = useRouter();
 
 const posts = ref<Post[]>([]);
 const sponsored = ref<SponsoredSlot[]>([]);
@@ -48,7 +57,14 @@ function savedMode(): FeedMode {
     return DEFAULT_MODE;
   }
 }
-const mode = ref<FeedMode>(savedMode());
+// A `?mode=` link (left rail "Feeds", feed preferences) wins over the remembered one.
+function queryMode(): FeedMode | null {
+  const q = route.query.mode;
+  return typeof q === "string" && (FEED_MODES as readonly string[]).includes(q) ? (q as FeedMode) : null;
+}
+const mode = ref<FeedMode>(queryMode() ?? savedMode());
+// Why each post reached this feed (feed's reason): "Why am I seeing this post?".
+const reasons = ref<Record<string, FeedReason>>({});
 const modesSupported = ref(false);
 function setMode(next: FeedMode) {
   if (next === mode.value) return;
@@ -58,12 +74,22 @@ function setMode(next: FeedMode) {
   } catch {
     // Remembered for this visit only.
   }
+  if (route.query.mode !== next) void router.replace({ query: { ...route.query, mode: next } });
   hidden.value = {};
   snoozedAuthors.value = new Set();
+  menuSnoozed.value = {};
   // New posts found for the old mode may not belong to this one.
   pending.value = [];
   void load(true);
 }
+// The left rail's Feeds link while Home is already open (KeepAlive keeps this view).
+watch(
+  () => route.query.mode,
+  () => {
+    const q = queryMode();
+    if (q && q !== mode.value) setMode(q);
+  },
+);
 
 // A response for an older mode (or an older first page) is dropped.
 let generation = 0;
@@ -85,6 +111,7 @@ async function load(initial = false) {
     const known = new Set(initial ? [] : posts.value.map((p) => p.id));
     const fresh = page.posts.filter((p) => !known.has(p.id));
     posts.value = initial ? fresh : [...posts.value, ...fresh];
+    reasons.value = initial ? { ...page.reasons } : { ...reasons.value, ...page.reasons };
     if (initial) {
       sponsored.value = page.sponsored;
       // On wide screens the first slot shows in the right column instead of the feed.
@@ -110,6 +137,8 @@ interface HideState {
   reason: HideReason | null;
   snoozed: boolean;
   busy: boolean;
+  reported?: boolean;
+  unfollowed?: boolean;
 }
 const hidden = ref<Record<string, HideState>>({});
 // Authors snoozed here: their other cards leave the list until Undo.
@@ -209,6 +238,72 @@ async function onUnsnooze(post: Post) {
   } catch (e) {
     patchHide(post.id, { busy: false });
     toasts.error(e);
+  }
+}
+
+// Hide card: report the post (moderation), or unfollow a followed author.
+async function onHideReport(post: Post, reason: string) {
+  patchHide(post.id, { busy: true });
+  try {
+    await postService.report(post.id, reason);
+    patchHide(post.id, { busy: false, reported: true });
+  } catch (e) {
+    patchHide(post.id, { busy: false });
+    toasts.error(e, REPORT_ERRORS);
+  }
+}
+async function onHideUnfollow(post: Post) {
+  patchHide(post.id, { busy: true });
+  try {
+    if ((post.author_type ?? "user") === "page") await graphService.unfollowPage(post.author_id);
+    else await graphService.unfollow(post.author_id);
+    patchHide(post.id, { busy: false, unfollowed: true });
+    dropAuthor(post.author_id, post.id);
+  } catch (e) {
+    patchHide(post.id, { busy: false });
+    toasts.error(e);
+  }
+}
+
+// Muted or unfollowed from the post menu: the author's other items leave the
+// list now (the feed itself stops sending them).
+function dropAuthor(authorId: string, keepId?: string) {
+  posts.value = posts.value.filter((p) => p.author_id !== authorId || p.id === keepId);
+  pending.value = pending.value.filter((p) => p.author_id !== authorId);
+}
+function onAuthorGone(post: Post) {
+  dropAuthor(post.author_id);
+}
+
+// Snooze from the post menu: the card turns into a "snoozed" notice with Undo.
+const menuSnoozed = ref<Record<string, boolean>>({});
+const snoozeBusy = ref<string | null>(null);
+async function onMenuSnooze(post: Post) {
+  if (snoozeBusy.value) return;
+  snoozeBusy.value = post.id;
+  try {
+    await feedService.snooze(post.author_id);
+    setSnoozed(post.author_id, true);
+    menuSnoozed.value = { ...menuSnoozed.value, [post.id]: true };
+  } catch (e) {
+    toasts.error(e);
+  } finally {
+    snoozeBusy.value = null;
+  }
+}
+async function undoMenuSnooze(post: Post) {
+  if (snoozeBusy.value) return;
+  snoozeBusy.value = post.id;
+  try {
+    await feedService.unsnooze(post.author_id);
+    setSnoozed(post.author_id, false);
+    const next = { ...menuSnoozed.value };
+    delete next[post.id];
+    menuSnoozed.value = next;
+  } catch (e) {
+    toasts.error(e);
+  } finally {
+    snoozeBusy.value = null;
   }
 }
 
@@ -316,10 +411,11 @@ onUnmounted(() => {
     <div class="mx-auto w-full max-w-[600px] space-y-4">
       <CompleteProfileCard />
       <CreatePostCard @created="onCreated" />
+      <StoriesRail />
 
       <div
         v-if="modesSupported"
-        class="card flex gap-1 overflow-x-auto p-1.5"
+        class="card flex items-center gap-1 overflow-x-auto p-1.5"
         role="group"
         :aria-label="t('homeFeed.modes.label')"
         data-testid="feed-modes"
@@ -339,6 +435,15 @@ onUnmounted(() => {
         >
           {{ t(`homeFeed.modes.${m}`) }}
         </button>
+        <RouterLink
+          to="/feeds/manage"
+          class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-gray-600 transition hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+          :aria-label="t('postsFeed.feeds.manage')"
+          :title="t('postsFeed.feeds.manage')"
+          data-testid="feed-manage"
+        >
+          <Settings2 class="h-5 w-5" aria-hidden="true" />
+        </RouterLink>
       </div>
 
       <div v-if="pending.length" class="sticky top-16 z-10 flex justify-center">
@@ -352,11 +457,32 @@ onUnmounted(() => {
 
       <LoadingSkeleton v-if="loading" :rows="3" />
       <ErrorState v-else-if="error" @retry="load(true)" />
-      <EmptyState v-else-if="posts.length === 0">{{ t("feed.empty") }}</EmptyState>
+      <EmptyState v-else-if="posts.length === 0 && mode === 'favorites' && modesSupported" class="card">
+        {{ t("postsFeed.feeds.favoritesEmpty") }}
+        <RouterLink to="/settings/content#favorites" class="mt-2 block font-semibold text-brand-600 hover:underline dark:text-brand-300">
+          {{ t("postsFeed.feeds.favoritesLink") }}
+        </RouterLink>
+      </EmptyState>
+      <EmptyState v-else-if="posts.length === 0" class="card">{{ t("feed.empty") }}</EmptyState>
 
       <template v-else>
         <template v-for="(post, i) in posts" :key="post.id">
-          <div v-show="hidden[post.id] || !snoozedAuthors.has(post.author_id)" :data-feed-item="post.id">
+          <div
+            v-show="hidden[post.id] || menuSnoozed[post.id] || !snoozedAuthors.has(post.author_id)"
+            :data-feed-item="post.id"
+          >
+            <div
+              v-if="menuSnoozed[post.id] && !hidden[post.id]"
+              class="card flex items-center gap-3 p-4"
+              role="status"
+              data-testid="snoozed-notice"
+            >
+              <Clock class="h-5 w-5 shrink-0" aria-hidden="true" />
+              <span class="min-w-0 flex-1 text-sm" dir="auto">{{ t("postsFeed.menu.snoozed", { name: directory.label(post.author_id) }) }}</span>
+              <button type="button" class="btn-ghost shrink-0" :disabled="snoozeBusy === post.id" @click="undoMenuSnooze(post)">
+                <Undo2 class="h-4 w-4 rtl:-scale-x-100" aria-hidden="true" /> {{ t("postsFeed.menu.undo") }}
+              </button>
+            </div>
             <HideFeedbackCard
               v-if="hidden[post.id]"
               :post-id="post.id"
@@ -364,21 +490,35 @@ onUnmounted(() => {
               :reason="hidden[post.id].reason"
               :snoozed="hidden[post.id].snoozed"
               :busy="hidden[post.id].busy"
+              :can-unfollow="reasons[post.id] === 'follow'"
+              :reported="!!hidden[post.id].reported"
+              :unfollowed="!!hidden[post.id].unfollowed"
               @undo="onUndo(post)"
               @reason="onReason(post, $event)"
               @snooze="onSnooze(post)"
               @unsnooze="onUnsnooze(post)"
+              @report="onHideReport(post, $event)"
+              @unfollow="onHideUnfollow(post)"
             />
             <!-- Kept mounted while hidden so Undo brings it back as it was. -->
             <PostCard
-              v-show="!hidden[post.id]"
+              v-show="!hidden[post.id] && !menuSnoozed[post.id]"
               :post="post"
               hideable
+              snoozable
+              :feed-reason="reasons[post.id] ?? null"
+              :feed-mode="modesSupported ? mode : null"
               @removed="onRemoved"
               @shared="onCreated"
               @hide="onHide"
+              @snooze="onMenuSnooze"
+              @author-gone="onAuthorGone"
             />
           </div>
+          <!-- Real video posts only; renders nothing when there are none. -->
+          <VideosRail v-if="i === 1" />
+          <!-- Narrow screens have no right column: its "People you may know" comes into the feed as a strip. -->
+          <PeopleYouMayKnowStrip v-if="!railVisible && i === Math.min(2, posts.length - 1)" />
           <SponsoredCard
             v-if="i % 5 === 4 && sponsored[Math.floor(i / 5)] && !(i === 4 && railVisible)"
             :ad="sponsored[Math.floor(i / 5)]"

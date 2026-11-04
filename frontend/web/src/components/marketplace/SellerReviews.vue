@@ -14,7 +14,11 @@ import { useToastStore } from "@/stores/toasts";
 
 import StarRating from "./StarRating.vue";
 
-const props = defineProps<{ sellerId: string; listingId: string; canReview: boolean }>();
+// Without `listingId` (the seller's shop) the list is read-only: no form.
+const props = withDefaults(defineProps<{ sellerId: string; listingId?: string; canReview?: boolean }>(), {
+  listingId: "",
+  canReview: false,
+});
 const emit = defineEmits<{ reviewed: [] }>();
 const { t } = useI18n();
 const directory = useDirectoryStore();
@@ -60,7 +64,7 @@ onMounted(() => load());
 watch(() => props.sellerId, () => load());
 
 async function submit() {
-  if (!rating.value || submitting.value) return;
+  if (!rating.value || submitting.value || !props.listingId) return;
   submitting.value = true;
   try {
     const review = await marketplaceService.createReview(props.listingId, rating.value, body.value.trim());
@@ -95,7 +99,7 @@ async function sendReport(id: string) {
     <h2 id="seller-reviews-title" class="section-title mb-3">{{ t("market.reviews.title") }}</h2>
 
     <form
-      v-if="canReview && !refused"
+      v-if="listingId && canReview && !refused"
       class="mb-4 space-y-2 rounded-xl border border-brand-100 bg-brand-50/50 p-3 dark:border-brand-900/60 dark:bg-brand-950/30"
       @submit.prevent="submit"
     >

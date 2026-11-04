@@ -87,6 +87,8 @@ S3_ACCESS_KEY_ID=
 S3_SECRET_ACCESS_KEY=
 # Optional sign-in and phone verification (each feature is off while empty).
 GOOGLE_CLIENT_ID=
+# true: staff roles reach the token only once the account has 2FA on (3C).
+IDENTITY_STAFF_REQUIRE_2FA=false
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_BOT_USERNAME=
 # ============================================================================
@@ -184,6 +186,8 @@ MEDIA_PLAYBACK_ACCESS_CACHE_SECONDS=30
 
 # ---- Django secret keys (one per service) -----------------------------------
 IDENTITY_SECRET_KEY=$(secret)
+# Encrypts TOTP secrets at rest (3C). Never change it after users turn on 2FA.
+IDENTITY_TOTP_ENCRYPTION_KEY=$(secret)
 PROFILE_SECRET_KEY=$(secret)
 GRAPH_SECRET_KEY=$(secret)
 MEDIA_SECRET_KEY=$(secret)
@@ -242,6 +246,7 @@ AUTH_REGISTER_RATE=10/hour
 AUTH_LOGIN_RATE=20/min
 AUTH_LOGIN_TARGET_RATE=10/min
 AUTH_PASSWORD_RATE=5/hour
+ACCOUNT_SECURITY_RATE=30/hour
 POST_REPORT_RATE=20/hour
 GROUP_REPORT_RATE=20/hour
 PROFILE_HANDLE_CHECK_RATE=30/min
@@ -267,8 +272,13 @@ PROFILE_EMIT_PAGE_UPDATED=true
 PROFILE_EMIT_GROUP_EVENTS=true
 POST_EMIT_GROUP_EVENTS=true
 POST_EMIT_TAG_EVENTS=true
+POST_EMIT_STORY_EVENTS=true
+POST_EMIT_HIDE_EVENTS=true
 GRAPH_EMIT_MUTE_FAVORITE_EVENTS=true
 GRAPH_EMIT_RESTRICT_EVENTS=true
+ADMIN_EMIT_SYSTEM_NOTICES=true
+CHAT_MESSAGE_REQUESTS=true
+CHAT_EMIT_MESSAGE_REPORTED=true
 
 # ---- Registration (track 1D) -----------------------------------------------------
 LEGAL_TERMS_VERSION=2026-11-04-draft

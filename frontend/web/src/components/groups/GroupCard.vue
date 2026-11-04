@@ -47,8 +47,8 @@ const friendLine = computed(() => {
       </span>
     </RouterLink>
     <div :class="compact ? 'min-w-0 flex-1' : 'space-y-1 p-3'">
-      <RouterLink :to="groupPath(group)" class="block truncate font-bold hover:text-brand-600 dark:hover:text-brand-300" dir="auto">
-        {{ group.name }}
+      <RouterLink :to="groupPath(group)" class="block truncate font-bold hover:text-brand-600 dark:hover:text-brand-300" data-testid="group-card-name">
+        <bdi>{{ group.name }}</bdi>
       </RouterLink>
       <p class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-gray-500 dark:text-gray-400">
         <PrivacyBadge :privacy="group.privacy" />
@@ -56,6 +56,9 @@ const friendLine = computed(() => {
         <span>{{ t("groups.memberCount", { count: group.member_count }, group.member_count) }}</span>
       </p>
       <p v-if="friendLine" class="truncate text-xs text-brand-700 dark:text-brand-300" dir="auto">{{ friendLine }}</p>
+      <div v-if="$slots.actions" class="flex flex-wrap items-center gap-2 pt-2">
+        <slot name="actions" />
+      </div>
     </div>
     <button
       v-if="dismissible"

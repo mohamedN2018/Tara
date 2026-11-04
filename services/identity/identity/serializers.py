@@ -7,7 +7,7 @@ from rest_framework import serializers
 from rest_framework.exceptions import ErrorDetail
 
 from . import age
-from .models import Account, Gender, UserSession
+from .models import Account, Gender, PersonalVisibility, UserSession
 
 LANGUAGES = ["en", "ar"]
 THEMES = ["light", "dark", "system"]
@@ -56,7 +56,8 @@ class RegisterSerializer(serializers.Serializer):
         required=False, allow_blank=True, default="", max_length=40
     )
     language = serializers.ChoiceField(choices=LANGUAGES, default="en")
-    theme = serializers.ChoiceField(choices=THEMES, default="system")
+    # Tara is dark first; "system" is then always an explicit choice that syncs.
+    theme = serializers.ChoiceField(choices=THEMES, default="dark")
     handle = serializers.RegexField(
         r"^[a-zA-Z0-9_]{3,30}$", required=False, allow_blank=True, default=""
     )
@@ -130,6 +131,9 @@ class LoginSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True, trim_whitespace=False)
     # Unticked "Remember me": the refresh cookie lasts until the browser closes.
     remember = serializers.BooleanField(required=False, default=True)
+    # The second factor (3C): a 6-digit app code or a recovery code, sent on the
+    # retry after the server answered ``two_factor_required``.
+    otp = serializers.CharField(required=False, allow_blank=True, default="", max_length=32)
 
     def validate(self, attrs):
         identifier = attrs.get("identifier") or attrs.get("email") or ""
@@ -170,6 +174,11 @@ class TokenResponseSerializer(serializers.Serializer):
 
 
 class AccountSerializer(serializers.ModelSerializer):
+    """The owner's own account (GET/PATCH /me/). Never shown to anyone else."""
+
+    two_factor_enabled = serializers.SerializerMethodField()
+    phone_verified = serializers.BooleanField(read_only=True)
+
     class Meta:
         model = Account
         fields = [
@@ -181,18 +190,100 @@ class AccountSerializer(serializers.ModelSerializer):
             "theme",
             "created_at",
             "last_login_at",
+            # Settings centre (3C): personal details and their audiences.
+            "date_of_birth",
+            "gender",
+            "gender_custom",
+            "birthday_visibility",
+            "gender_visibility",
+            "show_presence",
+            "login_alerts",
+            "phone",
+            "phone_verified",
+            "two_factor_enabled",
         ]
         read_only_fields = fields
+
+    def get_two_factor_enabled(self, obj: Account) -> bool:
+        from .two_factor import is_enabled
+
+        return is_enabled(obj)
 
 
 class AccountUpdateSerializer(serializers.ModelSerializer):
     # The model columns are free text; only these values mean anything to clients.
     language = serializers.ChoiceField(choices=LANGUAGES, required=False)
     theme = serializers.ChoiceField(choices=THEMES, required=False)
+    gender = serializers.ChoiceField(choices=Gender.choices, required=False, allow_blank=True)
+    gender_custom = serializers.CharField(required=False, allow_blank=True, max_length=40)
+    birthday_visibility = serializers.ChoiceField(
+        choices=PersonalVisibility.choices, required=False
+    )
+    gender_visibility = serializers.ChoiceField(choices=PersonalVisibility.choices, required=False)
+    show_presence = serializers.BooleanField(required=False)
+    login_alerts = serializers.BooleanField(required=False)
 
     class Meta:
         model = Account
-        fields = ["language", "theme"]
+        # The date of birth is not editable here: it drives the age claims
+        # (2.12), so changing it is a support case, not a settings toggle.
+        fields = [
+            "language",
+            "theme",
+            "gender",
+            "gender_custom",
+            "birthday_visibility",
+            "gender_visibility",
+            "show_presence",
+            "login_alerts",
+        ]
+
+    def validate(self, attrs: dict) -> dict:
+        if "gender" not in attrs and "gender_custom" not in attrs:
+            return attrs
+        gender = attrs.get("gender", self.instance.gender if self.instance else "")
+        custom = attrs.get("gender_custom", self.instance.gender_custom if self.instance else "")
+        custom = " ".join(custom.split())
+        if gender == Gender.CUSTOM and not custom:
+            raise serializers.ValidationError(
+                {
+                    "gender_custom": [
+                        ErrorDetail(
+                            "Describe your gender, or pick another option.", code="required"
+                        )
+                    ]
+                }
+            )
+        attrs["gender_custom"] = custom if gender == Gender.CUSTOM else ""
+        return attrs
+
+
+class PersonalDetailsSerializer(serializers.Serializer):
+    """Documents GET /accounts/<id>/personal/: what the viewer may see."""
+
+    account_id = serializers.UUIDField()
+    birthday = serializers.DictField(allow_null=True)
+    gender = serializers.DictField(allow_null=True)
+
+
+class ReauthSerializer(serializers.Serializer):
+    """A re-authentication: the current password (blank for Google-only accounts)."""
+
+    password = serializers.CharField(
+        write_only=True, max_length=128, trim_whitespace=False, required=False, allow_blank=True
+    )
+
+
+class TwoFactorCodeSerializer(serializers.Serializer):
+    code = serializers.CharField(max_length=32)
+
+
+class TwoFactorDisableSerializer(ReauthSerializer):
+    code = serializers.CharField(max_length=32)
+
+
+class DeactivateSerializer(ReauthSerializer):
+    confirm = serializers.CharField(required=False, allow_blank=True, default="", max_length=32)
 
 
 class SessionSerializer(serializers.ModelSerializer):
@@ -220,9 +311,11 @@ class SessionSerializer(serializers.ModelSerializer):
 
 class GoogleSignInSerializer(serializers.Serializer):
     credential = serializers.CharField(max_length=4096)
+    otp = serializers.CharField(required=False, allow_blank=True, default="", max_length=32)
     # Only used when the sign-in creates the account.
     language = serializers.ChoiceField(choices=LANGUAGES, default="en")
-    theme = serializers.ChoiceField(choices=THEMES, default="system")
+    # Tara is dark first; "system" is then always an explicit choice that syncs.
+    theme = serializers.ChoiceField(choices=THEMES, default="dark")
 
 
 class GoogleLinkSerializer(serializers.Serializer):

@@ -52,6 +52,11 @@ class PostState(models.Model):
     Retries reorder events. A ``post.created`` retried after the post was deleted
     fans out nothing, one retried after an edit fans out the edited audience and
     excerpt, and an edit older than the stored one is ignored.
+
+    ``hidden`` (``post.hidden`` / ``post.unhidden``, the author's account
+    deactivated and reactivated, 3C): the post's rows stay but no feed shows
+    them. Ordered by its own ``hidden_at``, so an edit cannot make a hide or an
+    unhide look stale.
     """
 
     post_id = models.UUIDField(primary_key=True)
@@ -59,9 +64,16 @@ class PostState(models.Model):
     deleted = models.BooleanField(default=False)
     audience = models.CharField(max_length=16, blank=True, default="")
     excerpt = models.TextField(blank=True, default="")
+    hidden = models.BooleanField(default=False)
+    hidden_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "post_state"
+        indexes = [
+            models.Index(
+                fields=["post_id"], condition=models.Q(hidden=True), name="post_state_hidden_idx"
+            ),
+        ]
 
 
 class PostHide(models.Model):

@@ -64,6 +64,35 @@ class AccountNotUsable(TaraAPIError):
     http_status = 403
 
 
+class AccountSuspended(AccountNotUsable):
+    """A suspended account's sign-in (T7): the member learns until when, not the staff note.
+
+    Raised only after the password (or Google) check passed, so it says nothing
+    to someone who does not hold the account. ``details`` carries the end date
+    (empty when open-ended) and whether staff or a moderation case suspended it.
+    """
+
+    code = "account_suspended"
+    message = "This account is suspended."
+
+
+def not_usable(account: Account) -> AccountNotUsable:
+    """The error a blocked sign-in raises: suspension details for a suspended account."""
+    if account.status != Account.Status.SUSPENDED:
+        return AccountNotUsable()
+    from .account_admin import active_suspension  # account_admin imports this module
+
+    suspension = active_suspension(account)
+    until = suspension.until.isoformat() if suspension and suspension.until else ""
+    source = suspension.source if suspension else ""
+    return AccountSuspended(
+        details=[
+            {"field": "until", "code": "suspended_until", "message": until},
+            {"field": "source", "code": source or "unknown", "message": ""},
+        ]
+    )
+
+
 def _hash(raw: str) -> str:
     return token_engine.hash_token(raw)
 
@@ -91,7 +120,15 @@ def _create_session_and_tokens(
     # No unique constraint on these columns: two concurrent first logins can
     # both create one, and get_or_create would then fail every later login.
     lookup = {"account": account, "platform": platform, "label": user_agent[:120]}
-    device = Device.objects.filter(**lookup).first() or Device.objects.create(**lookup)
+    device = Device.objects.filter(**lookup).first()
+    if device is None:
+        first_device = not Device.objects.filter(account=account).exists()
+        device = Device.objects.create(**lookup)
+        from .account_center import alert_new_device  # account_center imports tokens
+
+        alert_new_device(
+            account, device_label=device.label, ip_region=ip_region, first_device=first_device
+        )
     session = UserSession.objects.create(
         account=account, device=device, ip_region=ip_region, user_agent=user_agent[:400]
     )
@@ -203,44 +240,75 @@ def resend_verification(email: str) -> None:
         transaction.on_commit(lambda: send_verification_email(email, raw_token))
 
 
-def login(
-    *,
-    email: str = "",
-    password: str,
-    identifier: str = "",
-    ip_region: str = "",
-    user_agent: str = "",
-    correlation_id: str | None = None,
-) -> IssuedTokens:
-    # ``identifier`` is an email or a username (5.6); ``email`` is the older name.
-    identifier = login_identifier.normalise(identifier or email)
-    lock_key = "login-failures:" + hashlib.sha256(identifier.encode()).hexdigest()
+def login_lock_key(identifier: str) -> str:
+    """The failure counter a sign-in identifier spends (password and second factor)."""
+    return "login-failures:" + hashlib.sha256(identifier.encode()).hexdigest()
+
+
+def raise_if_locked(lock_key: str) -> None:
     if (cache.get(lock_key) or 0) >= LOGIN_MAX_FAILURES:
         raise TaraAPIError(
             "Too many failed attempts. Try again later.",
             code="throttled",
             http_status_code=429,
         )
+
+
+def count_failure(lock_key: str) -> None:
+    cache.add(lock_key, 0, LOGIN_LOCK_SECONDS)
+    cache.incr(lock_key)
+
+
+def login(
+    *,
+    email: str = "",
+    password: str,
+    identifier: str = "",
+    otp: str = "",
+    ip_region: str = "",
+    user_agent: str = "",
+    correlation_id: str | None = None,
+) -> IssuedTokens:
+    # ``identifier`` is an email or a username (5.6); ``email`` is the older name.
+    identifier = login_identifier.normalise(identifier or email)
+    lock_key = login_lock_key(identifier)
+    raise_if_locked(lock_key)
     account = login_identifier.find_account(identifier)
     # Same work whether or not the account exists (mitigate enumeration).
     if account is None:
         make_password(password)
     if account is None or not account.check_password(password):
-        cache.add(lock_key, 0, LOGIN_LOCK_SECONDS)
-        cache.incr(lock_key)
+        count_failure(lock_key)
         if account is not None:
             emit_security_event(account, "login_failed", {}, ip_region=ip_region)
         raise InvalidCredentials()
     from .account_admin import lift_if_expired  # account_admin imports this module
 
     account = lift_if_expired(account)  # a suspension past its end date ends here
-    if not account.is_usable:
+    # A deactivated account comes back by signing in (plan 08 3C); every other
+    # unusable state (pending, suspended, deleted) is refused.
+    reactivating = account.status == Account.Status.DEACTIVATED and account.is_active
+    if not account.is_usable and not reactivating:
         emit_security_event(
             account, "login_blocked", {"status": account.status}, ip_region=ip_region
         )
-        raise AccountNotUsable()
+        raise not_usable(account)
+
+    from . import two_factor
+    from .account_center import reactivate_if_deactivated
+
+    try:
+        two_factor.check_sign_in(account, otp, ip_region=ip_region)
+    except two_factor.TwoFactorInvalid:
+        # A wrong second factor spends the same lockout budget as a wrong password.
+        count_failure(lock_key)
+        raise
 
     cache.delete(lock_key)
+    if reactivating:
+        account = reactivate_if_deactivated(
+            account, ip_region=ip_region, correlation_id=correlation_id
+        )
     with transaction.atomic():
         issued = _create_session_and_tokens(account, ip_region=ip_region, user_agent=user_agent)
         account.last_login_at = timezone.now()

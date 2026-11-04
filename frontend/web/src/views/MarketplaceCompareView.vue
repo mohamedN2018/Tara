@@ -7,6 +7,7 @@ import { useI18n } from "vue-i18n";
 import AppShell from "@/components/layout/AppShell.vue";
 import ListingThumb from "@/components/marketplace/ListingThumb.vue";
 import PriceTag from "@/components/marketplace/PriceTag.vue";
+import { categoryLabel } from "@/components/marketplace/useCategories";
 import { useCompare } from "@/components/marketplace/useCompare";
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
@@ -16,7 +17,7 @@ import { marketplaceService } from "@/services/marketplace";
 import { useDirectoryStore } from "@/stores/directory";
 import type { Listing } from "@/types";
 
-const { t } = useI18n();
+const { t, te } = useI18n();
 const compare = useCompare();
 const directory = useDirectoryStore();
 
@@ -52,7 +53,7 @@ type Row = { key: string; label: string; value: (l: Listing) => string };
 const rows = computed<Row[]>(() => [
   { key: "price_type", label: t("market.priceType"), value: (l) => t(`market.priceTypes.${l.price_type ?? "fixed"}`) },
   { key: "condition", label: t("market.condition"), value: (l) => t(`market.conditions.${l.condition}`) },
-  { key: "category", label: t("market.category"), value: (l) => l.category?.name ?? "—" },
+  { key: "category", label: t("market.category"), value: (l) => categoryLabel(l.category, t, te) || "—" },
   { key: "location", label: t("market.location"), value: (l) => l.location || "—" },
   {
     key: "availability",

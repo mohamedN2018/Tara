@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import timedelta
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Avg, Count, Exists, F, Max, OuterRef, Q, QuerySet, Subquery
+from django.db.models import Avg, Count, Exists, F, Max, OuterRef, Q, QuerySet, Subquery, Sum
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from tara_common.exceptions import Conflict, TaraAPIError
@@ -225,6 +227,16 @@ def update_listing(seller_id: str, listing_id: str, data: dict) -> Listing:
     listing = _seller_listing(seller_id, listing_id)
     if listing.status == S.REMOVED:
         raise Conflict("A listing removed by moderators cannot be edited.", code="listing_removed")
+    media_ids = None
+    if "media_ids" in data:
+        media_ids = [str(m) for m in data["media_ids"] or []]
+        if media_ids:
+            _check_attachments(seller_id, media_ids)  # remote: before the first write
+    with transaction.atomic():
+        return _apply_update(seller_id, listing, data, media_ids)
+
+
+def _apply_update(seller_id: str, listing: Listing, data: dict, media_ids) -> Listing:
     changed = [k for k in ("title", "description", "condition", "location") if k in data]
     for key in changed:
         setattr(listing, key, data[key])
@@ -258,6 +270,16 @@ def update_listing(seller_id: str, listing_id: str, data: dict) -> Listing:
     if "title" in data or "description" in data:
         listing.search_text = search_text(listing.title, listing.description)
     listing.save()
+    if media_ids is not None:
+        current = [
+            str(m) for m in listing.media.order_by("position").values_list("media_id", flat=True)
+        ]
+        if current != media_ids:
+            # The photo set is replaced as a whole: position is the order sent.
+            listing.media.all().delete()
+            for i, media_id in enumerate(media_ids):
+                ListingMedia.objects.create(listing=listing, media_id=media_id, position=i)
+            changed.append("media")
     events.emit(
         "listing.updated",
         subject_id=str(listing.id),
@@ -398,6 +420,8 @@ def _apply_filters(qs: QuerySet, f: dict, skip: str | None = None) -> QuerySet:
     if skip != "availability":
         wanted = f.get("availability") or ["available"]
         qs = qs.filter(status__in=[STATUS_FOR_AVAILABILITY[a] for a in wanted])
+    if f.get("seller_id"):
+        qs = qs.filter(seller_id=f["seller_id"])
     if f.get("location"):
         qs = qs.filter(location__icontains=f["location"])
     if f.get("currency"):
@@ -455,10 +479,55 @@ def facets(viewer_id: str, filters: dict) -> dict:
     }
 
 
-def my_listings(seller_id: str):
-    return with_viewer(
-        Listing.objects.filter(seller_id=seller_id, deleted_at__isnull=True), seller_id
-    ).order_by("-created_at")
+def my_listings(seller_id: str, statuses: list[str] | None = None):
+    qs = Listing.objects.filter(seller_id=seller_id, deleted_at__isnull=True)
+    if statuses:
+        qs = qs.filter(status__in=statuses)
+    return with_viewer(qs, seller_id).order_by("-created_at")
+
+
+def selling_summary(seller_id: str) -> dict:
+    """The seller's own dashboard: listings per status and what buyers did with them."""
+    own = Listing.objects.filter(seller_id=seller_id, deleted_at__isnull=True)
+    counts = dict.fromkeys(S.values, 0)
+    for row in own.order_by().values("status").annotate(n=Count("id")):
+        counts[row["status"]] = row["n"]
+    totals = own.aggregate(
+        views=Coalesce(Sum("view_count"), 0),
+        saves=Coalesce(Sum("save_count"), 0),
+        inquiries=Coalesce(Sum("inquiry_count"), 0),
+    )
+    return {"counts": counts, **totals}
+
+
+# ---- inquiries inbox --------------------------------------------------------
+
+INQUIRY_ROLES = ("buyer", "seller")
+
+
+def inquiries(viewer_id: str, role: str) -> QuerySet:
+    """The viewer's marketplace inbox: listings they asked about (``buyer``) or
+    buyers who asked about theirs (``seller``). People in a block with the viewer
+    are left out, like everywhere else in the marketplace."""
+    blocked = _blocked_ids(viewer_id)
+    qs = ListingInquiry.objects.filter(listing__deleted_at__isnull=True).select_related(
+        "listing", "listing__category"
+    )
+    if role == "seller":
+        qs = qs.filter(seller_id=viewer_id)
+        if blocked:
+            qs = qs.exclude(buyer_id__in=blocked)
+    else:
+        qs = qs.filter(buyer_id=viewer_id)
+        if blocked:
+            qs = qs.exclude(seller_id__in=blocked)
+    return qs.prefetch_related("listing__media").order_by("-last_activity_at", "-id")
+
+
+def inquiry_listing_visible(viewer_id: str, inquiry: ListingInquiry) -> bool:
+    """A buyer sees the listing only while it is public; the seller always does."""
+    listing = inquiry.listing
+    return str(listing.seller_id) == str(viewer_id) or listing.status in PUBLIC_STATUSES
 
 
 MAX_COMPARE = 4
@@ -575,6 +644,8 @@ def contact_seller(buyer_id: str, listing_id: str, message: str = "") -> Listing
             "buyer_id": str(buyer_id),
             "inquiry_id": str(inquiry.id),
             "title": listing.title,
+            # Additive: chat shows the listing's photo on the thread's row.
+            "cover_media_id": search_snapshot(listing)["cover_media_id"],
         },
         actor_id=str(buyer_id),
     )
@@ -780,8 +851,11 @@ def apply_review_moderation(review_id: str, action: str) -> None:
 # ---- inbound moderation -----------------------------------------------------
 
 
-def apply_moderation(listing_id: str, action: str) -> None:
-    """Driven by moderation.actioned events (Phase 6)."""
+def apply_moderation(
+    listing_id: str, action: str, case_id: str | None = None, reason: str = ""
+) -> None:
+    """Driven by moderation.actioned events (Phase 6). ``case_id`` and ``reason``
+    tell the seller which decision it was (and why, when moderation says)."""
     listing = Listing.objects.filter(id=listing_id).first()
     if listing is None:
         return
@@ -795,5 +869,20 @@ def apply_moderation(listing_id: str, action: str) -> None:
         listing.status = S.ACTIVE  # review passed, or appeal overturned
     if listing.status == previous:  # unknown action, or a repeat of the last one
         return
-    listing.save(update_fields=["status", "updated_at"])
+    fields = ["status", "updated_at"]
+    if listing.status in (S.REJECTED, S.REMOVED):
+        listing.moderation_case_id = _uuid_or_none(case_id)
+        listing.moderation_reason = (reason or "")[:2000]
+        fields += ["moderation_case_id", "moderation_reason"]
+    elif listing.status == S.ACTIVE and listing.moderation_reason:
+        listing.moderation_reason = ""  # approved: the old reason no longer applies
+        fields.append("moderation_reason")
+    listing.save(update_fields=fields)
     _emit_status(listing, previous, actor_id=listing.seller_id)
+
+
+def _uuid_or_none(value) -> str | None:
+    try:
+        return str(uuid.UUID(str(value))) if value else None
+    except ValueError:
+        return None

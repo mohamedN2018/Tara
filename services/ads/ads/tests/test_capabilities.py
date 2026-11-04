@@ -37,7 +37,7 @@ def test_a_review_decision_carries_the_reviewer_and_request_id(client_for, setti
     reviewer = _acct()
     resp = client_for(reviewer, caps=["ads.review"]).post(
         reverse("ads:review", args=[creative.id]),
-        {"decision": "rejected"},
+        {"decision": "rejected", "notes": "Misleading claim"},
         format="json",
         HTTP_X_REQUEST_ID="edge-ad1",
     )

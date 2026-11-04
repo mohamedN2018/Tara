@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/story.deleted.v1.json",
+  "title": "story.deleted v1 payload",
+  "description": "The author deleted a story, or a moderator removed it (by=moderation).",
+  "type": "object",
+  "properties": {
+    "story_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "author_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "by": {
+      "type": "string",
+      "enum": [
+        "moderation"
+      ]
+    }
+  },
+  "required": [
+    "story_id",
+    "author_id"
+  ],
+  "additionalProperties": false
+}

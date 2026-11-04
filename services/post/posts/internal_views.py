@@ -17,6 +17,8 @@ from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from stories.models import Story
+from stories.services import visible_to_viewer as story_visible
 
 from tara_common.auth import verify_internal_token
 from tara_common.exceptions import TaraAPIError
@@ -71,7 +73,12 @@ class PostVisibilityView(APIView):
             # uuid7), so media asks this one endpoint for both.
             gathering = Gathering.objects.filter(id=post_id).first()
             visible = gathering is not None and gathering_visible(viewer_id, gathering)
-            if gathering is None:
+            # A story's photo is bound to the story id (1.9): expired stories
+            # are the author's alone, close friends stories their list's.
+            story = None if gathering is not None else Story.objects.filter(id=post_id).first()
+            if story is not None:
+                visible = story_visible(viewer_id, story)
+            if gathering is None and story is None:
                 # A group's cover is bound to the group id (1.11): it is seen by
                 # whoever may see the group itself. An unknown id asks profile
                 # once (the read model may lag a new group) and fails closed.

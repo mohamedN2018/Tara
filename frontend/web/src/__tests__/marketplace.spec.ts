@@ -129,24 +129,34 @@ describe("compare selection", () => {
 });
 
 describe("marketplace service", () => {
-  it("records the inquiry, then opens the DM and sends the message through chat", async () => {
+  it("asks for the listing's marketplace thread and sends the message there", async () => {
     const post = vi.spyOn(api, "post").mockImplementation(async (url: string) => {
-      if (url.endsWith("/inquiries/")) return { data: { data: { inquiry_id: "i1", seller_id: "s1" } } };
+      if (url.endsWith("/contact/")) return { data: { data: {} } };
+      return { data: { data: { id: "m1" } } };
+    });
+    const get = vi.spyOn(api, "get").mockResolvedValue({ data: { data: [{ id: "t1" }] } });
+    const id = await marketplaceService.messageSeller({ id: "L1", seller_id: "s1" }, "Hi ", "https://x/l");
+    expect(id).toBe("t1");
+    expect(get).toHaveBeenCalledWith("/conversations/", {
+      params: { type: "marketplace", listing_id: "L1", with: "s1" },
+    });
+    expect(post.mock.calls.map((c) => c[0])).toEqual(["/marketplace/listings/L1/contact/", "/conversations/t1/messages/"]);
+    expect((post.mock.calls[1][1] as { body: string }).body).toBe("Hi\nhttps://x/l");
+  });
+
+  it("falls back to the DM when chat has not opened the thread", async () => {
+    const post = vi.spyOn(api, "post").mockImplementation(async (url: string) => {
+      if (url.endsWith("/contact/")) return { data: { data: {} } };
       if (url === "/conversations/") return { data: { data: { id: "c1" } } };
       return { data: { data: { id: "m1" } } };
     });
-    const id = await marketplaceService.messageSeller({ id: "L1", seller_id: "s1" }, "Hi ", "https://x/l");
+    vi.spyOn(api, "get").mockResolvedValue({ data: { data: [] } });
+    const id = await marketplaceService.messageSeller({ id: "L1", seller_id: "s1" }, "Hi", "", 0);
     expect(id).toBe("c1");
-    expect(post.mock.calls.map((c) => c[0])).toEqual([
-      "/marketplace/listings/L1/inquiries/",
-      "/conversations/",
-      "/conversations/c1/messages/",
-    ]);
-    expect(post.mock.calls[1][1]).toEqual({ type: "dm", other_id: "s1" });
-    expect((post.mock.calls[2][1] as { body: string }).body).toBe("Hi\nhttps://x/l");
+    expect(post.mock.calls[1]).toEqual(["/conversations/", { type: "dm", other_id: "s1" }]);
   });
 
-  it("does not open a DM when the inquiry is refused", async () => {
+  it("opens no conversation when the listing refuses the contact", async () => {
     const post = vi.spyOn(api, "post").mockRejectedValue(new Error("404"));
     await expect(marketplaceService.messageSeller({ id: "L1", seller_id: "s1" }, "Hi", "")).rejects.toThrow();
     expect(post).toHaveBeenCalledTimes(1);

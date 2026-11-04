@@ -16,6 +16,9 @@ class Report(models.Model):
     )  # post | comment | message | listing | page | user
     target_id = models.CharField(max_length=64)
     reason = models.CharField(max_length=200, blank=True, default="")
+    # What the reporter saw, when the target is private to its context (a chat
+    # message): text only, as the owning service sent it (decision 5.13).
+    evidence = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

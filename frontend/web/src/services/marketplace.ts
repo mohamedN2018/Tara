@@ -13,6 +13,8 @@ export interface ListingQuery {
   min_price?: string | number; // on the effective (sale-first) price
   max_price?: string | number;
   sort?: "newest" | "price_asc" | "price_desc";
+  /** One seller's public listings (their shop). */
+  seller_id?: string;
   cursor?: string;
   limit?: number;
 }
@@ -51,8 +53,67 @@ export interface ViewerState {
   can_review: boolean;
   has_reviewed: boolean;
 }
+/** Why moderation rejected or removed a listing: sent to its seller only. */
+export interface ModerationNote {
+  case_id: string | null;
+  reason: string;
+}
 // `viewer` is optional so a ListingDetail can stand in wherever a Listing is expected.
-export type ListingDetail = Listing & { viewer?: ViewerState };
+export type ListingDetail = Listing & { viewer?: ViewerState; moderation?: ModerationNote | null };
+
+export type ListingStatus =
+  | "draft"
+  | "pending_review"
+  | "active"
+  | "reserved"
+  | "sold"
+  | "rejected"
+  | "archived"
+  | "removed";
+
+/** The seller's own numbers for the Selling overview. */
+export interface SellingSummary {
+  counts: Record<ListingStatus, number>;
+  views: number;
+  saves: number;
+  inquiries: number;
+}
+
+export type InquiryRole = "buyer" | "seller";
+/** One row of the marketplace inbox. `listing` is null once a buyer can no longer open it. */
+export interface InquiryRow {
+  id: string;
+  role: InquiryRole;
+  listing_id: string;
+  listing: {
+    id: string;
+    title: string;
+    status: string;
+    availability: "available" | "reserved" | "sold" | null;
+    price_type: "fixed" | "negotiable" | "free";
+    price: string | null;
+    sale_price: string | null;
+    currency: string;
+    category_slug: string;
+    cover_media_id: string | null;
+  } | null;
+  counterpart_id: string;
+  first_message: string;
+  message_count: number;
+  created_at: string;
+  last_activity_at: string;
+}
+
+/** Server codes for a refused photo, to i18n keys. */
+export const LISTING_MEDIA_ERRORS: Record<string, string> = {
+  too_many_media: "commerce.photos.errors.tooMany",
+  duplicate_media: "commerce.photos.errors.duplicate",
+  media_not_owned: "commerce.photos.errors.notOwned",
+  media_not_ready: "commerce.photos.errors.notReady",
+  media_kind_not_allowed: "commerce.photos.errors.kind",
+  video_not_supported_yet: "commerce.photos.errors.kind",
+};
+export const MAX_LISTING_PHOTOS = 10;
 
 export type ResponseHint = "active_today" | "active_this_week" | "active_this_month" | "inactive";
 export interface SellerSummary {
@@ -100,9 +161,23 @@ export const marketplaceService = {
     return data.data;
   },
 
-  async myListings(cursor?: string): Promise<CursorPage<Listing>> {
+  /** The seller's own listings, optionally only some statuses (comma-separated). */
+  async myListings(cursor?: string, status?: string): Promise<CursorPage<Listing>> {
     const { data } = await api.get<CursorPage<Listing>>("/marketplace/my-listings/", {
-      params: { cursor },
+      params: { cursor, status: status || undefined },
+    });
+    return data;
+  },
+
+  async sellingSummary(): Promise<SellingSummary> {
+    const { data } = await api.get<{ data: SellingSummary }>("/marketplace/my-listings/summary/");
+    return data.data;
+  },
+
+  /** The marketplace inbox: listings I asked about (buyer) or buyers who asked about mine (seller). */
+  async inquiries(role: InquiryRole, cursor?: string): Promise<CursorPage<InquiryRow>> {
+    const { data } = await api.get<CursorPage<InquiryRow>>("/marketplace/inquiries/", {
+      params: { role, cursor },
     });
     return data;
   },
@@ -179,13 +254,17 @@ export const marketplaceService = {
   },
 
   /**
-   * "Message seller": record the inquiry (it makes the buyer eligible to review),
-   * then open the DM and send the message through chat's own API. Returns the
-   * conversation id to navigate to.
+   * "Message seller": record the inquiry (it makes the buyer eligible to review)
+   * and ask chat for the listing's own marketplace thread (contact/ emits
+   * marketplace.contact.requested; one thread per listing and buyer, the one the
+   * seller's marketplace inbox opens). Chat creates it from the event, so wait a
+   * little; if it never shows (chat behind), the DM still reaches the seller.
+   * Sends the message through chat's own API and returns the conversation id.
    */
-  async messageSeller(listing: Pick<Listing, "id" | "seller_id">, message: string, link: string) {
-    await this.inquire(listing.id, message);
-    const conversation = await chatService.openDm(listing.seller_id);
+  async messageSeller(listing: Pick<Listing, "id" | "seller_id">, message: string, link: string, waitMs = 8000) {
+    await api.post(`/marketplace/listings/${listing.id}/contact/`, { message });
+    const conversation =
+      (await chatService.listingThread(listing.id, listing.seller_id, waitMs)) ?? (await chatService.openDm(listing.seller_id));
     const body = [message.trim(), link].filter(Boolean).join("\n");
     await chatService.send(conversation.id, { body });
     return conversation.id;

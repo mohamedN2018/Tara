@@ -1,8 +1,19 @@
+import commerceEn from "./commerce.en";
 import composerEn from "./composer.en";
 import groupsEn from "./groups.en";
+import pageHubEn from "./pageHub.en";
+import discoverabilityEn from "./discoverability.en";
 import homeFeedEn from "./homeFeed.en";
+import postsFeedEn from "./postsFeed.en";
+import peopleEn from "./people.en";
+import settingsCenterEn from "./settingsCenter.en";
+import messengerEn from "./messenger.en";
+import chatTeamEn from "./chatTeam.en";
 import registerEn from "./register.en";
 import shellEn from "./shell.en";
+import studioEn from "./studio.en";
+import safetyEn from "./safety.en";
+import storiesEn from "./stories.en";
 import suggestionsEn from "./suggestions.en";
 import videoEn from "./video.en";
 
@@ -88,6 +99,7 @@ export default {
       helpCenter: "Help center",
       support: "Support",
       adReview: "Ad review",
+      communityStandards: "Community Standards",
     },
     desc: {
       profile: "Your page as others see it",
@@ -108,6 +120,8 @@ export default {
       myGroups: "The groups you joined",
       settings: "Account, privacy, security and notifications",
       adReview: "Ads waiting for review",
+      support: "Your account status, your reports and notices from Tara",
+      communityStandards: "What is and isn't allowed on Tara",
       admin: "The platform's control panel",
     },
     createItems: {
@@ -611,6 +625,7 @@ export default {
       post_tag: "{name} tagged you in a post",
       video_ready: "Your video is ready",
       post_reaction: "{name} reacted to your post",
+      story_reaction: "{name} reacted to your story",
       post_comment: "{name} commented on your post",
       comment_reply: "{name} replied to your comment",
       friend_request: "{name} sent you a friend request",
@@ -646,6 +661,7 @@ export default {
       group_post: "{name} and {count} other posted in a group | {name} and {count} others posted in a group",
       gathering_rsvp: "{name} and {count} other responded to your event | {name} and {count} others responded to your event",
       post_reaction: "{name} and {count} other reacted to your post | {name} and {count} others reacted to your post",
+      story_reaction: "{name} and {count} other reacted to your story | {name} and {count} others reacted to your story",
       post_comment: "{name} and {count} other commented on your post | {name} and {count} others commented on your post",
       post_share: "{name} and {count} other shared your post | {name} and {count} others shared your post",
       follow: "{name} and {count} other started following you | {name} and {count} others started following you",
@@ -682,6 +698,7 @@ export default {
       pages: "Pages",
       ads: "Ads",
       groups: "Groups",
+      account: "Account status and notices",
     },
     prefs: {
       in_app: "In app",
@@ -897,6 +914,7 @@ export default {
         account_unsuspended: "Suspension lifted",
         account_signed_out: "Signed out everywhere",
         account_verification_resent: "Verification email resent",
+        system_notice_sent: "Notice sent",
       },
     },
     monitor: {
@@ -1060,12 +1078,14 @@ export default {
       post_tag: "Tags in posts",
       video_ready: "My videos finished processing",
       post_reaction: "Reactions on my posts",
+      story_reaction: "Reactions to my stories",
       post_comment: "Comments on my posts",
       comment_reply: "Replies to my comments",
       friend_request: "Friend requests",
       friend_accepted: "Accepted friend requests",
       follow: "New followers",
       message: "Messages",
+      message_page: "Messages to my pages",
       listing_status: "Listing status changes",
       listing_inquiry: "Questions about my listings",
       page_follow: "New followers of my pages",
@@ -1167,6 +1187,7 @@ export default {
     },
   },
   errors: {
+    messaging_restricted: "This person isn't accepting messages from you.",
     validation_error: "Please check what you entered and try again.",
     parse_error: "The request couldn't be understood.",
     unauthenticated: "Please log in again.",
@@ -1407,9 +1428,20 @@ export default {
   },
   composer: composerEn,
   groups: groupsEn,
+  pageHub: pageHubEn,
+  discoverability: discoverabilityEn,
   homeFeed: homeFeedEn,
+  postsFeed: postsFeedEn,
   register: registerEn,
   shell: shellEn,
+  studio: studioEn,
+  safety: safetyEn,
+  stories: storiesEn,
+  people: peopleEn,
+  commerce: commerceEn,
+  settingsCenter: settingsCenterEn,
+  messenger: messengerEn,
+  chatTeam: chatTeamEn,
   suggestions: suggestionsEn,
   video: videoEn,
   landing: {

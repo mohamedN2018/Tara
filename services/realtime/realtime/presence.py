@@ -15,6 +15,18 @@ socket channel name, score = that socket's last heartbeat (epoch seconds).
 Transitions (first socket in, last socket out) are what the consumer
 announces, and only to authorised peers (``peers.audience``); nothing is
 broadcast globally.
+
+Hidden presence (Settings > Privacy, "Show when you're active", plan 08 3C):
+the access token's ``show_presence`` claim. A socket opened with it false sets
+``presence:hidden:<account>``; while that flag lives, the account reads as
+offline with no last-seen time, to everyone. A visible connect clears it.
+Heartbeats of hidden sockets only extend the flag, never re-create it.
+
+The claim can be stale: a tab keeps the token it had before the owner changed
+the setting. So identity's ``account.presence.updated`` (the bridge) stores the
+current choice in ``presence:pref:<account>`` with the event's time (newest
+wins), and that stored choice beats the claim on connect, on every heartbeat
+and in the open sockets, which the bridge tells at once.
 """
 
 from __future__ import annotations
@@ -34,6 +46,26 @@ def _sock_key(account_id: str) -> str:
 
 def _seen_key(account_id: str) -> str:
     return f"presence:last_seen:{account_id}"
+
+
+def _hidden_key(account_id: str) -> str:
+    return f"presence:hidden:{account_id}"
+
+
+def _pref_key(account_id: str) -> str:
+    return f"presence:pref:{account_id}"
+
+
+# Store "<1|0>|<epoch>" only when newer than what is there (atomic in Redis).
+_SET_PREF = """
+local cur = redis.call('GET', KEYS[1])
+if cur then
+  local at = tonumber(string.match(cur, '|(.+)$'))
+  if at and at > tonumber(ARGV[2]) then return 0 end
+end
+redis.call('SET', KEYS[1], ARGV[1] .. '|' .. ARGV[2], 'EX', ARGV[3])
+return 1
+"""
 
 
 class RedisPresence:
@@ -66,7 +98,40 @@ class RedisPresence:
             return True
         return False
 
+    def set_hidden(self, account_id: str, hidden: bool) -> bool:
+        """Set or clear the flag. Returns whether it was set before."""
+        key = _hidden_key(account_id)
+        pipe = self.redis.pipeline(transaction=True)
+        pipe.exists(key)
+        if hidden:
+            pipe.set(key, "1", ex=settings.PRESENCE_KEY_TTL)
+        else:
+            pipe.delete(key)
+        was, _ = pipe.execute()
+        return bool(was)
+
+    def extend_hidden(self, account_id: str) -> None:
+        self.redis.expire(_hidden_key(account_id), settings.PRESENCE_KEY_TTL)
+
+    def is_hidden(self, account_id: str) -> bool:
+        return bool(self.redis.exists(_hidden_key(account_id)))
+
+    def set_preference(self, account_id: str, show: bool, at: float) -> bool:
+        """Store the owner's current choice unless a newer one is there."""
+        applied = self.redis.eval(
+            _SET_PREF, 1, _pref_key(account_id), "1" if show else "0", repr(at), LAST_SEEN_TTL
+        )
+        return bool(applied)
+
+    def preference(self, account_id: str) -> bool | None:
+        raw = self.redis.get(_pref_key(account_id))
+        if not raw:
+            return None
+        return raw.decode().split("|", 1)[0] == "1"
+
     def state(self, account_id: str, now: float) -> tuple[bool, float | None]:
+        if self.is_hidden(account_id):
+            return False, None
         key = _sock_key(account_id)
         pipe = self.redis.pipeline(transaction=False)
         pipe.zcount(key, now - settings.PRESENCE_TTL, "+inf")
@@ -88,6 +153,8 @@ class MemoryPresence:
         self._lock = threading.Lock()
         self._sockets: dict[str, dict[str, float]] = {}
         self._seen: dict[str, float] = {}
+        self._hidden: set[str] = set()
+        self._prefs: dict[str, tuple[bool, float]] = {}
 
     def _live(self, account_id: str, now: float) -> dict[str, float]:
         sockets = self._sockets.setdefault(account_id, {})
@@ -112,8 +179,39 @@ class MemoryPresence:
                 return True
             return False
 
+    def set_hidden(self, account_id: str, hidden: bool) -> bool:
+        with self._lock:
+            was = account_id in self._hidden
+            if hidden:
+                self._hidden.add(account_id)
+            else:
+                self._hidden.discard(account_id)
+            return was
+
+    def extend_hidden(self, account_id: str) -> None:
+        return None  # in-process: the flag lives until cleared
+
+    def is_hidden(self, account_id: str) -> bool:
+        with self._lock:
+            return account_id in self._hidden
+
+    def set_preference(self, account_id: str, show: bool, at: float) -> bool:
+        with self._lock:
+            current = self._prefs.get(account_id)
+            if current is not None and current[1] > at:
+                return False
+            self._prefs[account_id] = (show, at)
+            return True
+
+    def preference(self, account_id: str) -> bool | None:
+        with self._lock:
+            current = self._prefs.get(account_id)
+            return None if current is None else current[0]
+
     def state(self, account_id: str, now: float) -> tuple[bool, float | None]:
         with self._lock:
+            if account_id in self._hidden:
+                return False, None
             sockets = self._sockets.get(account_id, {})
             if any(at >= now - settings.PRESENCE_TTL for at in sockets.values()):
                 return True, None
@@ -161,6 +259,29 @@ def heartbeat(account_id: str, channel: str) -> bool:
 
 def disconnect(account_id: str, channel: str) -> bool:
     return store().drop(str(account_id), channel, time.time())
+
+
+def set_hidden(account_id: str, hidden: bool) -> bool:
+    """Apply a socket's ``show_presence`` claim. Returns the previous flag."""
+    return store().set_hidden(str(account_id), hidden)
+
+
+def extend_hidden(account_id: str) -> None:
+    store().extend_hidden(str(account_id))
+
+
+def is_hidden(account_id: str) -> bool:
+    return store().is_hidden(str(account_id))
+
+
+def set_preference(account_id: str, show: bool, at: float) -> bool:
+    """identity's current "show when you're active" choice; False if older than stored."""
+    return store().set_preference(str(account_id), bool(show), float(at))
+
+
+def preference(account_id: str) -> bool | None:
+    """The stored choice, or None when identity never reported one."""
+    return store().preference(str(account_id))
 
 
 def state(account_id: str) -> dict:

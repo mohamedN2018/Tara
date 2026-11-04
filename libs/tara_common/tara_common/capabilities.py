@@ -53,6 +53,8 @@ _KEYS = (
     "admin.audit.view",
     "admin.audit.export",
     "admin.monitor.view",
+    # Administrative notices to accounts (system.notice).
+    "admin.notices.send",
 )
 
 CAPABILITIES: dict[str, Capability] = {key: Capability(key) for key in _KEYS}

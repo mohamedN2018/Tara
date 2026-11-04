@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { type Page, expect, test } from "@playwright/test";
 
-import { API, apiAs, befriend, expectNoUuid, pageAs, sharedAccounts, unique } from "./helpers";
+import { API, apiAs, befriend, expectNoUuid, pageAs, sharedAccounts, unique, useLocale } from "./helpers";
 
 // Wave 2C: one composer dialog (audience, text, photos, tags, feeling, location,
 // schedule, drafts), drafts and scheduled posts, people tags and their
@@ -139,7 +139,7 @@ test("tag a friend: the friend is notified, and 'nobody' refuses the tag", async
   await expect(friend.getByText(`أشار إليك ${a.name} في منشور`).first()).toBeVisible();
 
   // "Who can tag me" in Settings, then the composer explains the refusal.
-  await friend.goto("/settings");
+  await friend.goto("/settings/privacy");
   const setting = friend.getByTestId("tag-privacy");
   await setting.getByText("لا أحد").click();
   await expect(friend.getByText("تم الحفظ.")).toBeVisible();
@@ -155,7 +155,7 @@ for (const lang of ["ar", "en"] as const) {
   test(`the composer in ${lang}: direction, labels and axe`, async ({ browser }) => {
     const { a } = await sharedAccounts();
     const page = await pageAs(browser, a);
-    if (lang === "en") await page.addInitScript(() => localStorage.setItem("tara.locale", "en"));
+    if (lang === "en") await useLocale(page, "en");
     await page.goto("/home");
     await expect(page.locator("html")).toHaveAttribute("dir", lang === "ar" ? "rtl" : "ltr");
     const L =

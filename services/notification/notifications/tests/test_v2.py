@@ -82,7 +82,7 @@ def _react(author, reactor, post_id):
         ("message", {"subject_ref": "conversation:k1"}, "/messages/k1"),
         ("listing.status", {"subject_ref": "listing:l1"}, "/marketplace/l1"),
         ("page.follow", {"subject_ref": "page:g1", "data": {"page_handle": "cafe"}}, "/pages/cafe"),
-        ("page.follow", {"subject_ref": "page:g1"}, "/pages/g1"),
+        ("page.follow", {"subject_ref": "page:g1"}, "/pages/id/g1"),
         ("ad.review", {"subject_ref": "campaign:c9"}, "/ads/campaigns/c9"),
         ("unknown.kind", {}, "/notifications"),
         ("post.reaction", {"subject_ref": "post:a/../b?x"}, "/posts/a%2F..%2Fb%3Fx"),

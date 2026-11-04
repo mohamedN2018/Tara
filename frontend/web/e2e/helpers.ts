@@ -229,3 +229,19 @@ export async function befriend(one: Account, other: Account) {
 export async function unfriend(one: Account, other: Account) {
   await (await apiAs(one)).delete(`${API}/friends/${other.id}/`);
 }
+
+/**
+ * Show this page in `lang` without changing the (shared) account. Since the
+ * settings centre, the account's language wins over `tara.locale` on every
+ * boot, so the page's own GET /me/ is answered with `lang`; nothing is saved.
+ */
+export async function useLocale(page: Page, lang: "ar" | "en") {
+  await page.addInitScript((l) => localStorage.setItem("tara.locale", l), lang);
+  await page.route(/\/api\/v1\/me\/(\?.*)?$/, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const res = await route.fetch();
+    const body = await res.json().catch(() => null);
+    if (!body?.data) return route.fulfill({ response: res });
+    await route.fulfill({ response: res, json: { ...body, data: { ...body.data, language: lang } } });
+  });
+}

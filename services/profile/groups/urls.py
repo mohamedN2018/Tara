@@ -40,6 +40,11 @@ urlpatterns = [
         views.GroupRequestActionView.as_view(),
         name="group-request-action",
     ),
+    re_path(
+        rf"^groups/{REF}/invites/(?P<account_id>[0-9a-fA-F-]{{36}})/(?P<action>revoke)/$",
+        views.GroupRequestActionView.as_view(),
+        name="group-invite-revoke",
+    ),
     re_path(rf"^groups/{REF}/rules/$", views.GroupRulesView.as_view(), name="group-rules"),
     re_path(
         rf"^groups/{REF}/rules/order/$", views.GroupRuleOrderView.as_view(), name="group-rule-order"

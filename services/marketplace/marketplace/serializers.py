@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from .models import Listing, ListingMedia, MarketplaceCategory, SellerReview
@@ -56,6 +57,8 @@ class ListingUpdateSerializer(serializers.Serializer):
     currency = serializers.CharField(max_length=8, required=False)
     condition = serializers.ChoiceField(choices=Listing.Condition.values, required=False)
     location = serializers.CharField(max_length=160, required=False, allow_blank=True)
+    # The whole photo set in order; omitted leaves the photos as they are.
+    media_ids = serializers.ListField(child=serializers.UUIDField(), required=False)
 
 
 class ListingSerializer(serializers.ModelSerializer):
@@ -112,14 +115,29 @@ class ViewerStateSerializer(serializers.Serializer):
     has_reviewed = serializers.BooleanField()
 
 
+class ModerationNoteSerializer(serializers.Serializer):
+    case_id = serializers.UUIDField(allow_null=True)
+    reason = serializers.CharField(allow_blank=True)
+
+
 class ListingDetailSerializer(ListingSerializer):
     viewer = serializers.SerializerMethodField()
+    moderation = serializers.SerializerMethodField()
 
     class Meta(ListingSerializer.Meta):
-        fields = [*ListingSerializer.Meta.fields, "viewer"]
+        fields = [*ListingSerializer.Meta.fields, "viewer", "moderation"]
 
     def get_viewer(self, obj) -> dict:
         return self.context.get("viewer", {})
+
+    @extend_schema_field(ModerationNoteSerializer(allow_null=True))
+    def get_moderation(self, obj) -> dict | None:
+        """Why a listing was rejected or removed: for its seller only."""
+        viewer = self.context.get("viewer") or {}
+        if not viewer.get("is_owner") or obj.status not in ("rejected", "removed"):
+            return None
+        case_id = obj.moderation_case_id
+        return {"case_id": str(case_id) if case_id else None, "reason": obj.moderation_reason}
 
 
 class TransitionSerializer(serializers.Serializer):
@@ -186,9 +204,16 @@ class ListingFilterSerializer(serializers.Serializer):
         max_digits=19, decimal_places=4, min_value=0, required=False
     )
     sort = serializers.ChoiceField(choices=SORTS, default="newest")
+    # One seller's public listings (their shop / profile tab, roadmap 2.5).
+    seller_id = serializers.UUIDField(required=False)
 
     # Old names kept as aliases (roadmap 4.1).
-    ALIASES = {"price_min": "min_price", "price_max": "max_price", "ordering": "sort"}
+    ALIASES = {
+        "price_min": "min_price",
+        "price_max": "max_price",
+        "ordering": "sort",
+        "seller": "seller_id",
+    }
 
     @classmethod
     def from_query(cls, query_params) -> dict:
@@ -296,3 +321,80 @@ class SellerReviewSerializer(serializers.ModelSerializer):
         if listing.deleted_at is None and listing.status in PUBLIC_STATUSES:
             return listing.title
         return None
+
+
+# ---- the seller's own dashboard and the inquiries inbox ---------------------
+
+
+class MyListingsQuerySerializer(serializers.Serializer):
+    status = CSVChoiceField(Listing.Status.values, required=False)
+
+
+class SellingSummarySerializer(serializers.Serializer):
+    counts = serializers.DictField(child=serializers.IntegerField())
+    views = serializers.IntegerField()
+    saves = serializers.IntegerField()
+    inquiries = serializers.IntegerField()
+
+
+class InquiriesQuerySerializer(serializers.Serializer):
+    role = serializers.ChoiceField(choices=["buyer", "seller"], default="buyer")
+
+
+class InquiryListingSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    title = serializers.CharField()
+    status = serializers.CharField()
+    availability = serializers.CharField(allow_null=True)
+    price_type = serializers.CharField()
+    price = serializers.CharField(allow_null=True)
+    sale_price = serializers.CharField(allow_null=True)
+    currency = serializers.CharField()
+    category_slug = serializers.CharField()
+    cover_media_id = serializers.UUIDField(allow_null=True)
+
+
+class InquiryRowSerializer(serializers.Serializer):
+    """One inbox row. ``listing`` is null once a buyer can no longer open it."""
+
+    id = serializers.UUIDField()
+    role = serializers.CharField()
+    listing_id = serializers.UUIDField()
+    listing = InquiryListingSerializer(allow_null=True)
+    counterpart_id = serializers.UUIDField()
+    first_message = serializers.CharField(allow_blank=True)
+    message_count = serializers.IntegerField()
+    created_at = serializers.DateTimeField()
+    last_activity_at = serializers.DateTimeField()
+
+
+def inquiry_row(inquiry, role: str, visible: bool) -> dict:
+    listing = inquiry.listing
+    summary = None
+    if visible:
+        media = sorted(listing.media.all(), key=lambda m: m.position)
+        summary = {
+            "id": listing.id,
+            "title": listing.title,
+            "status": listing.status,
+            "availability": availability_of(listing.status),
+            "price_type": listing.price_type,
+            "price": None if listing.price is None else _MONEY.to_representation(listing.price),
+            "sale_price": (
+                None if listing.sale_price is None else _MONEY.to_representation(listing.sale_price)
+            ),
+            "currency": listing.currency,
+            "category_slug": listing.category.slug,
+            "cover_media_id": media[0].media_id if media else None,
+        }
+    return {
+        "id": inquiry.id,
+        "role": role,
+        "listing_id": inquiry.listing_id,
+        "listing": summary,
+        "counterpart_id": inquiry.buyer_id if role == "seller" else inquiry.seller_id,
+        "first_message": inquiry.first_message,
+        "message_count": inquiry.message_count,
+        "created_at": inquiry.created_at,
+        "last_activity_at": inquiry.last_activity_at,
+    }

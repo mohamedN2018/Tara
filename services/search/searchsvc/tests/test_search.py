@@ -137,3 +137,26 @@ def test_blocked_people_are_not_returned():
     assert backend.query("findme", viewer_id=viewer)[0]
     BlockedPair.objects.create(blocker_id=owner, blocked_id=viewer)
     assert backend.query("findme", viewer_id=viewer)[0] == []
+
+
+def _profile_event(acct: str, **payload) -> None:
+    on_profile_updated(
+        EventEnvelope(
+            event_type="profile.updated",
+            subject_id=acct,
+            producer="profile-service",
+            payload={"handle": "hidden_hana", "display_name": "Hana Hidden", **payload},
+        )
+    )
+
+
+def test_unsearchable_people_leave_search_and_can_come_back(client_for):
+    acct = str(uuid.uuid4())
+    _profile_event(acct, searchable=True)
+    assert SearchDocument.objects.filter(doc_type="user", doc_id=acct).exists()
+    _profile_event(acct, searchable=False)
+    assert not SearchDocument.objects.filter(doc_type="user", doc_id=acct).exists()
+    resp = client_for(str(uuid.uuid4())).get(reverse("searchsvc:search"), {"q": "hidden_hana"})
+    assert resp.json()["data"]["results"] == []
+    _profile_event(acct, searchable=True)
+    assert SearchDocument.objects.filter(doc_type="user", doc_id=acct).exists()

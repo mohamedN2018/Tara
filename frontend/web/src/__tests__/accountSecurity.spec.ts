@@ -186,7 +186,7 @@ describe("Google sign-in in the auth store", () => {
     const connect = vi.spyOn(realtime, "connect").mockImplementation(() => {});
     const auth = useAuthStore();
     await expect(auth.loginWithGoogle("cred", "ar")).resolves.toBe(true);
-    expect(identityService.googleSignIn).toHaveBeenCalledWith("cred", "ar");
+    expect(identityService.googleSignIn).toHaveBeenCalledWith("cred", "ar", "");
     expect(tokenStore.refresh).toBe("r1");
     expect(auth.account?.email).toBe("g@gmail.com");
     expect(connect).toHaveBeenCalled();

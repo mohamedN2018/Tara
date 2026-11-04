@@ -19,6 +19,8 @@ const toasts = useToastStore();
 const people = ref<PersonSuggestion[]>([]);
 const sent = ref<Record<string, true>>({});
 const busy = ref("");
+// The last removed suggestion and where it was, so "Undo" can put it back.
+const lastRemoved = ref<{ person: PersonSuggestion; index: number } | null>(null);
 
 async function load() {
   people.value = await relationshipsService.people(MAX_RAIL_PEOPLE * 2).catch(() => []);
@@ -47,7 +49,26 @@ async function dismiss(id: string) {
   busy.value = id;
   try {
     await relationshipsService.dismiss(id, "user");
+    const index = people.value.findIndex((p) => p.account_id === id);
+    if (index >= 0) lastRemoved.value = { person: people.value[index], index };
     people.value = people.value.filter((p) => p.account_id !== id);
+  } catch (e) {
+    toasts.error(e);
+  } finally {
+    busy.value = "";
+  }
+}
+
+async function undo() {
+  const removed = lastRemoved.value;
+  if (!removed || busy.value) return;
+  busy.value = removed.person.account_id;
+  try {
+    await relationshipsService.undismiss(removed.person.account_id, "user");
+    const next = [...people.value];
+    next.splice(removed.index, 0, removed.person);
+    people.value = next;
+    lastRemoved.value = null;
   } catch (e) {
     toasts.error(e);
   } finally {
@@ -59,8 +80,23 @@ onMounted(load);
 </script>
 
 <template>
-  <section v-if="people.length" :class="railSection" aria-labelledby="rs-people" data-testid="rail-people">
-    <h2 id="rs-people" :class="railHeading">{{ t("suggestions.people") }}</h2>
+  <section v-if="people.length || lastRemoved" :class="railSection" aria-labelledby="rs-people" data-testid="rail-people">
+    <div class="flex items-center justify-between">
+      <h2 id="rs-people" :class="railHeading">{{ t("suggestions.people") }}</h2>
+      <RouterLink
+        to="/friends?tab=suggestions"
+        class="rounded-md px-2 pb-2 text-sm font-medium text-brand-600 hover:underline dark:text-brand-300"
+        data-testid="rail-people-see-all"
+      >
+        {{ t("people.friendsHub.seeAll") }}
+      </RouterLink>
+    </div>
+    <p v-if="lastRemoved" class="mb-1 flex items-center justify-between gap-2 rounded-xl bg-gray-100 px-3 py-2 text-sm dark:bg-gray-800" role="status">
+      <span>{{ t("people.friendsHub.removed") }}</span>
+      <button type="button" class="font-semibold text-brand-600 hover:underline dark:text-brand-300" :disabled="!!busy" data-testid="rail-person-undo" @click="undo">
+        {{ t("people.friendsHub.undo") }}
+      </button>
+    </p>
     <ul class="space-y-1">
       <li
         v-for="p in people.slice(0, MAX_RAIL_PEOPLE)"

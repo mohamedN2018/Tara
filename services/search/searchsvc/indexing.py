@@ -89,6 +89,8 @@ def _clean(value, limit: int = 300) -> str:
 def person_doc(account_id: str, p: dict) -> dict | None:
     if p.get("visibility", "public") != "public":
         return None
+    if p.get("searchable") is False:  # profile's discoverability flag (1.6)
+        return None
     handle, name = _clean(p.get("handle"), 40), _clean(p.get("display_name"), 120)
     city = _clean(p.get("city"), 80)
     return {

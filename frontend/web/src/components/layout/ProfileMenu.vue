@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, ChevronDown, ChevronRight, HelpCircle, LogOut, Moon, Settings } from "lucide-vue-next";
+import { ArrowLeft, ChevronDown, ChevronRight, Globe, HelpCircle, KeyRound, ListFilter, Lock, LogOut, Moon, Settings } from "lucide-vue-next";
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import type { RouteLocationRaw } from "vue-router";
@@ -18,8 +18,19 @@ const presence = usePresenceStore();
 const ui = useUiStore();
 
 const open = ref(false);
-// "main" lists the account actions; "display" holds theme and language.
-const view = ref<"main" | "display">("main");
+// "main" lists the account actions; "display" holds theme and language;
+// "settings" is the Settings & privacy panel (the settings centre's sections).
+type View = "main" | "display" | "settings";
+const view = ref<View>("main");
+let openedFrom: Exclude<View, "main"> = "display";
+
+const SETTINGS_LINKS = [
+  { to: "/settings", key: "nav.settings", icon: Settings, testid: "profile-menu-settings-all" },
+  { to: "/settings/privacy", key: "menu.items.privacyCenter", icon: Lock, testid: "profile-menu-privacy" },
+  { to: "/settings/security", key: "menu.items.securityCenter", icon: KeyRound, testid: "profile-menu-security" },
+  { to: "/settings/content", key: "settingsCenter.sections.content.title", icon: ListFilter, testid: "profile-menu-content" },
+  { to: "/settings/display#language", key: "settings.language", icon: Globe, testid: "profile-menu-language" },
+] as const;
 const trigger = ref<HTMLButtonElement | null>(null);
 const panel = ref<HTMLElement | null>(null);
 
@@ -31,10 +42,11 @@ const profileTo = computed<RouteLocationRaw | null>(() => {
   return null;
 });
 
-// Help & support shows only once the help centre exists (menuCatalog `built`).
-const help = computed(() =>
-  hasItem("helpCenter", auth.capabilities) ? MENU_CATALOG.find((i) => i.id === "helpCenter")?.route ?? null : null,
-);
+// Help & support: the help centre once it exists (menuCatalog `built`), else the Support inbox.
+const help = computed(() => {
+  const id = ["helpCenter", "support"].find((key) => hasItem(key, auth.capabilities));
+  return id ? MENU_CATALOG.find((i) => i.id === id)?.route ?? null : null;
+});
 
 const THEMES: { value: Theme; label: string }[] = [
   { value: "light", label: "settings.light" },
@@ -71,12 +83,13 @@ function toggle() {
   else show();
 }
 
-async function openView(next: "main" | "display") {
+async function openView(next: View) {
+  if (next !== "main") openedFrom = next;
   view.value = next;
   await nextTick();
   if (next === "main") {
     // Back on the main list: focus returns to the entry that opened the sub-view.
-    const entry = panel.value?.querySelector<HTMLElement>('[data-testid="profile-menu-display"]');
+    const entry = panel.value?.querySelector<HTMLElement>(`[data-testid="profile-menu-${openedFrom}"]`);
     if (entry && panel.value) {
       setRovingItem(menuItems(panel.value), entry);
       entry.focus();
@@ -90,7 +103,7 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === "Escape") {
     e.preventDefault();
     e.stopPropagation();
-    if (view.value === "display") void openView("main");
+    if (view.value !== "main") void openView("main");
     else close();
     return;
   }
@@ -163,7 +176,7 @@ const bubble =
         ref="panel"
         class="popover absolute end-0 z-50 mt-2 w-80 max-w-[calc(100vw-1.5rem)] overflow-hidden p-2"
         role="menu"
-        :aria-label="view === 'main' ? t('nav.profile') : t('profileMenu.display')"
+        :aria-label="view === 'main' ? t('nav.profile') : view === 'settings' ? t('profileMenu.settingsPrivacy') : t('profileMenu.display')"
         aria-orientation="vertical"
         data-testid="profile-menu"
         @keydown="onKeydown"
@@ -189,10 +202,19 @@ const bubble =
 
           <div role="separator" class="my-1 border-t border-gray-100 dark:border-gray-800" />
 
-          <RouterLink to="/settings" role="menuitem" tabindex="-1" :class="row" data-testid="profile-menu-settings" @click="close(false)">
+          <button
+            type="button"
+            role="menuitem"
+            tabindex="-1"
+            :class="row"
+            aria-haspopup="menu"
+            data-testid="profile-menu-settings"
+            @click="openView('settings')"
+          >
             <span :class="bubble"><Settings class="h-5 w-5" aria-hidden="true" /></span>
             <span class="flex-1">{{ t("profileMenu.settingsPrivacy") }}</span>
-          </RouterLink>
+            <ChevronRight class="h-5 w-5 text-gray-500 rtl:rotate-180 dark:text-gray-400" aria-hidden="true" />
+          </button>
 
           <RouterLink v-if="help" :to="help" role="menuitem" tabindex="-1" :class="row" data-testid="profile-menu-help" @click="close(false)">
             <span :class="bubble"><HelpCircle class="h-5 w-5" aria-hidden="true" /></span>
@@ -217,6 +239,37 @@ const bubble =
             <span :class="bubble"><LogOut class="h-5 w-5" aria-hidden="true" /></span>
             <span class="flex-1">{{ t("nav.logout") }}</span>
           </button>
+        </template>
+
+        <template v-else-if="view === 'settings'">
+          <!-- Settings & privacy: the settings centre's main destinations -->
+          <div class="mb-1 flex items-center gap-2">
+            <button
+              type="button"
+              role="menuitem"
+              tabindex="-1"
+              class="icon-btn h-9 w-9 bg-transparent dark:bg-transparent"
+              :aria-label="t('profileMenu.back')"
+              data-testid="profile-menu-back"
+              @click="openView('main')"
+            >
+              <ArrowLeft class="h-5 w-5 rtl:rotate-180" aria-hidden="true" />
+            </button>
+            <h3 class="text-lg font-bold" aria-hidden="true">{{ t("profileMenu.settingsPrivacy") }}</h3>
+          </div>
+          <RouterLink
+            v-for="l in SETTINGS_LINKS"
+            :key="l.to"
+            :to="l.to"
+            role="menuitem"
+            tabindex="-1"
+            :class="row"
+            :data-testid="l.testid"
+            @click="close(false)"
+          >
+            <span :class="bubble"><component :is="l.icon" class="h-5 w-5" aria-hidden="true" /></span>
+            <span class="flex-1">{{ t(l.key) }}</span>
+          </RouterLink>
         </template>
 
         <template v-else>

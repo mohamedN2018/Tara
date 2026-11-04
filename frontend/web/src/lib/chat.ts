@@ -171,3 +171,140 @@ export function conversationTitle(
     return names.join(", ");
   }
 }
+
+/**
+ * The inbox row's second line: "You: hi", "Sam: hi" in groups, the text alone in
+ * a DM from the other side, or the attachment type. Empty when there is nothing.
+ */
+export function lastMessagePreview(
+  c: { type: string; last_message?: { sender_id: string; type: string; body: string; deleted: boolean } | null },
+  selfId: string | undefined,
+  label: (id: string) => string,
+  t: (key: string, named?: Record<string, unknown>) => string,
+): string {
+  const m = c.last_message;
+  if (!m) return "";
+  if (m.type === "system") return "";
+  const text = m.deleted ? t("messages.deleted") : m.body.trim() || typePreview(m.type, t);
+  if (selfId && m.sender_id === selfId) return t("messenger.youSaid", { text });
+  if (c.type === "group") return t("messenger.theySaid", { name: label(m.sender_id), text });
+  return text;
+}
+
+/**
+ * The same preview split for display: who said it (null in a DM from the other
+ * side) and the text. The UI isolates the two (``<bdi>`` and ``dir="auto"``) so
+ * an Arabic name in the English UI, or the reverse, cannot reorder the line.
+ */
+const APP_ID_LINK = /https?:\/\/\S+\/(?:stories|marketplace|posts)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\S*/gi;
+
+/** One-line previews (inbox rows, notifications) leave out links to a story,
+ * listing or post: the thread itself shows them, and the id is noise. */
+export function withoutAppLinks(text: string): string {
+  return text.replace(APP_ID_LINK, "").replace(/\s{2,}/g, " ").trim();
+}
+
+export type BodySegment = { text: string } | { to: string; kind: "story" | "listing" | "post" };
+const APP_LINK_KINDS = { stories: "story", marketplace: "listing", posts: "post" } as const;
+const URL_RE = /https?:\/\/[^\s<>"]+/gi;
+const ID_PATH = /^\/(stories|marketplace|posts)\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/i;
+
+/**
+ * A message body split so links to Tara's own story, listing and post pages
+ * (same origin only) render as a short in-app link instead of a raw URL full
+ * of ids. Everything else, external links included, stays plain text.
+ */
+export function bodySegments(body: string, origin: string): BodySegment[] {
+  const out: BodySegment[] = [];
+  let last = 0;
+  for (const match of body.matchAll(URL_RE)) {
+    let url: URL;
+    try {
+      url = new URL(match[0]);
+    } catch {
+      continue;
+    }
+    const hit = url.origin === origin ? ID_PATH.exec(url.pathname) : null;
+    if (!hit) continue;
+    const at = match.index ?? 0;
+    if (at > last) out.push({ text: body.slice(last, at) });
+    out.push({ to: `/${hit[1].toLowerCase()}/${hit[2]}`, kind: APP_LINK_KINDS[hit[1].toLowerCase() as keyof typeof APP_LINK_KINDS] });
+    last = at + match[0].length;
+  }
+  if (last < body.length) out.push({ text: body.slice(last) });
+  return out;
+}
+
+export function previewParts(
+  c: { type: string; last_message?: { sender_id: string; type: string; body: string; deleted: boolean } | null },
+  selfId: string | undefined,
+  label: (id: string) => string,
+  t: (key: string, named?: Record<string, unknown>) => string,
+): { who: string | null; text: string } {
+  const m = c.last_message;
+  if (!m || m.type === "system") return { who: null, text: "" };
+  const body = withoutAppLinks(m.body);
+  const text = m.deleted ? t("messages.deleted") : body || typePreview(m.type, t);
+  if (selfId && m.sender_id === selfId) return { who: t("messenger.you"), text };
+  if (c.type === "group") return { who: label(m.sender_id), text };
+  return { who: null, text };
+}
+
+/**
+ * Group "Seen by" avatars: for each message id, the other members whose read
+ * pointer stops exactly there (the newest message each one has read). Members
+ * whose pointer is unknown or points at a message not loaded are left out.
+ */
+export function seenByAt(
+  messages: { id: string; seq?: number | null; sender_id: string }[],
+  states: { account_id: string; last_read_message_id: string | null; last_read_seq?: number }[],
+  selfId: string,
+): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  if (!messages.length) return out;
+  const ids = new Set(messages.map((m) => m.id));
+  const withSeq = messages.filter((m) => typeof m.seq === "number");
+  for (const s of states) {
+    if (s.account_id === selfId) continue;
+    let at: string | null = null;
+    if (typeof s.last_read_seq === "number" && s.last_read_seq > 0 && withSeq.length) {
+      // The newest loaded message at or below the pointer.
+      for (const m of withSeq) if ((m.seq as number) <= (s.last_read_seq as number)) at = m.id;
+    } else if (s.last_read_message_id && ids.has(s.last_read_message_id)) {
+      at = s.last_read_message_id;
+    }
+    if (!at) continue;
+    // Their own message says nothing about what they have seen.
+    if (messages.find((m) => m.id === at)?.sender_id === s.account_id) continue;
+    (out[at] ??= []).push(s.account_id);
+  }
+  return out;
+}
+
+/**
+ * Page and support threads: one member writes, a team answers. The team's
+ * replies are sent as the Page (`sender_id` is the page id) or as Tara Support
+ * (this fixed id, never a real account).
+ */
+export const SUPPORT_SENDER_ID = "018f0000-0000-7000-8000-00000000c0de";
+
+export function isTeamThread(c: { type: string } | null | undefined): boolean {
+  return !!c && (c.type === "page" || c.type === "support");
+}
+
+/** The other side of a team thread: the Page's name, or Tara Support. */
+export function teamThreadTitle(c: { type: string; title: string }, t: (key: string) => string): string {
+  if (c.type === "support") return t("chatTeam.support");
+  return c.title || t("chatTeam.pageFallback");
+}
+
+/** A team reply's sender, named as the team (null when it is a person). */
+export function teamSenderName(
+  c: { type: string; title: string; page_id?: string | null } | null | undefined,
+  senderId: string,
+  t: (key: string) => string,
+): string | null {
+  if (!c || !isTeamThread(c)) return null;
+  if (senderId === SUPPORT_SENDER_ID || (c.page_id && senderId === c.page_id)) return teamThreadTitle(c, t);
+  return null;
+}

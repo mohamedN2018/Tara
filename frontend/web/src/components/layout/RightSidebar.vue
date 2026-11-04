@@ -6,9 +6,11 @@ import { useRoute, useRouter } from "vue-router";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import SponsoredCard from "@/components/post/SponsoredCard.vue";
+import TrendingList from "@/components/search/TrendingList.vue";
 import { dateBadge, formatRange } from "@/lib/eventTime";
 import { relativeTime } from "@/lib/format";
 import { chatService } from "@/services/chat";
+import { useChatDockStore } from "@/stores/chatDock";
 import type { TaraEvent } from "@/services/events";
 import { type FriendRequest, graphService } from "@/services/graph";
 import { useDirectoryStore } from "@/stores/directory";
@@ -24,6 +26,7 @@ const MAX_CONTACTS = 20;
 
 const { t, locale } = useI18n();
 const router = useRouter();
+const chatDock = useChatDockStore();
 const route = useRoute();
 // The home feed's slot, on Home only, and only while this column is on screen.
 const ad = computed(() => (railVisible.value && route.name === "home" ? railAd.value : null));
@@ -77,7 +80,9 @@ async function openChat(friendId: string) {
   opening.value = friendId;
   try {
     const convo = await chatService.openDm(friendId);
-    router.push(`/messages/${convo.id}`);
+    // Desktop: a docked mini chat keeps the page open (ChatDock); phones open the inbox.
+    if (chatDock.available()) chatDock.open(convo.id);
+    else router.push(`/messages/${convo.id}`);
   } catch (e) {
     toasts.error(e);
   } finally {
@@ -94,12 +99,16 @@ const section = railSection;
 </script>
 
 <template>
-  <div class="space-y-3 pb-6" data-testid="right-rail">
+  <!-- pb-28: room for the chat dock's New message button (bottom end, lg+) -->
+  <div class="space-y-3 pb-28" data-testid="right-rail">
     <!-- Sponsored: only when an ad was actually served (never an empty card) -->
     <section v-if="ad" :class="section" aria-labelledby="rs-sponsored" data-testid="rail-sponsored">
       <h2 id="rs-sponsored" :class="heading">{{ t("shell.rail.sponsored") }}</h2>
       <SponsoredCard :ad="ad" />
     </section>
+
+    <!-- Trending hashtags (T4): hides itself when nothing is trending -->
+    <TrendingList compact :limit="5" :class="section" />
 
     <!-- Friend requests -->
     <section v-if="requests.length" :class="section" aria-labelledby="rs-requests" data-testid="rail-requests">
@@ -219,7 +228,7 @@ const section = railSection;
             data-testid="rail-contact"
             @click="openChat(id)"
           >
-            <span class="min-w-0 flex-1 truncate" dir="auto">{{ directory.label(id) }}</span>
+            <span class="min-w-0 flex-1 truncate text-start"><bdi>{{ directory.label(id) }}</bdi></span>
             <MessageCircle class="h-4 w-4 shrink-0 text-gray-400 opacity-0 transition group-hover:opacity-100" aria-hidden="true" />
           </button>
         </li>

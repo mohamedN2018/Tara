@@ -1,12 +1,61 @@
 import { api } from "@/lib/api";
 import { oldestFirst } from "@/lib/chat";
 import { mediaService, type MediaAsset, viaStorageProxy } from "@/services/media";
-import type { Conversation, CursorPage, Message, MessageAttachment } from "@/types";
+import type { Conversation, ConversationPreview, CursorPage, Message, MessageAttachment } from "@/types";
 
 export interface UnreadSummary {
   messages: number;
   conversations: number;
+  /** Message requests waiting for an answer (never in the badge). */
+  requests?: number;
 }
+
+/** Inbox folders: accepted threads, archived ones, message requests and declined requests. */
+export type ChatFolder = "inbox" | "archived" | "requests" | "spam";
+
+export interface ConversationQuery {
+  cursor?: string | null;
+  folder?: ChatFolder;
+  /** One conversation type, e.g. "marketplace" for the Marketplace inbox. */
+  type?: string;
+  unread?: boolean;
+}
+
+/** "Who can message you": who may start a new chat with me. */
+export const MESSAGE_FROM = ["everyone", "friends_of_friends", "friends"] as const;
+export type MessageFrom = (typeof MESSAGE_FROM)[number];
+
+/** A page or support conversation as the answering team sees it. */
+export interface TeamConversation {
+  id: string;
+  type: "page" | "support";
+  title: string;
+  page_id: string | null;
+  /** Who wrote to the team. */
+  account_id: string | null;
+  left: boolean;
+  last_message_at: string | null;
+  last_seq: number;
+  team_unread: number;
+  last_message: ConversationPreview | null;
+  created_at: string;
+}
+
+/** A message as the team sees it: a reply also names the teammate who wrote it. */
+export type TeamMessage = Message & { author_id?: string | null };
+
+/** The same reasons chat accepts on POST /messages/{id}/report/. */
+export const MESSAGE_REPORT_REASONS = [
+  "spam",
+  "scam",
+  "harassment",
+  "hate",
+  "violence",
+  "nudity",
+  "false_information",
+  "other",
+] as const;
+export type MessageReportReason = (typeof MESSAGE_REPORT_REASONS)[number];
 
 export interface SharedMediaItem {
   id: string;
@@ -51,6 +100,102 @@ export const chatService = {
       params: { cursor, archived: archived ? 1 : undefined },
     });
     return data;
+  },
+
+  /** One page of a folder, optionally narrowed to a type or to unread threads. */
+  async folderPage(query: ConversationQuery = {}): Promise<CursorPage<Conversation>> {
+    const { data } = await api.get<CursorPage<Conversation>>("/conversations/", {
+      params: {
+        cursor: query.cursor || undefined,
+        folder: query.folder && query.folder !== "inbox" ? query.folder : undefined,
+        type: query.type || undefined,
+        unread: query.unread ? 1 : undefined,
+      },
+    });
+    return data;
+  },
+
+  /** Answer a message request: accept moves it to the inbox, decline to spam. */
+  async answerRequest(conversationId: string, action: "accept" | "decline"): Promise<Conversation> {
+    const { data } = await api.post<{ data: Conversation }>(
+      `/conversations/${conversationId}/request/`,
+      { action },
+    );
+    return data.data;
+  },
+
+  /** Report a message to moderation (once per reporter per message). */
+  async reportMessage(messageId: string, reason: MessageReportReason): Promise<void> {
+    await api.post(`/messages/${messageId}/report/`, { reason });
+  },
+
+  /** Write to a Page: its team answers as the Page. */
+  async openPage(pageId: string): Promise<Conversation> {
+    const { data } = await api.post<{ data: Conversation }>("/conversations/", { type: "page", page_id: pageId });
+    return data.data;
+  },
+
+  /** Contact support: the Tara team answers as Tara Support. */
+  async openSupport(): Promise<Conversation> {
+    const { data } = await api.post<{ data: Conversation }>("/conversations/", { type: "support" });
+    return data.data;
+  },
+
+  /**
+   * The marketplace thread about a listing (with one buyer or seller), or null.
+   * Marketplace creates it from the buyer's contact request, so it can take a
+   * moment to appear: `waitMs` keeps asking until then.
+   */
+  async listingThread(listingId: string, withId?: string, waitMs = 0): Promise<Conversation | null> {
+    const deadline = Date.now() + waitMs;
+    for (;;) {
+      const { data } = await api.get<CursorPage<Conversation>>("/conversations/", {
+        params: { type: "marketplace", listing_id: listingId, with: withId || undefined },
+      });
+      if (data.data.length) return data.data[0];
+      if (Date.now() >= deadline) return null;
+      await new Promise((resolve) => setTimeout(resolve, 700));
+    }
+  },
+
+  /** "Who can message you" (spec B). */
+  async messageSettings(): Promise<MessageFrom> {
+    const { data } = await api.get<{ data: { message_from: MessageFrom } }>("/conversations/settings/");
+    return data.data.message_from;
+  },
+  async setMessageSettings(value: MessageFrom): Promise<MessageFrom> {
+    const { data } = await api.patch<{ data: { message_from: MessageFrom } }>("/conversations/settings/", {
+      message_from: value,
+    });
+    return data.data.message_from;
+  },
+
+  /** A team inbox: a page's (`pageId`, its team) or the support inbox (staff). */
+  async teamInbox(pageId?: string, cursor?: string | null): Promise<CursorPage<TeamConversation>> {
+    const { data } = await api.get<CursorPage<TeamConversation>>("/conversations/team/", {
+      params: { page_id: pageId || undefined, cursor: cursor || undefined },
+    });
+    return data;
+  },
+  async teamMessages(conversationId: string, cursor?: string | null): Promise<CursorPage<TeamMessage>> {
+    const { data } = await api.get<CursorPage<TeamMessage>>(`/conversations/team/${conversationId}/messages/`, {
+      params: { cursor: cursor || undefined },
+    });
+    return { ...data, data: oldestFirst(data.data) as TeamMessage[] };
+  },
+  async teamReply(conversationId: string, body: string): Promise<TeamMessage> {
+    const { data } = await api.post<{ data: TeamMessage }>(`/conversations/team/${conversationId}/messages/`, { body });
+    return data.data;
+  },
+  /** The team inbox's badge: threads with messages the team has not read (404 off the team). */
+  async teamUnread(pageId?: string): Promise<number> {
+    const { data } = await api.get<{ data: { conversations: number } }>("/conversations/team/unread/", {
+      params: { page_id: pageId || undefined },
+    });
+    return data.data.conversations;
+  },
+  async teamRead(conversationId: string): Promise<void> {
+    await api.post(`/conversations/team/${conversationId}/read/`);
   },
 
   async openDm(userId: string): Promise<Conversation> {

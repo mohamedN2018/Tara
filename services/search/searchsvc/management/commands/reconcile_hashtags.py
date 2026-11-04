@@ -12,7 +12,10 @@ from django.core.management.base import BaseCommand
 
 
 class Command(BaseCommand):
-    help = "Rebuild public hashtag links; drop hashtags no public post backs; restore missing ones."
+    help = (
+        "Rebuild public hashtag links; drop hashtags no public post backs; restore missing"
+        " ones; park the posts of hidden pages."
+    )
 
     def handle(self, *args, **options) -> None:
         from searchsvc.posts import reconcile_hashtags
@@ -23,6 +26,8 @@ class Command(BaseCommand):
                 f"posts purged: {r['posts_purged']}, "
                 f"links added: {r['links_added']}, links removed: {r['links_removed']}, "
                 f"hashtags purged: {r['hashtags_purged']}, "
-                f"hashtags restored: {r['hashtags_restored']}"
+                f"hashtags restored: {r['hashtags_restored']}, "
+                f"page posts parked: {r['page_posts_parked']}, "
+                f"page posts restored: {r['page_posts_restored']}"
             )
         )

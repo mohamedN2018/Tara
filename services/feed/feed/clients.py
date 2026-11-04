@@ -61,9 +61,11 @@ def _get(breaker: CircuitBreaker, path: str, params: dict | None = None) -> dict
         raise GraphUnavailable(str(exc)) from exc
 
 
-def fanout_audience(author_id: str) -> dict:
-    """Return {followers, friends, recipients} for an author. Raises on failure."""
-    return _get(_breaker, f"fanout/{author_id}/")
+def fanout_audience(author_id: str, target_type: str = "user") -> dict:
+    """Return {followers, friends, recipients} for an author (a page's followers
+    with ``target_type="page"``). Raises on failure."""
+    params = {"target_type": target_type} if target_type != "user" else None
+    return _get(_breaker, f"fanout/{author_id}/", params)
 
 
 def relationship(a: str, b: str) -> Relationship:

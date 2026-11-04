@@ -14,6 +14,7 @@ import GroupReportDialog from "@/components/groups/GroupReportDialog.vue";
 import PrivacyBadge from "@/components/groups/PrivacyBadge.vue";
 import AppShell from "@/components/layout/AppShell.vue";
 import CreatePostCard from "@/components/post/CreatePostCard.vue";
+import MyPendingPosts from "@/components/post/MyPendingPosts.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
@@ -44,6 +45,7 @@ const version = ref(0);
 const events = ref<TaraEvent[]>([]);
 const eventsLoading = ref(false);
 const postList = ref<InstanceType<typeof GroupPostList> | null>(null);
+const myPending = ref<InstanceType<typeof MyPendingPosts> | null>(null);
 
 const visibleTabs = computed<Tab[]>(() => (group.value?.content_visible ? TABS : ["about"]));
 const isTab = (v: unknown): v is Tab => typeof v === "string" && (TABS as string[]).includes(v);
@@ -101,7 +103,10 @@ function focusTab(e: KeyboardEvent, index: number) {
 }
 
 function onPosted(post: Post) {
-  if (post.approval_state === "pending") toasts.success(t("groups.post.pendingToast"));
+  if (post.approval_state === "pending") {
+    toasts.success(t("groups.post.pendingToast"));
+    void myPending.value?.refresh();
+  }
   else postList.value?.prepend(post);
 }
 
@@ -165,6 +170,8 @@ watch(() => [tab.value, group.value?.id], () => {
             <p v-if="isMember && group.post_approval && !group.viewer.can.approve_posts" class="px-1 text-xs text-gray-500 dark:text-gray-400">
               {{ t("groups.post.approvalHint") }}
             </p>
+            <!-- T4: the member's own posts waiting for approval. -->
+            <MyPendingPosts v-if="isMember && !group.viewer.can.approve_posts" ref="myPending" :group="group" :version="version" />
             <GroupPostList ref="postList" :group="group" view="discussion" :version="version" />
           </template>
 

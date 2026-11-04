@@ -5,6 +5,7 @@ from rest_framework import serializers
 
 from .models import (
     MESSAGE_REACTION_TYPES,
+    ChatSettings,
     Conversation,
     ConversationMember,
     Message,
@@ -15,6 +16,18 @@ from .models import (
 
 class DMCreateSerializer(serializers.Serializer):
     other_id = serializers.UUIDField()
+
+
+class PageConversationSerializer(serializers.Serializer):
+    page_id = serializers.UUIDField()
+
+
+class ChatSettingsSerializer(serializers.Serializer):
+    message_from = serializers.ChoiceField(choices=ChatSettings.MessageFrom.values)
+
+
+class TeamReplySerializer(serializers.Serializer):
+    body = serializers.CharField(max_length=8000)
 
 
 class GroupUpdateSerializer(serializers.Serializer):
@@ -50,6 +63,8 @@ class ConversationSerializer(serializers.ModelSerializer):
     pinned_messages = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
     archived = serializers.SerializerMethodField()
+    request_status = serializers.SerializerMethodField()
+    last_message = serializers.SerializerMethodField()
 
     class Meta:
         model = Conversation
@@ -58,6 +73,9 @@ class ConversationSerializer(serializers.ModelSerializer):
             "type",
             "title",
             "listing_id",
+            "listing_title",
+            "listing_cover_media_id",
+            "page_id",
             "last_message_at",
             "last_seq",
             "created_at",
@@ -67,6 +85,8 @@ class ConversationSerializer(serializers.ModelSerializer):
             "pinned_messages",
             "unread_count",
             "archived",
+            "request_status",
+            "last_message",
         ]
 
     def _active(self, obj: Conversation) -> list:
@@ -105,6 +125,27 @@ class ConversationSerializer(serializers.ModelSerializer):
     def get_archived(self, obj: Conversation) -> bool:
         mine = self._mine(obj)
         return bool(mine and mine.archived_at)
+
+    def get_request_status(self, obj: Conversation) -> str:
+        """The viewer's own request state: ``none``, ``pending`` or ``spam``.
+        Nobody else's is ever shown (a sender never learns it was declined)."""
+        mine = self._mine(obj)
+        return (mine.request_status if mine else "") or "none"
+
+    def get_last_message(self, obj: Conversation) -> dict | None:
+        """The newest message the viewer can see, for the inbox row."""
+        preview = getattr(obj, "last_message_preview", None)
+        if not preview:
+            return None
+        deleted = bool(preview.get("deleted_at"))
+        return {
+            "id": preview.get("id"),
+            "sender_id": preview.get("sender_id"),
+            "type": preview.get("type"),
+            "body": "" if deleted else (preview.get("body") or ""),
+            "deleted": deleted,
+            "created_at": preview.get("created_at"),
+        }
 
     def get_muted_until(self, obj: Conversation) -> str | None:
         mine = self._mine(obj)
@@ -290,9 +331,96 @@ class ReadSerializer(serializers.Serializer):
     up_to_message_id = serializers.UUIDField()
 
 
+class RequestActionSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(choices=["accept", "decline"])
+
+
+class MessageReportSerializer(serializers.Serializer):
+    reason = serializers.ChoiceField(
+        choices=[
+            "spam",
+            "scam",
+            "hate",
+            "violence",
+            "nudity",
+            "harassment",
+            "false_information",
+            "other",
+        ]
+    )
+
+
 class MuteSerializer(serializers.Serializer):
     minutes = serializers.IntegerField(min_value=0, max_value=525600, default=480)  # 0 = unmute
 
 
 class PinSerializer(serializers.Serializer):
     message_id = serializers.UUIDField()
+
+
+def _preview(obj) -> dict | None:
+    preview = getattr(obj, "last_message_preview", None)
+    if not preview:
+        return None
+    deleted = bool(preview.get("deleted_at"))
+    return {
+        "id": preview.get("id"),
+        "sender_id": preview.get("sender_id"),
+        "type": preview.get("type"),
+        "body": "" if deleted else (preview.get("body") or ""),
+        "deleted": deleted,
+        "created_at": preview.get("created_at"),
+    }
+
+
+class TeamConversationSerializer(serializers.ModelSerializer):
+    """A page or support conversation as its answering team sees it: who wrote
+    (``account_id``), the newest message and how much the team has not read."""
+
+    account_id = serializers.SerializerMethodField()
+    left = serializers.SerializerMethodField()
+    team_unread = serializers.SerializerMethodField()
+    last_message = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Conversation
+        fields = [
+            "id",
+            "type",
+            "title",
+            "page_id",
+            "account_id",
+            "left",
+            "last_message_at",
+            "last_seq",
+            "team_unread",
+            "last_message",
+            "created_at",
+        ]
+
+    def _member(self, obj):
+        members = getattr(obj, "all_members", None)
+        if members is None:
+            members = list(obj.members.order_by("joined_at"))
+        return members[0] if members else None
+
+    def get_account_id(self, obj) -> str | None:
+        member = self._member(obj)
+        return str(member.account_id) if member else None
+
+    def get_left(self, obj) -> bool:
+        member = self._member(obj)
+        return member is None or member.left_at is not None
+
+    def get_team_unread(self, obj) -> int:
+        return max(0, obj.last_seq - obj.team_read_seq) if obj.seq_ready else 0
+
+    def get_last_message(self, obj) -> dict | None:
+        return _preview(obj)
+
+
+class TeamMessageSerializer(MessageSerializer):
+    """The team's copy of a message also says which teammate wrote a reply."""
+
+    class Meta(MessageSerializer.Meta):
+        fields = [*MessageSerializer.Meta.fields, "author_id"]

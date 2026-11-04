@@ -14,6 +14,8 @@ const DEBOUNCE_MS = 400;
 export const useChatUnreadStore = defineStore("chatUnread", () => {
   const conversations = ref(0);
   const messages = ref(0);
+  // Message requests waiting for an answer: shown on the "Message requests" entry only.
+  const requests = ref(0);
   let bound = false;
   let timer: number | null = null;
   let deliverPending = false;
@@ -23,6 +25,7 @@ export const useChatUnreadStore = defineStore("chatUnread", () => {
       const summary = await chatService.unread();
       conversations.value = summary.conversations;
       messages.value = summary.messages;
+      requests.value = summary.requests ?? 0;
     } catch {
       // Chat may be degraded; keep the last known count.
     }
@@ -54,5 +57,5 @@ export const useChatUnreadStore = defineStore("chatUnread", () => {
     schedule(true);
   }
 
-  return { conversations, messages, refresh, bind };
+  return { conversations, messages, requests, refresh, bind };
 });

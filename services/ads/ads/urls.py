@@ -20,6 +20,12 @@ urlpatterns = [
     path(
         "ads/ad-sets/<uuid:ad_set_id>/creatives/", views.CreativesView.as_view(), name="creatives"
     ),
+    path(
+        "ads/creatives/<uuid:creative_id>/",
+        views.CreativeDetailView.as_view(),
+        name="creative-detail",
+    ),
+    path("ads/slot/", views.SlotView.as_view(), name="slot"),
     path("ads/review-queue/", views.ReviewQueueView.as_view(), name="review-queue"),
     path("ads/creatives/<uuid:creative_id>/review/", views.ReviewView.as_view(), name="review"),
     path("ads/events/", views.EventsView.as_view(), name="events"),

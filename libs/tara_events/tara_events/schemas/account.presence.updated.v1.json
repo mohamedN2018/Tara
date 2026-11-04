@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/account.presence.updated.v1.json",
+  "title": "account.presence.updated v1 payload",
+  "description": "The owner turned Settings > Privacy 'Show when you're active' on or off (3C). Realtime keeps the newest value per account and trusts it over the show_presence claim of access tokens issued before the change. subject_id and actor_id are the account.",
+  "type": "object",
+  "properties": {
+    "account_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "show_presence": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "account_id",
+    "show_presence"
+  ],
+  "additionalProperties": false
+}

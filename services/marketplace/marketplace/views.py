@@ -20,18 +20,23 @@ from .serializers import (
     CategorySerializer,
     CompareQuerySerializer,
     FacetsSerializer,
+    InquiriesQuerySerializer,
     InquiryResultSerializer,
+    InquiryRowSerializer,
     InquirySerializer,
     ListingCreateSerializer,
     ListingDetailSerializer,
     ListingFilterSerializer,
     ListingSerializer,
     ListingUpdateSerializer,
+    MyListingsQuerySerializer,
     ReportSerializer,
     ReviewCreateSerializer,
     SellerReviewSerializer,
     SellerSummarySerializer,
+    SellingSummarySerializer,
     TransitionSerializer,
+    inquiry_row,
 )
 
 SORTS = {
@@ -47,6 +52,7 @@ _FILTER_PARAMS = [
     OpenApiParameter(name, str, required=False)
     for name in (
         "q",
+        "seller_id",
         "category",
         "condition",
         "price_type",
@@ -160,9 +166,48 @@ class CompareView(APIView):
 class MyListingsView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(responses={200: ListingSerializer(many=True)}, tags=["marketplace"])
+    @extend_schema(
+        parameters=[OpenApiParameter("status", str, required=False)],
+        responses={200: ListingSerializer(many=True)},
+        tags=["marketplace"],
+    )
     def get(self, request: Request) -> Response:
-        return _paginate(request, services.my_listings(_me(request)), ListingSerializer)
+        raw = (request.query_params.get("status") or "").strip()
+        query = MyListingsQuerySerializer(data={"status": raw} if raw else {})
+        query.is_valid(raise_exception=True)
+        qs = services.my_listings(_me(request), query.validated_data.get("status"))
+        return _paginate(request, qs, ListingSerializer)
+
+
+class SellingSummaryView(APIView):
+    """The seller's own numbers for the Selling overview (never anyone else's)."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: SellingSummarySerializer}, tags=["marketplace"])
+    def get(self, request: Request) -> Response:
+        return data_response(SellingSummarySerializer(services.selling_summary(_me(request))).data)
+
+
+class InquiriesListView(APIView):
+    """The marketplace inbox: ``role=buyer`` (Buying) or ``role=seller`` (Selling)."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        parameters=[OpenApiParameter("role", str, required=False, enum=["buyer", "seller"])],
+        responses={200: InquiryRowSerializer(many=True)},
+        tags=["marketplace"],
+    )
+    def get(self, request: Request) -> Response:
+        query = InquiriesQuerySerializer(data={"role": request.query_params.get("role", "buyer")})
+        query.is_valid(raise_exception=True)
+        role = query.validated_data["role"]
+        me = _me(request)
+        paginator = CursorPagination()
+        page = paginator.paginate_queryset(services.inquiries(me, role), request)
+        rows = [inquiry_row(i, role, services.inquiry_listing_visible(me, i)) for i in page or []]
+        return paginator.get_paginated_response(InquiryRowSerializer(rows, many=True).data)
 
 
 class ListingDetailView(APIView):

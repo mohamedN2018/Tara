@@ -114,10 +114,13 @@ test("a friend request is accepted from the right column, and the sidebar is com
     await expect
       .poll(async () => ((await (await aApi.get(`${API}/friends/`)).json()).data.friends as string[]).includes(c.id))
       .toBe(true);
-    // The new friend is a contact; clicking a contact opens the chat.
+    // The new friend is a contact; clicking a contact opens a docked mini chat
+    // (desktop), and "Open in Messenger" leads to the inbox thread.
     const contact = rail.getByTestId("rail-contact").filter({ hasText: c.name });
     await expect(contact).toBeVisible();
     await contact.click();
+    await expect(page.getByTestId("chat-window")).toBeVisible();
+    await page.getByTestId("chat-window-open").click();
     await expect(page).toHaveURL(/\/messages\/[\w-]+$/);
 
     // Left column: profile first, eight items, See more persists across a reload.

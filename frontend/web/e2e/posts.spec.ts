@@ -45,13 +45,15 @@ test("editing a long post from the feed keeps every character", async ({ browser
     .toBe(1);
 
   await post.getByRole("button", { name: "المزيد" }).click();
-  await post.getByRole("button", { name: "تعديل" }).click();
-  // While editing, the text lives in the textarea: `post` no longer matches.
-  const editor = page.getByRole("textbox", { name: "تعديل نص المنشور" });
+  await post.getByRole("button", { name: "تعديل المنشور" }).click();
+  // Editing opens the composer dialog prefilled with the full text (the reference's "Edit post").
+  const dialog = page.getByTestId("composer-dialog");
+  const editor = dialog.locator("textarea").first();
   await expect(editor).toHaveValue(body);
 
   await editor.fill(`${body} EDITED`);
-  await page.locator("article").filter({ has: editor }).getByRole("button", { name: "حفظ", exact: true }).last().click();
+  await dialog.getByTestId("composer-submit").click();
+  await expect(dialog).toHaveCount(0);
   await expect(post).toContainText(`END-${marker} EDITED`);
 
   await page.reload();
@@ -97,7 +99,9 @@ test("my reaction and saved state come back after a reload", async ({ browser })
   await page.goto(`/posts/${post.id}`);
   const card = page.locator("article");
   await expect(card.getByRole("button", { name: "أحببته" })).toHaveAttribute("aria-pressed", "true");
-  await expect(card.getByRole("button", { name: "حفظ" })).toHaveAttribute("aria-pressed", "true");
+  // Save lives in the post "..." menu (as on the reference), pressed when saved.
+  await card.getByTestId("post-menu").click();
+  await expect(card.getByTestId("menu-save")).toHaveAttribute("aria-pressed", "true");
 });
 
 test("a failed action shows a toast, not a browser alert", async ({ browser }) => {

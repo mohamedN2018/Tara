@@ -297,7 +297,9 @@ def test_review_queue_is_for_reviewers_and_empties_on_decision(client_for, setti
     assert rows[0]["campaign_name"] == "C"
 
     reviewer.post(
-        reverse("ads:review", args=[creative.id]), {"decision": "rejected"}, format="json"
+        reverse("ads:review", args=[creative.id]),
+        {"decision": "rejected", "notes": "Misleading claim"},
+        format="json",
     )
     assert reviewer.get(url).json()["data"] == []
     assert services.pick_for_viewer(_acct(), "feed") is None

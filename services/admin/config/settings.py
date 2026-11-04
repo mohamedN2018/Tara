@@ -161,13 +161,16 @@ STATS_POLL_SECONDS = float(os.getenv("ADMIN_STATS_POLL_SECONDS", "300"))
 ADMIN_AUDIT_EXPORT_MAX_ROWS = int(os.getenv("ADMIN_AUDIT_EXPORT_MAX_ROWS", "10000"))
 
 # Events: admin consumes audit-worthy events (queue admin.events). Its outbox
-# exists for the shared relay and purge tasks; admin emits nothing yet.
+# carries system.notice (administrative notices) to notification.
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")
 TARA_EVENT_PUBLISHER = "rabbitmq" if RABBITMQ_URL else "null"
 TARA_EVENT_BROKER_URL = RABBITMQ_URL
 TARA_EVENT_EXCHANGE = os.getenv("TARA_EVENT_EXCHANGE", "tara.events")
 TARA_OUTBOX_MODEL = "adminsvc.OutboxEvent"
 TARA_EVENT_QUEUE = "admin.events"
+# Emit system.notice when staff send an administrative notice. Two-release rule:
+# notification's consumer ships first; turn this off to hold the emission.
+ADMIN_EMIT_SYSTEM_NOTICES = env_bool("ADMIN_EMIT_SYSTEM_NOTICES", True)
 
 CELERY_BROKER_URL = RABBITMQ_URL or "memory://"
 CELERY_TASK_DEFAULT_QUEUE = f"{SERVICE_NAME}.tasks"

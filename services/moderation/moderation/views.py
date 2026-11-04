@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -14,8 +16,8 @@ from tara_common.pagination import CursorPagination
 from tara_common.permissions import HasCapability
 from tara_common.responses import data_response
 
-from . import services
-from .models import Appeal
+from . import account_status, services
+from .models import Appeal, ModerationCase
 from .serializers import (
     ActionSerializer,
     AppealCreateSerializer,
@@ -23,6 +25,8 @@ from .serializers import (
     AppealSerializer,
     CaseSerializer,
     ManualReportSerializer,
+    MyCaseSerializer,
+    MyReportSerializer,
     ReportSerializer,
 )
 from .throttling import ReportThrottle
@@ -38,6 +42,13 @@ class QueuePagination(CursorPagination):
     offset_cutoff = 100_000
 
 
+def _uuid_or_404(value: str, what: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        raise services._not_found(what) from None
+
+
 def _paginate(request, queryset, serializer_cls, paginator_cls=CursorPagination):
     paginator = paginator_cls()
     page = paginator.paginate_queryset(queryset, request)
@@ -49,9 +60,46 @@ class ReportsView(APIView):
 
     @extend_schema(responses={200: ReportSerializer(many=True)}, tags=["moderation"])
     def get(self, request: Request) -> Response:
+        """Every report, newest first; ``?case=`` or ``?target_type=&target_id=`` narrows it."""
         from .models import Report
 
-        return _paginate(request, Report.objects.order_by("-created_at"), ReportSerializer)
+        reports = Report.objects.all()
+        params = request.query_params
+        case_id = params.get("case")
+        if case_id:
+            case = ModerationCase.objects.filter(id=_uuid_or_404(case_id, "Case")).first()
+            if case is None:
+                raise services._not_found()
+            # A report joins the target's open case, so this case's reports are
+            # the target's reports from its opening until the next case opened.
+            reports = reports.filter(
+                target_type=case.target_type,
+                target_id=case.target_id,
+                created_at__gte=case.created_at,
+            )
+            later = (
+                ModerationCase.objects.filter(
+                    target_type=case.target_type,
+                    target_id=case.target_id,
+                    created_at__gt=case.created_at,
+                )
+                .order_by("created_at")
+                .values_list("created_at", flat=True)
+                .first()
+            )
+            if later is not None:
+                reports = reports.filter(created_at__lt=later)
+        elif params.get("target_type") or params.get("target_id"):
+            if not (params.get("target_type") and params.get("target_id")):
+                raise TaraAPIError(
+                    "Filter on target_type and target_id together.",
+                    code="validation_error",
+                    http_status_code=400,
+                )
+            reports = reports.filter(
+                target_type=params["target_type"][:20], target_id=params["target_id"][:64]
+            )
+        return _paginate(request, reports.order_by("-created_at", "-id"), ReportSerializer)
 
 
 class ManualReportView(APIView):
@@ -87,9 +135,18 @@ class CasesView(APIView):
 
     @extend_schema(responses={200: CaseSerializer(many=True)}, tags=["moderation"])
     def get(self, request: Request) -> Response:
+        """``?state=open|in_review|resolved``; ``?assigned=me`` lists the caller's cases."""
+        state = request.query_params.get("state") or None
+        if state and state not in ModerationCase.State.values:
+            raise TaraAPIError("Invalid state.", code="validation_error", http_status_code=400)
+        assigned = request.query_params.get("assigned")
+        if assigned and assigned != "me":
+            raise TaraAPIError(
+                "assigned only takes 'me'.", code="validation_error", http_status_code=400
+            )
         return _paginate(
             request,
-            services.queue(request.query_params.get("state")),
+            services.queue(state, _me(request) if assigned else None),
             CaseSerializer,
             QueuePagination,
         )
@@ -152,3 +209,45 @@ class AppealResolveView(APIView):
         serializer.is_valid(raise_exception=True)
         services.resolve_appeal(appeal_id, _me(request), serializer.validated_data["status"])
         return data_response({"detail": "appeal resolved"})
+
+
+# ---- the member's own view (account status, support inbox) ------------------
+
+
+class MyCasesView(APIView):
+    """Decisions about my own content or account, with appeal state (Account status)."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: MyCaseSerializer(many=True)}, tags=["moderation"])
+    def get(self, request: Request) -> Response:
+        return _paginate(request, account_status.my_cases(_me(request)), MyCaseSerializer)
+
+
+class MyReportsView(APIView):
+    """What I reported and where each report stands (Support inbox)."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: MyReportSerializer(many=True)}, tags=["moderation"])
+    def get(self, request: Request) -> Response:
+        paginator = CursorPagination()
+        page = paginator.paginate_queryset(account_status.my_reports(_me(request)), request)
+        outcomes = account_status.report_outcomes(page)
+        data = MyReportSerializer(page, many=True, context={"outcomes": outcomes}).data
+        return paginator.get_paginated_response(data)
+
+
+class SummaryView(APIView):
+    """Queue counts for the console overview."""
+
+    permission_classes = [HasCapability("moderation.case.view")]
+
+    @extend_schema(responses={200: None}, tags=["moderation"])
+    def get(self, request: Request) -> Response:
+        caps = getattr(request.user, "capabilities", frozenset())
+        return data_response(
+            account_status.summary(
+                moderator_id=_me(request), with_appeals="moderation.appeal.view" in caps
+            )
+        )

@@ -9,7 +9,7 @@ import type { CursorPage, Post } from "@/types";
 export type GroupPrivacy = "public" | "private" | "hidden";
 export type GroupRole = "owner" | "admin" | "moderator" | "member";
 export type MemberState = "requested" | "invited" | "active" | "banned";
-export type GroupScope = "mine" | "discover" | "invited" | "requested";
+export type GroupScope = "mine" | "discover" | "invited" | "requested" | "managed";
 export type GroupFeedView = "discussion" | "featured" | "pending" | "media";
 export type GroupCategory =
   | "general"
@@ -257,13 +257,13 @@ export function isStaff(role: GroupRole | null | undefined): boolean {
   return role === "owner" || role === "admin" || role === "moderator";
 }
 
-export type ManageSection = "requests" | "posts" | "members" | "banned" | "rules" | "settings" | "reports";
+export type ManageSection = "requests" | "invited" | "posts" | "members" | "banned" | "rules" | "settings" | "reports";
 
 /** The dashboard sections the viewer may open, in display order. */
 export function manageSections(can: Partial<GroupCan> | null | undefined): ManageSection[] {
   if (!can) return [];
   const out: ManageSection[] = [];
-  if (can.approve_requests) out.push("requests");
+  if (can.approve_requests) out.push("requests", "invited");
   if (can.approve_posts) out.push("posts");
   if (can.moderate || can.change_roles) out.push("members");
   if (can.moderate) out.push("banned");
@@ -388,6 +388,11 @@ export const groupsService = {
 
   async declineRequest(groupRef: string, accountId: string): Promise<void> {
     await api.post(`/groups/${ref(groupRef)}/requests/${ref(accountId)}/decline/`);
+  },
+
+  /** Withdraw a pending invitation (staff who may approve requests). */
+  async revokeInvite(groupRef: string, accountId: string): Promise<void> {
+    await api.post(`/groups/${ref(groupRef)}/invites/${ref(accountId)}/revoke/`);
   },
 
   async removeMember(groupRef: string, accountId: string): Promise<void> {

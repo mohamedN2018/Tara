@@ -18,6 +18,11 @@ urlpatterns = [
     ),
     path("profile/me/work/", views.WorkView.as_view(), name="work"),
     path("profile/me/work/<int:pk>/", views.WorkDetailView.as_view(), name="work-detail"),
+    path(
+        "profile/me/blocked/lookup/",
+        views.BlockedCardsView.as_view(),
+        name="blocked-lookup",
+    ),
     # Sign-up's live check (public, rate limited).
     path(
         "profile/handles/available/",

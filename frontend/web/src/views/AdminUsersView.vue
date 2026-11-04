@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { Search, Users } from "lucide-vue-next";
+import { Search } from "lucide-vue-next";
 import { onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 
-import AdminNav from "@/components/admin/AdminNav.vue";
-import AppShell from "@/components/layout/AppShell.vue";
+import AdminLayout from "@/components/admin/AdminLayout.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
@@ -91,14 +90,11 @@ onMounted(load);
 </script>
 
 <template>
-  <AppShell>
-    <h1 class="mb-4 text-xl font-bold">{{ t("nav.admin") }}</h1>
-    <AdminNav />
+  <AdminLayout :title="t('admin.sections.users')">
 
     <section aria-labelledby="users-title">
-      <h2 id="users-title" class="mb-3 flex items-center gap-2 font-semibold">
-        <Users class="h-5 w-5 text-brand-600 dark:text-brand-300" aria-hidden="true" /> {{ t("admin.users.title") }}
-      </h2>
+      <!-- The page title already says "Users": the section heading is for screen readers. -->
+      <h2 id="users-title" class="sr-only">{{ t("admin.users.title") }}</h2>
 
       <form role="search" class="card mb-4 flex flex-wrap items-end gap-2 p-3" :aria-label="t('admin.users.searchLabel')" @submit.prevent="submit">
         <label class="flex min-w-48 flex-1 flex-col gap-1 text-sm">
@@ -167,5 +163,5 @@ onMounted(load);
         </button>
       </div>
     </section>
-  </AppShell>
+  </AdminLayout>
 </template>

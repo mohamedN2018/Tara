@@ -107,3 +107,19 @@ class SuspendSerializer(ReasonSerializer):
         if value is not None and value <= timezone.now():
             raise serializers.ValidationError("Must be in the future.")
         return value
+
+
+class SystemNoticeSerializer(serializers.Serializer):
+    id = serializers.UUIDField(read_only=True)
+    body = serializers.CharField(read_only=True)
+    recipient_ids = serializers.ListField(child=serializers.CharField(), read_only=True)
+    recipient_count = serializers.IntegerField(read_only=True)
+    created_by = serializers.UUIDField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+
+
+class SystemNoticeWriteSerializer(serializers.Serializer):
+    recipient_ids = serializers.ListField(
+        child=serializers.UUIDField(), min_length=1, max_length=50
+    )
+    body = serializers.CharField(max_length=300)

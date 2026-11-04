@@ -12,12 +12,15 @@ import { useDirectoryStore } from "@/stores/directory";
 import { useToastStore } from "@/stores/toasts";
 import type { Listing } from "@/types";
 
+import ListingOwnerMenu from "./ListingOwnerMenu.vue";
 import PriceTag from "./PriceTag.vue";
+import { categoryLabel } from "./useCategories";
 import { useCompare } from "./useCompare";
 
-const props = defineProps<{ listing: Listing }>();
-const emit = defineEmits<{ unsaved: [id: string] }>();
-const { t } = useI18n();
+// `manage`: the seller's own grid (Selling): the "..." menu replaces save/compare.
+const props = withDefaults(defineProps<{ listing: Listing; manage?: boolean }>(), { manage: false });
+const emit = defineEmits<{ unsaved: [id: string]; updated: [listing: Listing]; edit: [listing: Listing] }>();
+const { t, te } = useI18n();
 const auth = useAuthStore();
 const directory = useDirectoryStore();
 const toasts = useToastStore();
@@ -61,9 +64,14 @@ function toggleCompare() {
 </script>
 
 <template>
-  <article class="card card-hover flex flex-col overflow-hidden">
+  <!-- A managed card never lifts on hover: the lift would trap its "..." menu under the next row. -->
+  <article
+    class="card flex flex-col"
+    :class="manage && own ? 'relative focus-within:z-20' : 'card-hover'"
+    data-testid="listing-card"
+  >
     <RouterLink :to="`/marketplace/${listing.id}`" class="block">
-      <div class="relative aspect-square">
+      <div class="relative aspect-square overflow-hidden rounded-t-2xl">
         <img v-if="cover" :src="cover" class="h-full w-full object-cover" loading="lazy" :alt="listing.title" />
         <div
           v-else
@@ -71,7 +79,7 @@ function toggleCompare() {
           :class="gradient"
         >
           <component :is="icon" class="h-10 w-10 opacity-70" />
-          <span v-if="listing.category" class="text-xs font-medium opacity-80">{{ listing.category.name }}</span>
+          <span v-if="listing.category" class="text-xs font-medium opacity-80">{{ categoryLabel(listing.category, t, te) }}</span>
         </div>
 
         <span
@@ -97,9 +105,15 @@ function toggleCompare() {
       </div>
     </RouterLink>
 
-    <div class="mt-auto flex items-center gap-1 px-3 pb-3">
+    <div v-if="manage && own" class="mt-auto flex items-center gap-2 px-3 pb-3 text-xs text-gray-500 dark:text-gray-400">
+      <span class="min-w-0 flex-1 truncate">
+        {{ t("market.views", listing.view_count ?? 0) }} · {{ t("market.saves", listing.save_count ?? 0) }}
+      </span>
+      <ListingOwnerMenu :listing="listing" @updated="emit('updated', $event)" @edit="emit('edit', listing)" />
+    </div>
+    <div v-else class="mt-auto flex items-center gap-1 px-3 pb-3">
       <RouterLink
-        :to="{ name: 'profile-by-id', params: { id: listing.seller_id } }"
+        :to="{ name: 'marketplace-seller', params: { id: listing.seller_id } }"
         class="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-gray-500 hover:text-brand-600 dark:text-gray-400"
         :title="t('market.viewSeller')"
       >

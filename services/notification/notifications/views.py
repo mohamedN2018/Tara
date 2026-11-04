@@ -39,7 +39,11 @@ class NotificationsView(APIView):
         category = request.query_params.get("category", "")
         if category not in ("", *registry.CATEGORIES):
             raise ValidationError({"category": "Unknown category."})
-        qs = services.list_for(_me(request), unread_only=unread_only, category=category)
+        # `kind`: one notification kind (the Support inbox's "Notices from Tara").
+        kind = request.query_params.get("kind", "")
+        if kind and kind not in registry.KINDS:
+            raise ValidationError({"kind": "Unknown kind."})
+        qs = services.list_for(_me(request), unread_only=unread_only, category=category, kind=kind)
         paginator = CursorPagination()
         page = paginator.paginate_queryset(qs, request)
         return paginator.get_paginated_response(NotificationSerializer(page, many=True).data)

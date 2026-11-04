@@ -40,6 +40,10 @@ class UserProfile(models.Model):
         max_length=16, choices=Visibility.choices, default=Visibility.PUBLIC
     )
     completion_pct = models.PositiveSmallIntegerField(default=0)
+    # Discoverability (roadmap 1.6, 05 decision 9): ``False`` keeps the account
+    # out of people search and suggestions. Carried in ``profile.updated``;
+    # friends and followers still reach the profile as before.
+    searchable = models.BooleanField(default=True, db_default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     deleted_at = models.DateTimeField(null=True, blank=True)

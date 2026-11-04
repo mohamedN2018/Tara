@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/account.deactivated.v1.json",
+  "title": "account.deactivated v1 payload",
+  "description": "The owner deactivated their own account from Settings (plan 08 3C), re-authenticated with the password, or asked to delete it (the same state during the 30-day grace that ends in account.deleted). Every session and refresh token was revoked in the same transaction. Signing in again reactivates it (account.reactivated). subject_id and actor_id are the account. Profile, post and search hide what the account owns until account.reactivated.",
+  "type": "object",
+  "properties": {
+    "account_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "account_id"
+  ],
+  "additionalProperties": false
+}

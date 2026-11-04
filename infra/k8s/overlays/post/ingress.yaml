@@ -43,3 +43,10 @@ spec:
                 name: service
                 port:
                   number: 80
+          - path: /api/v1/stories
+            pathType: Prefix
+            backend:
+              service:
+                name: service
+                port:
+                  number: 80

@@ -106,6 +106,19 @@ def test_a_blocked_dm_cannot_call_either_way(client_for, blocker):
     assert not Call.objects.exists()
 
 
+def test_an_unanswered_message_request_cannot_ring_either_way(client_for, graph):
+    a, b = _acct(), _acct()
+    graph.make_strangers(a, b)
+    conv = chat.create_or_get_dm(a, b)
+    for who in (a, b):
+        r = _start(client_for(who), conv)
+        assert r.status_code == 403
+        assert r.json()["error"]["code"] == "message_request"
+    assert not Call.objects.exists()
+    chat.accept_request(b, str(conv.id))
+    assert _start(client_for(a), conv).status_code == 201
+
+
 def test_a_blocked_callee_cannot_join_an_existing_call(client_for):
     a, b, conv = _dm()
     call_id = _start(client_for(a), conv).json()["data"]["call_id"]

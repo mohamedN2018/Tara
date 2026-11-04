@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import re
+import uuid
 from datetime import UTC, datetime
 
 from django.db import transaction
@@ -23,11 +24,15 @@ from django.utils.dateparse import parse_datetime
 from tara_events.envelope import EventEnvelope
 
 from . import backend
-from .models import PostIndexState, PublicPostHashtag, SearchDocument
+from .models import DocState, PostIndexState, PublicPostHashtag, SearchDocument
 
 logger = logging.getLogger("tara.search.posts")
 
 PUBLIC = "public"
+PAGE_AUTHOR = "page"  # post-service ``author_type`` of a post published as a page
+# A hidden page's posts are kept under this type (never queried: every query names
+# the real types, and it is never sent to OpenSearch) so republishing restores them.
+PARKED_POST = "~post"
 # post-service truncates `excerpt` to this many characters (`body[:280]`).
 EXCERPT_LIMIT = 280
 # Mirrors post-service `extract_hashtags` so a derived tag matches the stored one.
@@ -103,12 +108,172 @@ def apply_post_event(e: EventEnvelope, *, deleted: bool = False) -> None:
             state.save(update_fields=["occurred_at", "public", "deleted"])
 
         author_id = p.get("author_id") or None
-        if public:
-            backend.index_document("post", post_id, **post_doc(post_id, p, author_id))
-            set_post_hashtags(post_id, tags_for(p), author_id=author_id)
-        else:
+        if not public:
+            backend.delete_document("post", post_id)
+            SearchDocument.objects.filter(doc_type=PARKED_POST, doc_id=post_id).delete()
+            set_post_hashtags(post_id, set())
+            return
+        doc, tags = post_doc(post_id, p, author_id), tags_for(p)
+        if doc["extra"]["author_type"] == PAGE_AUTHOR and _page_hidden(author_id):
+            # Published as a page that is hidden now (draft, suspended, deleted):
+            # parked until the page is published again (``sync_page_posts``).
             backend.delete_document("post", post_id)
             set_post_hashtags(post_id, set())
+            _park(post_id, doc, tags)
+            return
+        SearchDocument.objects.filter(doc_type=PARKED_POST, doc_id=post_id).delete()
+        backend.index_document("post", post_id, **doc)
+        set_post_hashtags(post_id, tags, author_id=author_id)
+
+
+# ---- posts published as a page --------------------------------------------------
+# A page that leaves search (draft, suspended, deleted: ``page_doc`` is None and its
+# ``DocState`` is not live) takes its posts and their hashtag links with it, and
+# brings them back when it is published again. ``sync_page_posts`` makes the index
+# match the page's current state (not the event's), under the page's ``DocState``
+# lock, so it is idempotent and order safe. ``apply_post_event`` takes the same lock
+# before it writes a page's post, so the two never miss each other. Lock order is
+# always ``PostIndexState`` -> page ``DocState`` -> hashtag documents.
+
+
+def _page_hidden(page_id) -> bool:
+    """True when search knows this page and it is not searchable. Locks the state row."""
+    if not page_id:
+        return False
+    state = (
+        DocState.objects.select_for_update()
+        .filter(doc_type="page", doc_id=str(page_id))
+        .only("live")
+        .first()
+    )
+    return state is not None and not state.live
+
+
+def _park(post_id: str, doc: dict, tags: set[str]) -> None:
+    SearchDocument.objects.update_or_create(
+        doc_type=PARKED_POST,
+        doc_id=post_id,
+        defaults={
+            "title": doc.get("title", ""),
+            "body": doc.get("body", ""),
+            "owner_id": doc.get("owner_id") or None,
+            "extra": {**(doc.get("extra") or {}), "tags": sorted(tags)},
+            "category": doc.get("category", ""),
+            "source_at": doc.get("source_at"),
+        },
+    )
+
+
+def _lock_hashtags(tags: set[str]) -> None:
+    list(
+        SearchDocument.objects.select_for_update()
+        .filter(doc_type="hashtag", doc_id__in=sorted(tags))
+        .order_by("doc_id")
+        .values_list("id", flat=True)
+    )
+
+
+def sync_page_posts(page_id) -> dict:
+    """Park the page's posts while it is hidden; restore them once it is searchable."""
+    page_id = str(page_id)
+    if not _is_uuid(page_id):
+        return {"parked": 0, "restored": 0}  # page ids are UUIDs; anything else owns nothing
+    with transaction.atomic():
+        state = DocState.objects.select_for_update().filter(doc_type="page", doc_id=page_id).first()
+        if state is None:
+            return {"parked": 0, "restored": 0}  # search knows nothing about this page
+        if state.live:
+            return {"parked": 0, "restored": _restore_page_posts(page_id)}
+        return {"parked": _park_page_posts(page_id), "restored": 0}
+
+
+def _park_page_posts(page_id: str) -> int:
+    docs = list(
+        SearchDocument.objects.select_for_update()
+        .filter(doc_type="post", owner_id=page_id)
+        .order_by("doc_id")
+    )
+    if not docs:
+        return 0
+    links: dict[str, set[str]] = {d.doc_id: set() for d in docs}
+    for post_id, tag in PublicPostHashtag.objects.filter(post_id__in=list(links)).values_list(
+        "post_id", "tag"
+    ):
+        links[post_id].add(tag)
+    _lock_hashtags(set().union(*links.values()))
+    for doc in docs:
+        SearchDocument.objects.filter(doc_type=PARKED_POST, doc_id=doc.doc_id).delete()
+        SearchDocument.objects.filter(pk=doc.pk).update(
+            doc_type=PARKED_POST, extra={**(doc.extra or {}), "tags": sorted(links[doc.doc_id])}
+        )
+        if backend.opensearch_enabled():
+            transaction.on_commit(lambda i=doc.doc_id: backend._os_delete("post", i))  # noqa: SLF001
+        set_post_hashtags(doc.doc_id, set())
+    return len(docs)
+
+
+def _restore_page_posts(page_id: str) -> int:
+    parked = list(
+        SearchDocument.objects.select_for_update()
+        .filter(doc_type=PARKED_POST, owner_id=page_id)
+        .order_by("doc_id")
+    )
+    if not parked:
+        return 0
+    _lock_hashtags(set().union(*(clean_tags((d.extra or {}).get("tags")) for d in parked)))
+    restored = 0
+    for doc in parked:
+        state = PostIndexState.objects.filter(post_id=doc.doc_id).first()
+        doc.delete()
+        if state is None or not state.public or state.deleted:
+            continue  # deleted or made non-public while parked: stays out
+        extra = dict(doc.extra or {})
+        tags = clean_tags(extra.pop("tags", []))
+        backend.index_document(
+            "post",
+            doc.doc_id,
+            title=doc.title,
+            body=doc.body,
+            owner_id=doc.owner_id,
+            extra=extra,
+            category=doc.category,
+            source_at=doc.source_at,
+        )
+        set_post_hashtags(doc.doc_id, tags, author_id=doc.owner_id)
+        restored += 1
+    return restored
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(str(value))
+    except ValueError:
+        return False
+    return True
+
+
+def reconcile_page_posts() -> dict:
+    """Bring every known page's posts in line with the page (posts indexed before
+    this rule existed, or by an indexer that ran older code). Idempotent."""
+    states = DocState.objects.filter(doc_type="page").values_list("doc_id", "live")
+    hidden = [i for i, is_live in states if not is_live and _is_uuid(i)]
+    live = [i for i, is_live in states if is_live and _is_uuid(i)]
+    owners = {
+        str(o)
+        for o in SearchDocument.objects.filter(doc_type="post", owner_id__in=hidden)
+        .values_list("owner_id", flat=True)
+        .distinct()
+    } | {
+        str(o)
+        for o in SearchDocument.objects.filter(doc_type=PARKED_POST, owner_id__in=live)
+        .values_list("owner_id", flat=True)
+        .distinct()
+    }
+    total = {"parked": 0, "restored": 0}
+    for page_id in sorted(owners):
+        result = sync_page_posts(page_id)
+        total = {k: total[k] + result[k] for k in total}
+    return total
 
 
 # Post types whose media are photos: the "photos" search tab.
@@ -120,7 +285,8 @@ def post_doc(post_id: str, p: dict, author_id) -> dict:
     """Document fields for a public post. ``post.updated`` from before 1.15 has no
     type, media or creation time: those are kept from the existing document."""
     previous = (
-        SearchDocument.objects.filter(doc_type="post", doc_id=post_id)
+        SearchDocument.objects.filter(doc_type__in=["post", PARKED_POST], doc_id=post_id)
+        .order_by("doc_type")  # the live document first
         .values_list("extra", flat=True)
         .first()
     ) or {}
@@ -202,6 +368,8 @@ def reconcile_hashtags() -> dict:
     running after migration 0004 and deletes or re-indexes post documents without
     touching the links, so a link alone proves nothing.
 
+    0. Posts of pages that are hidden now are parked, and parked posts of pages
+       published again are restored (``reconcile_page_posts``).
     1. Posts the indexer marked non-public or deleted lose their post document and
        links (only reachable if an older indexer wrote after the new one).
     2. Posts with no ``PostIndexState`` row (only old code indexed them) get links
@@ -215,6 +383,7 @@ def reconcile_hashtags() -> dict:
     Each repair locks what the consumer locks and re-checks, so running it next to
     the live consumer never resurrects anything.
     """
+    page_posts = reconcile_page_posts()  # first: a hidden page's posts lose their links
     posts_purged, links_removed = _drop_hidden_posts()
     links_added, removed = _rebuild_untracked_links()
     links_removed += removed
@@ -236,6 +405,8 @@ def reconcile_hashtags() -> dict:
         "links_removed": links_removed,
         "hashtags_purged": purged,
         "hashtags_restored": restored,
+        "page_posts_parked": page_posts["parked"],
+        "page_posts_restored": page_posts["restored"],
     }
 
 

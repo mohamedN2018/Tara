@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import { errorMessage, mediaErrorKey } from "@/lib/errors";
+import { degreeField, workRange } from "@/lib/profileFormat";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import { useFocusTrap } from "@/lib/useFocusTrap";
 import { useMediaUrl } from "@/lib/useMediaUrl";
@@ -16,7 +17,7 @@ import type { Profile, ProfileEducation, ProfileLink, ProfileWork } from "@/type
 const props = defineProps<{ profile: Profile }>();
 const emit = defineEmits<{ close: []; saved: [profile: Profile] }>();
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const auth = useAuthStore();
 const open = ref(true);
 useEscapeKey(open, () => emit("close"));
@@ -52,8 +53,8 @@ const education = ref<ProfileEducation[]>([...(props.profile.education ?? [])]);
 const work = ref<ProfileWork[]>([...(props.profile.work ?? [])]);
 
 const newLink = reactive({ label: "", url: "" });
-const newWork = reactive({ company: "", title: "", is_current: false });
-const newEdu = reactive({ school: "", field: "", start_year: "", end_year: "" });
+const newWork = reactive({ company: "", title: "", start_date: "", end_date: "", is_current: false });
+const newEdu = reactive({ school: "", degree: "", field: "", start_year: "", end_year: "" });
 
 const saving = ref(false);
 const error = ref("");
@@ -109,12 +110,12 @@ async function addWork() {
     const created = await profileService.addWork({
       company: newWork.company.trim(),
       title: newWork.title.trim(),
+      start_date: newWork.start_date || null,
+      end_date: newWork.is_current ? null : newWork.end_date || null,
       is_current: newWork.is_current,
     });
     work.value.push(created);
-    newWork.company = "";
-    newWork.title = "";
-    newWork.is_current = false;
+    Object.assign(newWork, { company: "", title: "", start_date: "", end_date: "", is_current: false });
   } catch (err) {
     error.value = errorMessage(err);
   }
@@ -133,12 +134,14 @@ async function addEducation() {
   try {
     const created = await profileService.addEducation({
       school: newEdu.school.trim(),
+      degree: newEdu.degree.trim(),
       field: newEdu.field.trim(),
       start_year: newEdu.start_year ? Number(newEdu.start_year) : null,
       end_year: newEdu.end_year ? Number(newEdu.end_year) : null,
     });
     education.value.push(created);
     newEdu.school = "";
+    newEdu.degree = "";
     newEdu.field = "";
     newEdu.start_year = "";
     newEdu.end_year = "";
@@ -225,6 +228,15 @@ async function save() {
               <Camera class="h-3.5 w-3.5" /> {{ uploadingCover ? t("profile.uploading") : t("profile.change") }}
               <input type="file" accept="image/*" class="sr-only" :aria-label="t('profile.coverChange')" @change="pickCover" />
             </label>
+            <button
+              v-if="coverId"
+              type="button"
+              class="absolute start-2 top-2 flex items-center gap-1 rounded-full bg-black/55 px-2.5 py-1 text-xs font-medium text-white"
+              data-testid="modal-remove-cover"
+              @click="coverId = null"
+            >
+              <Trash2 class="h-3.5 w-3.5" /> {{ t("people.hero.removePhoto") }}
+            </button>
           </div>
           <div class="-mt-8 ms-4 inline-block">
             <div class="relative">
@@ -237,6 +249,15 @@ async function save() {
               </label>
             </div>
           </div>
+          <button
+            v-if="avatarId"
+            type="button"
+            class="ms-3 text-xs font-medium text-red-600 hover:underline"
+            data-testid="modal-remove-avatar"
+            @click="avatarId = null"
+          >
+            {{ t("people.hero.removePhoto") }}
+          </button>
           <p v-if="uploadingAvatar" class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t("profile.uploading") }}</p>
         </div>
 
@@ -313,7 +334,7 @@ async function save() {
             <li v-for="w in work" :key="w.id" class="flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-1.5 text-sm dark:bg-gray-800/60">
               <span class="min-w-0 flex-1 truncate">
                 {{ w.title || "—" }}<span v-if="w.company"> · {{ w.company }}</span>
-                <span v-if="w.is_current" class="text-xs text-brand-600 dark:text-brand-300"> ({{ t("profile.present") }})</span>
+                <span v-if="workRange(w, t, locale)" class="text-xs text-gray-500 dark:text-gray-400"> ({{ workRange(w, t, locale) }})</span>
               </span>
               <button class="text-gray-500 hover:text-red-500 dark:text-gray-400" :aria-label="t('profile.remove')" @click="dropWork(w.id)"><Trash2 class="h-4 w-4" /></button>
             </li>
@@ -323,6 +344,14 @@ async function save() {
               <input v-model="newWork.title" class="input" :placeholder="t('profile.jobTitle')" :aria-label="t('profile.jobTitle')" />
               <input v-model="newWork.company" class="input" :placeholder="t('profile.company')" :aria-label="t('profile.company')" />
               <button class="btn-ghost shrink-0 px-2" :aria-label="t('profile.addWork')" @click="addWork"><Plus class="h-4 w-4" /></button>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <label class="text-xs font-medium text-gray-600 dark:text-gray-300">{{ t("people.about.startDate") }}
+                <input v-model="newWork.start_date" type="date" class="input mt-1" />
+              </label>
+              <label class="text-xs font-medium text-gray-600 dark:text-gray-300">{{ t("people.about.endDate") }}
+                <input v-model="newWork.end_date" type="date" class="input mt-1" :disabled="newWork.is_current" />
+              </label>
             </div>
             <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
               <input v-model="newWork.is_current" type="checkbox" class="rounded" /> {{ t("profile.current") }}
@@ -336,7 +365,7 @@ async function save() {
           <ul class="mb-2 space-y-1">
             <li v-for="e in education" :key="e.id" class="flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-1.5 text-sm dark:bg-gray-800/60">
               <span class="min-w-0 flex-1 truncate">
-                {{ e.school }}<span v-if="e.field"> · {{ e.field }}</span>
+                {{ e.school }}<span v-if="degreeField(e, t)"> · {{ degreeField(e, t) }}</span>
                 <span v-if="e.start_year || e.end_year" class="text-xs text-gray-500 dark:text-gray-400"> ({{ e.start_year || "?" }}–{{ e.end_year || t("profile.present") }})</span>
               </span>
               <button class="text-gray-500 hover:text-red-500 dark:text-gray-400" :aria-label="t('profile.remove')" @click="dropEducation(e.id)"><Trash2 class="h-4 w-4" /></button>
@@ -345,8 +374,9 @@ async function save() {
           <div class="space-y-2">
             <div class="flex gap-2">
               <input v-model="newEdu.school" class="input" :placeholder="t('profile.school')" :aria-label="t('profile.school')" />
-              <input v-model="newEdu.field" class="input" :placeholder="t('profile.fieldOfStudy')" :aria-label="t('profile.fieldOfStudy')" />
+              <input v-model="newEdu.degree" class="input" :placeholder="t('people.about.degree')" :aria-label="t('people.about.degree')" />
             </div>
+            <input v-model="newEdu.field" class="input" :placeholder="t('profile.fieldOfStudy')" :aria-label="t('profile.fieldOfStudy')" />
             <div class="flex gap-2">
               <input v-model="newEdu.start_year" type="number" class="input" :placeholder="t('profile.startYear')" :aria-label="t('profile.startYear')" />
               <input v-model="newEdu.end_year" type="number" class="input" :placeholder="t('profile.endYear')" :aria-label="t('profile.endYear')" />

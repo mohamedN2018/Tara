@@ -41,3 +41,8 @@ def on_gathering_reported(e: EventEnvelope) -> None:
 @on_event("group.reported")
 def on_group_reported(e: EventEnvelope) -> None:
     services.ingest_report_event("group.reported", e.payload)
+
+
+@on_event("story.reported")
+def on_story_reported(e: EventEnvelope) -> None:
+    services.ingest_report_event("story.reported", e.payload)

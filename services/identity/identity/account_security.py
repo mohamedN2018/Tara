@@ -12,23 +12,27 @@ import secrets
 from datetime import timedelta
 from typing import Any
 
+from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from tara_common.exceptions import Conflict, TaraAPIError
 
-from . import emails
+from . import emails, login_identifier
 from . import tokens as token_engine
 from .events import emit_domain_event, emit_security_event
 from .google import GoogleIdentity, GoogleTokenError, google_enabled, verify_credential
 from .models import Account, EmailChangeRequest, PasswordReset, SocialIdentity
 from .services import (
-    AccountNotUsable,
     IssuedTokens,
     _create_session_and_tokens,
     _hash,
     _validate_password,
+    count_failure,
     invalidate_account_recovery,
+    login_lock_key,
+    not_usable,
+    raise_if_locked,
 )
 
 EMAIL_CHANGE_TTL = timedelta(hours=24)
@@ -95,6 +99,7 @@ def _verified_google(credential: object, *, signed_in: bool = False) -> GoogleId
 def google_sign_in(
     *,
     credential: object,
+    otp: str = "",
     language: str = "en",
     theme: str = "system",
     ip_region: str = "",
@@ -172,14 +177,35 @@ def google_sign_in(
     from .account_admin import lift_if_expired
 
     account = lift_if_expired(account)  # a suspension past its end date ends here
-    if not account.is_usable:
+    reactivating = account.status == Account.Status.DEACTIVATED and account.is_active
+    if not account.is_usable and not reactivating:
         emit_security_event(
             account,
             "login_blocked",
             {"status": account.status, "method": "google"},
             ip_region=ip_region,
         )
-        raise AccountNotUsable()
+        raise not_usable(account)
+
+    # Google proves the first factor only: a second one still applies (3C), and
+    # a wrong code spends the account's sign-in lockout budget, as on the
+    # password path (a replayed Google ID token must not allow free guessing).
+    from . import two_factor
+    from .account_center import reactivate_if_deactivated
+
+    lock_key = login_lock_key(login_identifier.normalise(account.email))
+    raise_if_locked(lock_key)
+    try:
+        two_factor.check_sign_in(account, otp, ip_region=ip_region)
+    except two_factor.TwoFactorInvalid:
+        count_failure(lock_key)
+        raise
+    if otp:
+        cache.delete(lock_key)
+    if reactivating:
+        account = reactivate_if_deactivated(
+            account, ip_region=ip_region, correlation_id=correlation_id
+        )
 
     with transaction.atomic():
         issued = _create_session_and_tokens(account, ip_region=ip_region, user_agent=user_agent)

@@ -178,7 +178,8 @@ onBeforeUnmount(cancelPhone);
       <!-- Phone via Telegram -->
       <li
         v-if="props.providers.telegram.enabled || props.overview.phone_verified"
-        class="rounded-lg bg-gray-50 px-3 py-2 text-sm dark:bg-gray-800/60"
+        id="phone"
+        class="scroll-mt-20 rounded-lg bg-gray-50 px-3 py-2 text-sm dark:bg-gray-800/60"
       >
         <div class="flex flex-wrap items-center justify-between gap-2">
           <span class="flex min-w-0 items-center gap-2">

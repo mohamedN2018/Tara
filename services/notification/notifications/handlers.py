@@ -10,9 +10,17 @@ from __future__ import annotations
 from tara_events import on_event
 from tara_events.envelope import EventEnvelope
 
-# tag_handlers (post.tagged, 2C) and video_handlers (media.processed, 5.2) register
-# their @on_event consumers on import.
-from . import services, tag_handlers, video_handlers  # noqa: F401
+# tag_handlers (post.tagged, 2C), video_handlers (media.processed, 5.2) and
+# moderation_handlers (account status and notices, T7) register their
+# @on_event consumers on import, as do story_handlers (story.*, 1.9).
+from . import (  # noqa: F401
+    commerce_handlers,
+    moderation_handlers,
+    services,
+    story_handlers,
+    tag_handlers,
+    video_handlers,
+)
 from .services import notify
 
 
@@ -171,22 +179,51 @@ def on_message_created(e: EventEnvelope) -> None:
     sender = p.get("sender")
     muted = {str(m) for m in p.get("muted", [])}
     conversation_id = p["conversation_id"]
+    # A page or support team's reply: sent as the Page or as Tara Support, so
+    # there is no person to name (``sender`` is the page id or a fixed id).
+    sender_as = p.get("sender_as") or {}
+    data = {
+        "conversation_id": conversation_id,
+        "message_id": p.get("message_id") or e.subject_id,
+        "message_type": p.get("type"),
+    }
+    if sender_as:
+        data["sender_kind"] = sender_as.get("kind")
+        data["sender_name"] = sender_as.get("name")
+        if sender_as.get("kind") == "page":
+            data["page_id"] = sender_as.get("id")
     for recipient in p.get("recipients", []):
         if str(recipient) != str(sender) and str(recipient) not in muted:
             notify(
                 recipient,
                 "message",
-                actor_id=sender,
+                actor_id=None if sender_as else sender,
                 subject_ref=f"conversation:{conversation_id}",
                 group_key=str(conversation_id),
                 # Attachment-only messages have no text; the client words those.
                 body=p.get("preview") or "",
-                data={
-                    "conversation_id": conversation_id,
-                    "message_id": p.get("message_id") or e.subject_id,
-                    "message_type": p.get("type"),
-                },
+                data=data,
             )
+    # A member wrote to a Page: its team is not in the conversation, so it hears
+    # of it here (one row per thread, opening the page inbox on that thread).
+    team = p.get("team") or {}
+    if team.get("kind") == "page" and team.get("page_id"):
+        team_data = {
+            **data,
+            "page_id": team["page_id"],
+            "page_name": team.get("name") or "",
+        }
+        for recipient in team.get("recipients") or []:
+            if str(recipient) != str(sender):
+                notify(
+                    recipient,
+                    "message.page",
+                    actor_id=sender,
+                    subject_ref=f"conversation:{conversation_id}",
+                    group_key=str(conversation_id),
+                    body=p.get("preview") or "",
+                    data=team_data,
+                )
 
 
 @on_event("message.deleted")

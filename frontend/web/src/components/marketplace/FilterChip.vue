@@ -25,7 +25,7 @@ defineEmits<{ toggle: [] }>();
     <span
       v-if="count !== null"
       class="rounded-full px-1.5 text-[11px] font-bold tabular-nums"
-      :class="active ? 'bg-white/20' : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'"
+      :class="active ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'"
     >
       {{ count }}
     </span>

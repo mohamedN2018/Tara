@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { type Page, expect, test } from "@playwright/test";
 
-import { API, apiAs, befriend, pageAs, sharedAccounts, unique } from "./helpers";
+import { API, apiAs, befriend, pageAs, sharedAccounts, unique, useLocale } from "./helpers";
 
 // Plan 08, track 2B: hide a post from Home (X, reason, Undo, snooze), with the
 // feed service's hide endpoints (2A) behind it.
@@ -36,7 +36,7 @@ for (const lang of ["ar", "en"] as const) {
 
     const l = LABELS[lang];
     const page = await pageAs(browser, a);
-    await page.addInitScript((locale) => localStorage.setItem("tara.locale", locale), lang);
+    await useLocale(page, lang);
     const card = page.locator("article").filter({ hasText: marker });
     // Fan-out to the reader's feed is asynchronous.
     await expect

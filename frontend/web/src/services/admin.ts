@@ -15,16 +15,114 @@ export interface HealthOverview {
   services: ServiceHealth[];
 }
 
+export type CaseState = "open" | "in_review" | "resolved";
+
 export interface ModerationCase {
   id: string;
   target_type: string;
   target_id: string;
   severity: string | number;
-  state: string;
+  state: CaseState | string;
   report_count: number;
   assigned_to: string | null;
+  owner_id?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** One raw report behind a case (moderation.case.view). */
+export interface ModerationReport {
+  id: string;
+  reporter_id: string;
+  target_type: string;
+  target_id: string;
+  reason: string;
+  /** What the reporter saw when the target is private (a chat message): text only. */
+  evidence?: { type?: string; body?: string; created_at?: string; attachment_count?: number };
+  created_at: string;
+}
+
+/** Queue filters: one state, or the caller's own claimed cases. */
+export interface CaseQuery {
+  state?: CaseState;
+  assigned?: "me";
+}
+
+/** Counts for the console overview; `open_appeals` only with moderation.appeal.view. */
+export interface ModerationSummary {
+  open: number;
+  in_review: number;
+  assigned_to_me: number;
+  open_appeals?: number;
+}
+
+/** An administrative notice staff sent (admin.notices.send). */
+export interface SystemNotice {
+  id: string;
+  body: string;
+  recipient_ids: string[];
+  recipient_count: number;
+  created_by: string;
+  created_at: string;
+}
+
+export const NOTICE_MAX_BODY = 300;
+export const NOTICE_MAX_RECIPIENTS = 50;
+
+/**
+ * What a moderator may do to each kind of target. Mirrors
+ * `services/moderation/moderation/services.py` ACTIONS_BY_TARGET; the server
+ * refuses any other pair with a 400.
+ */
+const CONTENT_ACTIONS = ["remove", "approve", "warn", "dismiss"] as const;
+export const ACTIONS_BY_TARGET: Readonly<Record<string, readonly string[]>> = {
+  post: CONTENT_ACTIONS,
+  comment: CONTENT_ACTIONS,
+  message: CONTENT_ACTIONS,
+  listing: CONTENT_ACTIONS,
+  listing_review: CONTENT_ACTIONS,
+  gathering: CONTENT_ACTIONS,
+  group: CONTENT_ACTIONS,
+  story: CONTENT_ACTIONS,
+  page: ["remove", "restrict", "warn", "dismiss"],
+  user: ["restrict", "shadow", "warn", "dismiss"],
+};
+
+export function caseActions(targetType: string): readonly string[] {
+  return ACTIONS_BY_TARGET[targetType] ?? ["dismiss"];
+}
+
+/** Decisions that do something to the owner (shown as a danger action). */
+export const ENFORCING_ACTIONS: readonly string[] = ["remove", "restrict", "shadow", "warn"];
+
+export const ACTION_REASON_MAX = 2000;
+
+/**
+ * The in-app link to a case's target, when the target has a page of its own.
+ * Comments, messages and listing reviews live inside their owner's context, so
+ * they have none (their id is shown instead); a message report carries the
+ * text the reporter saw as `evidence`. Pages resolve by id (`/pages/id/:id`).
+ * A reported profile opens the public profile, which every moderator may
+ * see (the account console needs `admin.users.view`, which moderators lack).
+ */
+export function targetLink(targetType: string, targetId: string): string | null {
+  const id = encodeURIComponent(targetId);
+  switch (targetType) {
+    case "post":
+      return `/posts/${id}`;
+    case "listing":
+      return `/marketplace/${id}`;
+    case "gathering":
+      return `/events/${id}`;
+    case "group":
+      return `/groups/${id}`;
+    case "page":
+      return `/pages/id/${id}`;
+    case "user":
+      return `/u/id/${id}`;
+    default:
+      return null;
+  }
 }
 
 export type AppealStatus = "open" | "upheld" | "overturned";
@@ -114,6 +212,7 @@ export const AUDIT_ACTIONS = [
   "account.unsuspended",
   "account.signed_out",
   "account.verification_resent",
+  "system_notice.sent",
 ] as const;
 
 export const PLATFORM_METRICS = ["accounts", "posts", "active_conversations", "listings", "open_cases"] as const;
@@ -223,17 +322,54 @@ export const adminService = {
     return data.data;
   },
 
-  /** Moderation queue: cases (reports are aggregated into cases server-side). */
-  async cases(state?: string): Promise<ModerationCase[]> {
-    const { data } = await api.get<CursorPage<ModerationCase>>("/moderation/cases/", {
-      params: state ? { state } : {},
-    });
+  /** Moderation queue: cases (reports are aggregated into cases server-side), cursor-paginated. */
+  async cases(query: CaseQuery = {}, cursor?: string | null): Promise<CursorPage<ModerationCase>> {
+    const params: Record<string, string> = {};
+    if (query.state) params.state = query.state;
+    if (query.assigned) params.assigned = query.assigned;
+    if (cursor) params.cursor = cursor;
+    const { data } = await api.get<CursorPage<ModerationCase>>("/moderation/cases/", { params });
+    return { data: Array.isArray(data?.data) ? data.data : [], page: data?.page ?? emptyPage };
+  },
+
+  /** Claim a case: it moves to in_review, assigned to the caller. */
+  async assignCase(caseId: string): Promise<ModerationCase> {
+    const { data } = await api.post<{ data: ModerationCase }>(`/moderation/cases/${caseId}/assign/`);
+    return data.data;
+  },
+
+  /** Raw reports, newest first: all of them, or one case's. */
+  async reports(caseId?: string | null, cursor?: string | null): Promise<CursorPage<ModerationReport>> {
+    const params: Record<string, string> = {};
+    if (caseId) params.case = caseId;
+    if (cursor) params.cursor = cursor;
+    const { data } = await api.get<CursorPage<ModerationReport>>("/moderation/reports/", { params });
+    return { data: Array.isArray(data?.data) ? data.data : [], page: data?.page ?? emptyPage };
+  },
+
+  /** Queue counts for the overview. */
+  async moderationSummary(): Promise<ModerationSummary> {
+    const { data } = await api.get<{ data: ModerationSummary }>("/moderation/summary/");
     return data.data;
   },
 
   /** Resolve a case. action ∈ {dismiss, warn, remove, ...} (ModerationAction). */
   async actionCase(caseId: string, action: string, reason = ""): Promise<void> {
     await api.post(`/moderation/cases/${caseId}/action/`, { action, reason });
+  },
+
+  /** Administrative notices sent so far, newest first. */
+  async notices(cursor?: string | null): Promise<CursorPage<SystemNotice>> {
+    const { data } = await api.get<CursorPage<SystemNotice>>("/admin/notices/", {
+      params: cursor ? { cursor } : {},
+    });
+    return { data: Array.isArray(data?.data) ? data.data : [], page: data?.page ?? emptyPage };
+  },
+
+  /** Send a notice to 1-50 accounts; it reaches them as a notification. */
+  async sendNotice(recipientIds: string[], body: string): Promise<SystemNotice> {
+    const { data } = await api.post<{ data: SystemNotice }>("/admin/notices/", { recipient_ids: recipientIds, body });
+    return data.data;
   },
 
   /** Appeals, oldest first (cursor-paginated). */
@@ -252,7 +388,7 @@ export const adminService = {
     await api.post(`/moderation/appeals/${appealId}/resolve/`, { status });
   },
 
-  /** File a report from anywhere in the app (any authenticated user). */
+  /** File a report from anywhere in the app (any authenticated user). Prefer `moderationService.report`. */
   async report(payload: { target_type: string; target_id: string; reason: string }): Promise<void> {
     await api.post("/moderation/reports/file/", payload);
   },

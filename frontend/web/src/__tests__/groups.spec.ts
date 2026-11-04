@@ -126,12 +126,12 @@ describe("permissions in the dashboard", () => {
 
   it("gives a moderator the queues but not settings or rules", () => {
     const can = { ...NO_CAN, approve_requests: true, approve_posts: true, moderate: true, pin: true, view_reports: true };
-    expect(manageSections(can)).toEqual(["requests", "posts", "members", "banned", "reports"]);
+    expect(manageSections(can)).toEqual(["requests", "invited", "posts", "members", "banned", "reports"]);
   });
 
   it("gives an admin every section in order", () => {
     const all = Object.fromEntries(Object.keys(NO_CAN).map((k) => [k, true])) as unknown as GroupCan;
-    expect(manageSections(all)).toEqual(["requests", "posts", "members", "banned", "rules", "settings", "reports"]);
+    expect(manageSections(all)).toEqual(["requests", "invited", "posts", "members", "banned", "rules", "settings", "reports"]);
   });
 
   it("only offers roles below the actor's own (owners may name owners)", () => {

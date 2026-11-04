@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -13,7 +15,7 @@ from tara_common.exceptions import TaraAPIError
 from tara_common.pagination import CursorPagination
 from tara_common.responses import data_response
 
-from . import services
+from . import page_graph, services
 from .models import (
     Page,
     PageMember,
@@ -239,6 +241,21 @@ class ProfileLookupView(APIView):
         )
 
 
+class BlockedCardsView(APIView):
+    """``POST /profile/me/blocked/lookup/``: names and avatars of the people the
+    caller blocked, so the owner's Blocked list can say who they unblock."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=ProfileLookupSerializer, responses={200: None}, tags=["profile"])
+    def post(self, request: Request) -> Response:
+        serializer = ProfileLookupSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return data_response(
+            services.blocked_cards(request.user.account_id, serializer.validated_data["ids"])
+        )
+
+
 class HandleAvailabilityView(APIView):
     """``GET /profile/handles/available/?handle=``: the sign-up form's live check.
 
@@ -259,25 +276,46 @@ class HandleAvailabilityView(APIView):
 # ---- pages ------------------------------------------------------------------
 
 
+def _page_context(pages: list, request: Request) -> dict:
+    viewer = request.user.account_id
+    return {"viewer_id": viewer, "stats": page_graph.page_stats(viewer, [p.id for p in pages])}
+
+
 def _page_data(page: Page, request: Request) -> dict:
-    return PageSerializer(page, context={"viewer_id": request.user.account_id}).data
+    return PageSerializer(page, context=_page_context([page], request)).data
 
 
+def _page_ids(raw: str) -> list[str] | None:
+    """``?ids=a,b`` (at most 50 UUIDs) or ``None`` when absent."""
+    if not raw:
+        return None
+    try:
+        return [str(uuid.UUID(x.strip())) for x in raw.split(",") if x.strip()][:50]
+    except ValueError as exc:
+        raise TaraAPIError(
+            "ids must be UUIDs.", code="validation_error", http_status_code=400
+        ) from exc
+
+
+# Page reads call graph (follow counts, fail open) and writes call media (image
+# checks, fail closed) before saving, as the profile endpoints do.
 class PageCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(responses={200: PageSerializer(many=True)}, tags=["pages"])
     def get(self, request: Request) -> Response:
-        """Browse pages (``?q=`` searches), or the caller's own with ``?mine=1``."""
+        """Browse pages (``?q=`` searches), the caller's own with ``?mine=1``, or
+        the visible ones of ``?ids=`` (followed and saved pages)."""
         pages = services.list_pages(
             request.user.account_id,
             q=request.query_params.get("q", "").strip(),
             mine=request.query_params.get("mine") in ("1", "true"),
+            ids=_page_ids(request.query_params.get("ids", "")),
         )
         paginator = CursorPagination()
-        page = paginator.paginate_queryset(pages, request)
+        page = list(paginator.paginate_queryset(pages, request))
         return paginator.get_paginated_response(
-            PageSerializer(page, many=True, context={"viewer_id": request.user.account_id}).data
+            PageSerializer(page, many=True, context=_page_context(page, request)).data
         )
 
     @extend_schema(request=PageCreateSerializer, responses={201: PageSerializer}, tags=["pages"])

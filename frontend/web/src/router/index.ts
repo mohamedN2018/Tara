@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from "vue-router";
 
+import { LEGACY_HASH } from "@/components/settings/sections";
 import { useAuthStore } from "@/stores/auth";
 
 const routes: RouteRecordRaw[] = [
@@ -18,13 +19,39 @@ const routes: RouteRecordRaw[] = [
   { path: "/messages/:id?", name: "messages", component: () => import("@/views/MessagesView.vue"), meta: { auth: true } },
   { path: "/marketplace", name: "marketplace", component: () => import("@/views/MarketplaceView.vue"), meta: { auth: true } },
   { path: "/marketplace/compare", name: "marketplace-compare", component: () => import("@/views/MarketplaceCompareView.vue"), meta: { auth: true } },
+  { path: "/marketplace/sellers/:id", name: "marketplace-seller", component: () => import("@/views/MarketplaceSellerView.vue"), meta: { auth: true } },
   { path: "/marketplace/:id", name: "listing", component: () => import("@/views/ListingDetailView.vue"), meta: { auth: true } },
   { path: "/pages", name: "pages", component: () => import("@/views/PagesView.vue"), meta: { auth: true } },
+  // Links that only carry a page id (follows, saved items, page posts) resolve to the handle route.
+  { path: "/pages/id/:id/inbox", name: "page-inbox", component: () => import("@/views/PageInboxView.vue"), meta: { auth: true } },
+  { path: "/pages/id/:id", name: "page-by-id", component: () => import("@/views/PageByIdView.vue"), meta: { auth: true } },
   { path: "/pages/:handle", name: "page", component: () => import("@/views/PageDetailView.vue"), meta: { auth: true } },
   { path: "/ads", name: "ads", component: () => import("@/views/AdsView.vue"), meta: { auth: true } },
   { path: "/ads/campaigns/:id", name: "ad-campaign", component: () => import("@/views/AdCampaignView.vue"), meta: { auth: true } },
   { path: "/ads/review", name: "ad-review", component: () => import("@/views/AdReviewView.vue"), meta: { auth: true, caps: ["ads.review"] } },
   { path: "/saved", name: "saved", component: () => import("@/views/SavedView.vue"), meta: { auth: true } },
+  // Stories (T9): the hub, my archive, and one story (a notification link).
+  { path: "/stories", name: "stories", component: () => import("@/views/StoriesView.vue"), meta: { auth: true } },
+  { path: "/stories/archive", name: "story-archive", component: () => import("@/views/StoryArchiveView.vue"), meta: { auth: true } },
+  { path: "/stories/:id", name: "story", component: () => import("@/views/StoriesView.vue"), meta: { auth: true } },
+  // T4: video posts and feed preferences (snoozes).
+  { path: "/videos", name: "videos", component: () => import("@/views/VideosView.vue"), meta: { auth: true } },
+  { path: "/feeds/manage", name: "feed-preferences", component: () => import("@/views/FeedPreferencesView.vue"), meta: { auth: true } },
+  // Creator studio (T8): its own layout with nested pages. Drafts deep links land in the library.
+  {
+    path: "/studio",
+    component: () => import("@/components/studio/StudioLayout.vue"),
+    meta: { auth: true },
+    children: [
+      { path: "", name: "studio", component: () => import("@/views/studio/StudioHomeView.vue"), meta: { auth: true } },
+      { path: "library", name: "studio-library", component: () => import("@/views/studio/StudioLibraryView.vue"), meta: { auth: true } },
+      { path: "planner", name: "studio-planner", component: () => import("@/views/studio/StudioPlannerView.vue"), meta: { auth: true } },
+      { path: "insights", name: "studio-insights", component: () => import("@/views/studio/StudioInsightsView.vue"), meta: { auth: true } },
+      { path: "engagement", name: "studio-engagement", component: () => import("@/views/studio/StudioEngagementView.vue"), meta: { auth: true } },
+    ],
+  },
+  { path: "/posts/drafts", name: "drafts", redirect: { path: "/studio/library", query: { tab: "drafts" } } },
+  { path: "/posts/drafts/:id", name: "draft", redirect: (to) => ({ path: "/studio/library", query: { tab: "drafts", edit: String(to.params.id) } }) },
   { path: "/posts/:id", name: "post", component: () => import("@/views/PostDetailView.vue"), meta: { auth: true } },
   { path: "/events", name: "events", component: () => import("@/views/EventsView.vue"), meta: { auth: true } },
   { path: "/events/new", name: "event-new", component: () => import("@/views/EventFormView.vue"), meta: { auth: true } },
@@ -36,7 +63,19 @@ const routes: RouteRecordRaw[] = [
   { path: "/groups/:handle", name: "group", component: () => import("@/views/GroupDetailView.vue"), meta: { auth: true } },
   { path: "/notifications", name: "notifications", component: () => import("@/views/NotificationsView.vue"), meta: { auth: true } },
   { path: "/search", name: "search", component: () => import("@/views/SearchView.vue"), meta: { auth: true } },
-  { path: "/settings", name: "settings", component: () => import("@/views/SettingsView.vue"), meta: { auth: true } },
+  // Settings & privacy centre (T1): one route, a section per page. Old one-page
+  // anchors (/settings#notifications) land on the section that holds them.
+  {
+    path: "/settings/:section(account|privacy|security|notifications|content|display)?",
+    name: "settings",
+    component: () => import("@/views/SettingsView.vue"),
+    meta: { auth: true },
+    beforeEnter: (to) => {
+      const legacy = !to.params.section && to.hash ? LEGACY_HASH[to.hash.slice(1)] : undefined;
+      return legacy ? { name: "settings", params: { section: legacy.section }, hash: legacy.hash ?? "", query: to.query } : true;
+    },
+  },
+  // The privacy center (T2's profile and field visibility included) is the settings centre's Privacy section.
   // The mobile menu (the fifth bottom tab): the categorised main menu as a page.
   { path: "/menu", name: "menu", component: () => import("@/views/MobileMenuView.vue"), meta: { auth: true } },
   // Public legal pages: readable signed in or out (neither `auth` nor `guest`).
@@ -47,6 +86,14 @@ const routes: RouteRecordRaw[] = [
   { path: "/admin/monitor", name: "admin-monitor", component: () => import("@/views/AdminMonitorView.vue"), meta: { auth: true, staff: true, caps: ["admin.monitor.view"] } },
   { path: "/admin/users", name: "admin-users", component: () => import("@/views/AdminUsersView.vue"), meta: { auth: true, staff: true, caps: ["admin.users.view"] } },
   { path: "/admin/users/:id", name: "admin-user", component: () => import("@/views/AdminUserView.vue"), meta: { auth: true, staff: true, caps: ["admin.users.view"] } },
+  // Moderator console sections and the member's Support inbox (track T7).
+  { path: "/admin/moderation", name: "admin-moderation", component: () => import("@/views/AdminModerationView.vue"), meta: { auth: true, staff: true, caps: ["moderation.case.view", "moderation.appeal.view"] } },
+  { path: "/admin/roles", name: "admin-roles", component: () => import("@/views/AdminRolesView.vue"), meta: { auth: true, staff: true, caps: ["admin.roles.manage"] } },
+  { path: "/admin/flags", name: "admin-flags", component: () => import("@/views/AdminFlagsView.vue"), meta: { auth: true, staff: true, caps: ["admin.flags.manage"] } },
+  { path: "/admin/support", name: "admin-support", component: () => import("@/views/AdminSupportView.vue"), meta: { auth: true, staff: true, caps: ["moderation.case.view"] } },
+  { path: "/admin/notices", name: "admin-notices", component: () => import("@/views/AdminNoticesView.vue"), meta: { auth: true, staff: true, caps: ["admin.notices.send"] } },
+  { path: "/support", name: "support", component: () => import("@/views/SupportView.vue"), meta: { auth: true } },
+  { path: "/legal/community-standards", name: "community-standards", component: () => import("@/views/CommunityStandardsView.vue") },
   { path: "/:pathMatch(.*)*", name: "not-found", component: () => import("@/views/NotFoundView.vue") },
 ];
 
@@ -65,7 +112,22 @@ export function staffAccessAllowed(
 export const router = createRouter({
   history: createWebHistory(),
   routes,
-  scrollBehavior: () => ({ top: 0 }),
+  // A hash scrolls to its element (settings anchors) when it exists; a hash
+  // change within one page that names no element (a tab) keeps the position.
+  scrollBehavior: (to, from, saved) => {
+    if (saved) return saved;
+    if (to.hash) {
+      let el: Element | null = null;
+      try {
+        el = document.querySelector(to.hash);
+      } catch {
+        el = null; // not a valid selector
+      }
+      if (el) return { el: to.hash, top: 72, behavior: "smooth" };
+      if (to.path === from.path) return false;
+    }
+    return { top: 0 };
+  },
 });
 
 router.beforeEach(async (to) => {

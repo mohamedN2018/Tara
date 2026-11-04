@@ -15,7 +15,7 @@ from django.utils import timezone
 from tara_common.exceptions import Conflict, TaraAPIError
 from tara_events.envelope import uuid7
 
-from . import composer, events, linkpreview, media_client
+from . import composer, events, linkpreview, media_client, pages
 from . import groups as group_rm
 from .clients import get_relationship, resolve_handles
 from .models import (
@@ -99,6 +99,8 @@ def visible_to_viewer(
     """``rel_cache`` and ``blocked`` avoid per-post lookups when checking many posts."""
     if not post.is_visible:
         return False
+    if post.author_type == pages.AUTHOR_TYPE and not _page_visible(viewer_id, post, rel_cache):
+        return False  # a draft, suspended or deleted page: its posts are hidden too
     if post.group_id:
         return _group_post_visible(viewer_id, post, rel_cache, blocked)
     if str(post.author_id) == str(viewer_id):
@@ -126,6 +128,31 @@ def visible_to_viewer(
     if post.audience == Audience.FOLLOWERS:
         return rel.are_friends or rel.a_follows_b
     return False
+
+
+def _page_key(page_id) -> str:
+    return f"page:{page_id}"
+
+
+def _page_visible(viewer_id: str, post: Post, cache: dict | None = None) -> bool:
+    """Whether the viewer may see the page that published ``post`` (profile's
+    rule for the page itself), once per page per request."""
+    key = _page_key(post.author_id)
+    if cache is not None and key in cache:
+        return cache[key]
+    seen = str(post.author_id) in pages.visible_pages(viewer_id, [post.author_id])
+    if cache is not None:
+        cache[key] = seen
+    return seen
+
+
+def _prefetch_pages(viewer_id: str, posts, cache: dict) -> None:
+    """One lookup for every page among ``posts`` (a timeline, the feed batch)."""
+    ids = {str(p.author_id) for p in posts if p.author_type == pages.AUTHOR_TYPE}
+    ids -= {k.removeprefix("page:") for k in cache if k.startswith("page:")}
+    if ids:
+        seen = pages.visible_pages(viewer_id, ids)
+        cache.update({_page_key(i): i in seen for i in ids})
 
 
 def _group_access(viewer_id: str, group_id, cache: dict | None = None):
@@ -296,8 +323,14 @@ def create_post(
     feeling: str = "",
     state: str = PostState.PUBLISHED,
     publish_at=None,
+    page_id=None,
 ) -> Post:
-    """Media are checked and bound to the post through media before the write
+    """With ``page_id`` the post is published as that page (``author_type``
+    ``page``, ``author_id`` the page id) once profile says the author may post
+    for it; the media stay the author's own uploads. A page post is public,
+    published now, and has no group, tags or poll audience of its own.
+
+    Media are checked and bound to the post through media before the write
     transaction opens, so a media outage fails the request (503) instead of
     publishing restricted photos as public.
 
@@ -312,6 +345,19 @@ def create_post(
     blocks and each person's "who can tag me" setting."""
     if state not in PostState.values:
         raise _bad_request("Invalid state.")
+    uploader_id = str(author_id)
+    if page_id:
+        if group_id:
+            raise _bad_request("Only people post in groups.")
+        if state != PostState.PUBLISHED:
+            raise _bad_request(
+                "Drafts and scheduled posts are not available for pages.",
+                "page_drafts_not_supported",
+            )
+        if tagged_ids:
+            raise _bad_request("A page post can't tag people.", "page_tags_not_supported")
+        pages.require_poster(str(page_id), uploader_id)
+        author_id, author_type, audience = str(page_id), pages.AUTHOR_TYPE, Audience.PUBLIC
     if state != PostState.PUBLISHED and group_id:
         raise _bad_request(
             "Drafts and scheduled posts are not available in groups.", "group_drafts_not_supported"
@@ -345,12 +391,12 @@ def create_post(
     media_ids = [str(m) for m in media_ids or []]
     post_id = uuid7()
     if media_ids:
-        _check_attachments(author_id, media_ids, post_type)
+        _check_attachments(uploader_id, media_ids, post_type)
         # Restricted before the post exists. If the post then fails to commit,
         # the media point at a post that is never visible: owner-only, safe.
         # A draft's media stay restricted until it is published.
         restricted = audience != Audience.PUBLIC or state != PostState.PUBLISHED
-        result = media_client.bind(author_id, str(post_id), media_ids, restricted=restricted)
+        result = media_client.bind(uploader_id, str(post_id), media_ids, restricted=restricted)
         _check_bound(result)
 
     with transaction.atomic():
@@ -468,7 +514,6 @@ def _editable_post(
         return composer.get_draft(author_id, post_id, lock=lock)
     qs = Post.objects.filter(
         id=post_id,
-        author_id=author_id,
         deleted_at__isnull=True,
         moderation_status=Post.ModerationStatus.OK,
         state=PostState.PUBLISHED,
@@ -476,6 +521,13 @@ def _editable_post(
     post = (qs.select_for_update() if lock else qs).first()
     if post is None:
         raise TaraAPIError("Post not found.", code="not_found", http_status_code=404)
+    if str(post.author_id) != str(author_id):
+        if post.author_type != pages.AUTHOR_TYPE:
+            raise TaraAPIError("Post not found.", code="not_found", http_status_code=404)
+        # A page's post: its owners, admins and editors (asked of profile on
+        # the first read; the locked re-read inside the write trusts that).
+        if not lock:
+            pages.require_editor(str(post.author_id), str(author_id))
     return post
 
 
@@ -528,6 +580,13 @@ def edit_post(
     if feeling is not None:
         feeling = composer.check_feeling(feeling)
     post = _editable_post(author_id, post_id, draft=draft)
+    if post.author_type == pages.AUTHOR_TYPE:
+        # As when it was published: public, no tags of people.
+        if audience not in (None, Audience.PUBLIC):
+            raise _bad_request("A page's post is public.", "page_audience")
+        if tagged_ids:
+            raise _bad_request("A page post can't tag people.", "page_tags_not_supported")
+        audience, tagged_ids = None, None
     if tagged_ids is not None:
         tagged_ids = composer.check_tags(
             author_id, tagged_ids, already=post.tags.values_list("account_id", flat=True)
@@ -651,10 +710,14 @@ def delete_post(author_id: str, post_id: str) -> None:
         id=post_id, deleted_at__isnull=True, state=PostState.PUBLISHED
     ).first()
     if candidate is not None and str(candidate.author_id) != str(author_id):
-        if not candidate.group_id:
+        if candidate.author_type == pages.AUTHOR_TYPE:
+            pages.require_moderator(str(candidate.author_id), str(author_id))
+            by = "page"
+        elif not candidate.group_id:
             raise TaraAPIError("Post not found.", code="not_found", http_status_code=404)
-        _require_group_staff(str(author_id), candidate)
-        by = "group"
+        else:
+            _require_group_staff(str(author_id), candidate)
+            by = "group"
     with transaction.atomic():
         # Locked: a concurrent delete waits, then finds nothing, so the
         # original's share_count goes down once.
@@ -695,8 +758,17 @@ def restrict_media_of_hidden_post(post_id: str) -> None:
     if post is None or post.is_visible:
         return  # gone, or shown again by the time this ran
     media_ids = [str(m) for m in post.media.values_list("media_id", flat=True)]
-    if media_ids:
+    if not media_ids:
+        return
+    if post.author_type != pages.AUTHOR_TYPE:
         media_client.bind(str(post.author_id), str(post.id), media_ids, restricted=True)
+        return
+    # A page post's media belong to the editors who uploaded them.
+    owners: dict[str, list[str]] = {}
+    for media_id, info in media_client.lookup(media_ids).items():
+        owners.setdefault(info.owner_id, []).append(media_id)
+    for owner_id, ids in owners.items():
+        media_client.bind(owner_id, str(post.id), ids, restricted=True)
 
 
 def get_post(viewer_id: str, post_id: str) -> Post:
@@ -740,8 +812,27 @@ def hashtag_posts_queryset(tag: str):
     )
 
 
+def video_posts_queryset(author_id: str | None = None):
+    """Published video posts outside groups, newest first (optionally one
+    author's); filter with ``only_visible``."""
+    qs = Post.objects.filter(
+        type=Post.Type.VIDEO,
+        deleted_at__isnull=True,
+        group_id__isnull=True,
+        state=PostState.PUBLISHED,
+    )
+    if author_id:
+        try:
+            qs = qs.filter(author_id=str(uuid.UUID(str(author_id))))
+        except ValueError as exc:
+            raise _bad_request("author_id must be a UUID.") from exc
+    return with_detail(qs)
+
+
 def only_visible(viewer_id: str, posts) -> list[Post]:
+    posts = list(posts)
     rel_cache: dict = {}
+    _prefetch_pages(viewer_id, posts, rel_cache)
     blocked = blocked_ids(viewer_id)
     return [p for p in posts if visible_to_viewer(viewer_id, p, rel_cache, blocked)]
 

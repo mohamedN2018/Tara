@@ -10,6 +10,12 @@ urlpatterns = [
     path("marketplace/listings/facets/", views.FacetsView.as_view(), name="facets"),
     path("marketplace/compare/", views.CompareView.as_view(), name="compare"),
     path("marketplace/my-listings/", views.MyListingsView.as_view(), name="my-listings"),
+    path(
+        "marketplace/my-listings/summary/",
+        views.SellingSummaryView.as_view(),
+        name="selling-summary",
+    ),
+    path("marketplace/inquiries/", views.InquiriesListView.as_view(), name="inquiries-list"),
     path("marketplace/saved/", views.SavedListView.as_view(), name="saved"),
     path(
         "marketplace/listings/<uuid:listing_id>/",

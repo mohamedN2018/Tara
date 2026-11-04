@@ -24,6 +24,10 @@ urlpatterns = [
         name="case-appeal",
     ),
     path("moderation/appeals/", views.AppealsView.as_view(), name="appeals"),
+    path("moderation/summary/", views.SummaryView.as_view(), name="summary"),
+    # The member's own view: account status and the reports they filed.
+    path("moderation/me/cases/", views.MyCasesView.as_view(), name="my-cases"),
+    path("moderation/me/reports/", views.MyReportsView.as_view(), name="my-reports"),
     path(
         "moderation/appeals/<uuid:appeal_id>/resolve/",
         views.AppealResolveView.as_view(),

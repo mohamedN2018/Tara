@@ -19,6 +19,7 @@ urlpatterns = [
     path("admin/audit/", views.AuditListView.as_view(), name="audit"),
     path("admin/audit/export.csv", views.AuditExportView.as_view(), name="audit-export"),
     path("admin/monitor/", views.MonitorView.as_view(), name="monitor"),
+    path("admin/notices/", views.SystemNoticesView.as_view(), name="notices"),
     # User management console (8.6).
     path("admin/users/", views.UserSearchView.as_view(), name="users"),
     path("admin/users/<uuid:account_id>/", views.UserDetailView.as_view(), name="user-detail"),

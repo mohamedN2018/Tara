@@ -178,8 +178,8 @@ def test_503_releases_the_idempotency_key_so_a_retry_succeeds(client_for, catego
     assert Listing.objects.count() == 1
 
 
-def test_editing_a_listing_cannot_attach_media(client_for, category, media_stub):
-    # The edit endpoint has no media field, so it is no way around the check.
+def test_editing_a_listing_runs_the_same_media_check(client_for, category, media_stub):
+    # Editing the photos is no way around the check: a video is refused as on create.
     seller = _acct()
     client = client_for(seller)
     listing_id = _create(client, category, []).json()["data"]["id"]
@@ -189,9 +189,10 @@ def test_editing_a_listing_cannot_attach_media(client_for, category, media_stub)
         {"title": "New", "media_ids": [clip]},
         format="json",
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 400
+    assert _error(resp) == ("validation_error", "video_not_supported_yet")
     assert not ListingMedia.objects.exists()
-    assert media_stub.calls == []
+    assert Listing.objects.get(id=listing_id).title == "Bike"
 
 
 # ---- the media client itself --------------------------------------------------

@@ -48,7 +48,7 @@ import {
 } from "@/services/composer";
 import { graphService } from "@/services/graph";
 import { mediaService } from "@/services/media";
-import { COMMENT_POLICIES, type CommentPolicy } from "@/services/post";
+import { COMMENT_POLICIES, type CommentPolicy, postService } from "@/services/post";
 import type { VideoAttachmentState } from "@/services/video";
 import { profileService, type UserCard } from "@/services/profile";
 import { useAuthStore } from "@/stores/auth";
@@ -75,8 +75,15 @@ const props = withDefaults(
     start?: Start;
     /** Photos picked before the dialog opened (the card's quick action). */
     files?: File[];
+    /** A new post pre-scheduled at this instant (the studio planner's "Schedule a post"). */
+    scheduleAt?: string | null;
+    /**
+     * A published post to edit (T4): text, audience, tags, feeling, location and
+     * comment policy. Photos, video, poll, schedule and drafts are not offered.
+     */
+    post?: Post | null;
   }>(),
-  { groupId: null, groupName: "", draft: null, start: null, files: () => [] },
+  { groupId: null, groupName: "", draft: null, start: null, files: () => [], scheduleAt: null, post: null },
 );
 const emit = defineEmits<{
   close: [];
@@ -84,6 +91,8 @@ const emit = defineEmits<{
   published: [post: Post];
   /** Kept as a draft or scheduled: only the author's drafts list shows it. */
   saved: [post: ComposerPost];
+  /** A published post was edited (`post` mode). */
+  updated: [post: Post];
 }>();
 
 const { t, locale } = useI18n();
@@ -93,7 +102,10 @@ const toasts = useToastStore();
 
 const view = ref<View>(props.start === "drafts" && !props.groupId ? "drafts" : props.start === "feeling" ? "feeling" : "main");
 const editing = ref<ComposerPost | null>(props.draft);
-const canDraft = computed(() => !props.groupId);
+// Editing a published post: only what PATCH /posts/<id>/ changes.
+const published = computed(() => props.post);
+const inGroup = computed(() => !!props.groupId || !!props.post?.group_id);
+const canDraft = computed(() => !props.groupId && !props.post);
 
 // ---- the post itself -----------------------------------------------------------
 const body = ref("");
@@ -159,7 +171,9 @@ const hasContent = computed(
     mediaIds.value.length > 0 ||
     !!videoId.value ||
     !!feeling.value ||
-    (editing.value?.media_ids.length ?? 0) > 0,
+    (editing.value?.media_ids.length ?? 0) > 0 ||
+    (published.value?.media_ids.length ?? 0) > 0 ||
+    !!published.value?.shared_post_id,
 );
 const scheduledIso = computed(() => (scheduleValue.value ? fromLocalInput(scheduleValue.value) : null));
 const fmtTime = (iso: string) =>
@@ -376,8 +390,25 @@ function fields() {
     tagged_ids: [...taggedIds.value],
     location: location.value.trim(),
     feeling: feeling.value,
-    ...(props.groupId ? {} : { audience: audience.value }),
+    ...(inGroup.value ? {} : { audience: audience.value }),
   };
+}
+
+async function saveEdit() {
+  const target = published.value;
+  if (!target || submitting.value || !hasContent.value) return;
+  submitting.value = true;
+  error.value = "";
+  try {
+    const updated = await postService.update(target.id, fields());
+    toasts.success(t("postsFeed.edit.saved"));
+    emit("updated", updated);
+    emit("close");
+  } catch (err) {
+    error.value = errorMessage(err, COMPOSER_ERRORS);
+  } finally {
+    submitting.value = false;
+  }
 }
 
 /** `publish`: now, or at the picked time. `draft`: keep it for later. */
@@ -436,6 +467,7 @@ async function submit(mode: "publish" | "draft") {
 }
 
 const primaryLabel = computed(() => {
+  if (published.value) return submitting.value ? t("postsFeed.edit.saving") : t("postsFeed.edit.save");
   if (submitting.value) return t("feed.posting");
   return scheduleValue.value ? t("composer.schedulePost") : t("feed.post");
 });
@@ -466,6 +498,7 @@ const viewTitle = computed(() => {
     case "drafts":
       return t("composer.draftsAndScheduled");
     default:
+      if (published.value) return t("postsFeed.edit.title");
       return editing.value ? t("composer.editDraftTitle") : t("composer.title");
   }
 });
@@ -488,7 +521,18 @@ watch(view, async (v) => {
 
 onMounted(async () => {
   if (props.draft) load(props.draft);
+  if (props.post) {
+    const p = props.post as Post & Partial<ComposerPost>;
+    body.value = p.body ?? "";
+    audience.value = p.audience === "group" ? "public" : p.audience;
+    commentPolicy.value = p.comment_policy ?? "everyone";
+    taggedIds.value = [...(p.tagged_ids ?? [])];
+    feeling.value = p.feeling ?? "";
+    location.value = p.location ?? "";
+    locationOpen.value = !!location.value;
+  }
   if (props.files.length) void upload(props.files);
+  if (props.scheduleAt && !props.draft && canDraft.value) scheduleValue.value = toLocalInput(new Date(props.scheduleAt));
   if (view.value === "drafts") void loadDrafts();
   await nextTick();
   if (view.value === "main") editor.value?.focus();
@@ -546,11 +590,12 @@ const taggedNames = computed(() => taggedIds.value.map((id) => directory.label(i
                   {{ " " }}{{ t("composer.meta.at", { place: location.trim() }) }}</span>
               </p>
               <p
-                v-if="groupId"
+                v-if="inGroup"
                 class="mt-0.5 inline-flex items-center gap-1 rounded-md bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700 dark:bg-brand-950/50 dark:text-brand-300"
               >
                 <Users class="h-3 w-3" aria-hidden="true" />
-                <span dir="auto">{{ t("groups.composer.target", { name: groupName }) }}</span>
+                <span v-if="groupName" dir="auto">{{ t("groups.composer.target", { name: groupName }) }}</span>
+                <span v-else>{{ t("feed.audienceGroup") }}</span>
               </p>
               <button
                 v-else
@@ -633,8 +678,12 @@ const taggedNames = computed(() => taggedIds.value.map((id) => directory.label(i
             </div>
           </div>
 
+          <p v-if="published && (published.media_ids.length || published.shared_post_id)" class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+            {{ t("composer.photosFixed") }}
+          </p>
+
           <!-- One video instead of photos: uploaded, processed, then previewed (video pipeline). -->
-          <VideoComposerAttachment :key="videoKey" ref="videoPicker" v-model:media-id="videoId" :show-button="false" @state="videoState = $event" />
+          <VideoComposerAttachment v-if="!published" :key="videoKey" ref="videoPicker" v-model:media-id="videoId" :show-button="false" @state="videoState = $event" />
 
           <p
             v-if="scheduledIso"
@@ -649,7 +698,7 @@ const taggedNames = computed(() => taggedIds.value.map((id) => directory.label(i
           <div class="mt-3 flex flex-wrap items-center gap-1 rounded-xl border border-gray-200 p-2 dark:border-gray-700" role="group" :aria-label="t('composer.addToPost')">
             <span class="me-auto px-1 text-sm font-semibold">{{ t("composer.addToPost") }}</span>
             <label
-              v-if="!editing && !hasVideo"
+              v-if="!editing && !published && !hasVideo"
               class="icon-btn cursor-pointer focus-within:ring-2 focus-within:ring-brand-400"
               :class="uploading ? 'opacity-50' : ''"
               :title="t('feed.addPhotos')"
@@ -658,7 +707,7 @@ const taggedNames = computed(() => taggedIds.value.map((id) => directory.label(i
               <input type="file" :accept="IMAGE_ACCEPT" multiple class="sr-only" :aria-label="t('feed.addPhotos')" @change="onFiles" />
             </label>
             <button
-              v-if="!editing"
+              v-if="!editing && !published"
               type="button"
               class="icon-btn"
               :title="t('video.composer.addLabel')"
@@ -687,7 +736,7 @@ const taggedNames = computed(() => taggedIds.value.map((id) => directory.label(i
               <MapPin class="h-5 w-5 text-accent-600 dark:text-accent-300" aria-hidden="true" />
             </button>
             <button
-              v-if="!editing"
+              v-if="!editing && !published"
               type="button"
               class="icon-btn"
               :title="t('feed.poll')"
@@ -737,7 +786,7 @@ const taggedNames = computed(() => taggedIds.value.map((id) => directory.label(i
               class="btn-primary flex-1 justify-center"
               :disabled="submitting || uploading || videoBusy || !hasContent"
               data-testid="composer-submit"
-              @click="submit('publish')"
+              @click="published ? saveEdit() : submit('publish')"
             >
               {{ primaryLabel }}
             </button>

@@ -1,6 +1,6 @@
 import { api, apiError } from "@/lib/api";
 import { errorKey, mediaErrorKey } from "@/lib/errors";
-import type { CursorPage } from "@/types";
+import type { CursorPage, SponsoredSlot } from "@/types";
 
 /** The currencies the ads service accepts for a campaign (serializers.CAMPAIGN_CURRENCIES). */
 export const CAMPAIGN_CURRENCIES = ["AED", "BHD", "EGP", "EUR", "GBP", "JOD", "KWD", "OMR", "QAR", "SAR", "USD"] as const;
@@ -10,7 +10,18 @@ const FIELD_KEYS: Record<string, string> = {
   currency: "ads.errors.currency",
   schedule_end: "ads.errors.scheduleEnd",
   budget: "ads.errors.budget",
+  objective: "commerce.ads.errors.objective",
+  placement: "commerce.ads.errors.placement",
+  frequency_cap: "commerce.ads.errors.frequencyCap",
+  notes: "commerce.ads.errors.notes",
+  link_url: "commerce.ads.errors.link",
 };
+
+/** What a campaign is for (serializers.CAMPAIGN_OBJECTIVES). */
+export const CAMPAIGN_OBJECTIVES = ["reach", "traffic", "engagement"] as const;
+export type CampaignObjective = (typeof CAMPAIGN_OBJECTIVES)[number];
+/** Placements something actually asks a slot for (serializers.SERVED_PLACEMENTS). */
+export const SERVED_PLACEMENTS = ["feed", "marketplace"] as const;
 
 /** i18n key for a failed ads call: the field's own message when the server names one. */
 export function adErrorKey(error: unknown): string {
@@ -32,7 +43,26 @@ export interface Campaign {
   spent: string;
   currency: string;
   status: string; // draft | active | paused | completed
+  schedule_start?: string | null;
+  schedule_end?: string | null;
   created_at: string;
+}
+
+export interface CampaignPayload {
+  name: string;
+  budget: string;
+  currency: string;
+  objective?: CampaignObjective;
+  schedule_start?: string | null;
+  schedule_end?: string | null;
+}
+
+export interface CreativePayload {
+  headline: string;
+  body: string;
+  cta: string;
+  link_url: string;
+  media_id?: string | null;
 }
 
 export interface Creative {
@@ -42,7 +72,10 @@ export interface Creative {
   body: string;
   cta: string;
   link_url: string;
+  media_id?: string | null;
   review_status: string; // pending | approved | rejected
+  /** The reviewer's reason, while the ad stays rejected (owner only). */
+  review_notes?: string | null;
 }
 
 export interface AdSet {
@@ -81,7 +114,7 @@ export const adsService = {
     const { data } = await api.get<{ data: Campaign[] }>("/ads/campaigns/");
     return data.data;
   },
-  async createCampaign(payload: { name: string; budget: string; currency: string }): Promise<Campaign> {
+  async createCampaign(payload: CampaignPayload): Promise<Campaign> {
     const { data } = await api.post<{ data: Campaign }>("/ads/campaigns/", payload);
     return data.data;
   },
@@ -99,20 +132,35 @@ export const adsService = {
   },
   async createAdSet(
     campaignId: string,
-    payload: { name: string; placement: string; cpc: string; cpm: string },
+    payload: { name: string; placement: string; cpc: string; cpm: string; frequency_cap?: number },
   ): Promise<void> {
     await api.post(`/ads/campaigns/${campaignId}/ad-sets/`, payload);
   },
   async createCreative(
     adSetId: string,
-    payload: { headline: string; body: string; cta: string; link_url: string },
+    payload: CreativePayload,
   ): Promise<void> {
     await api.post(`/ads/ad-sets/${adSetId}/creatives/`, payload);
   },
-
-  async reviewQueue(): Promise<ReviewItem[]> {
-    const { data } = await api.get<CursorPage<ReviewItem>>("/ads/review-queue/");
+  /** Edit and resubmit a pending or rejected ad: it goes back to review. */
+  async updateCreative(id: string, payload: Partial<CreativePayload>): Promise<Creative> {
+    const { data } = await api.patch<{ data: Creative }>(`/ads/creatives/${id}/`, payload);
     return data.data;
+  },
+
+  async reviewQueue(cursor?: string | null): Promise<CursorPage<ReviewItem>> {
+    const { data } = await api.get<CursorPage<ReviewItem>>("/ads/review-queue/", {
+      params: cursor ? { cursor } : {},
+    });
+    return data;
+  },
+
+  /** A sponsored slot for a placement the web client renders (marketplace); null when none. */
+  async slot(placement: "marketplace"): Promise<SponsoredSlot | null> {
+    const { data } = await api.get<{ data: { sponsored: SponsoredSlot | null } }>("/ads/slot/", {
+      params: { placement },
+    });
+    return data.data.sponsored ?? null;
   },
   async review(id: string, decision: "approved" | "rejected", notes = ""): Promise<void> {
     await api.post(`/ads/creatives/${id}/review/`, { decision, notes });

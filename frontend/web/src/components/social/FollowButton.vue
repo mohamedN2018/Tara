@@ -7,6 +7,7 @@ import { graphService } from "@/services/graph";
 import { useToastStore } from "@/stores/toasts";
 
 const props = defineProps<{ userId: string; following: boolean }>();
+const emit = defineEmits<{ change: [on: boolean] }>();
 
 const { t } = useI18n();
 const toasts = useToastStore();
@@ -26,6 +27,7 @@ async function toggle() {
   try {
     if (next) await graphService.follow(props.userId);
     else await graphService.unfollow(props.userId);
+    emit("change", next);
   } catch (e) {
     isFollowing.value = !next;
     toasts.error(e);

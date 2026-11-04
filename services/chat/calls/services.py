@@ -121,11 +121,18 @@ def _blocked_with(account_id: str) -> set[str]:
 
 def _callees(conversation: Conversation, initiator_id: str) -> list[str]:
     """Who rings: the other active members. In a group, never someone with a
-    block either way with the caller."""
+    block either way with the caller, nor someone who has the group in message
+    requests (or declined it): a stranger's group does not ring anyone."""
     others = [m for m in chat.member_ids(conversation) if m != str(initiator_id)]
     if conversation.type == Conversation.Type.GROUP:
         blocked = _blocked_with(str(initiator_id))
-        others = [o for o in others if o not in blocked]
+        waiting = {
+            str(a)
+            for a in conversation.members.filter(
+                left_at__isnull=True, request_status__in=chat.REQUEST_STATES
+            ).values_list("account_id", flat=True)
+        }
+        others = [o for o in others if o not in blocked and o not in waiting]
     return others
 
 
@@ -387,6 +394,9 @@ def start_call(actor_id: str, conversation_id, kind: str) -> tuple[dict, bool]:
     member = _member_for_call(actor_id, conversation_id)
     if member.conversation.type not in CALLABLE_TYPES:
         raise _error("This conversation cannot have calls.", "validation_error", 400)
+    if chat.request_pending(member.conversation):
+        # A stranger cannot ring anyone through an unanswered message request.
+        raise _error("Accept the message request first.", "message_request", 403)
     with transaction.atomic():
         conversation = _lock(conversation_id, actor_id)
         live = (

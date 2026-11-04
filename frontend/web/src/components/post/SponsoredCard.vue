@@ -4,11 +4,14 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import { hiddenAds, hideAd, unhideAd } from "@/lib/hiddenAds";
+import { useMediaUrl } from "@/lib/useMediaUrl";
 import { adsService } from "@/services/ads";
 import type { SponsoredSlot } from "@/types";
 
 const { ad } = defineProps<{ ad: SponsoredSlot }>();
 const { t } = useI18n();
+// The ad's image (T6), shown between its text and the button.
+const image = useMediaUrl(() => ad.media_id);
 const card = ref<HTMLElement | null>(null);
 let observer: IntersectionObserver | null = null;
 let seen = false;
@@ -78,6 +81,14 @@ function open() {
     </div>
     <h3 class="mt-1 text-sm font-bold" dir="auto">{{ ad.headline }}</h3>
     <p v-if="ad.body" class="mt-1 text-sm text-gray-600 dark:text-gray-300" dir="auto">{{ ad.body }}</p>
+    <img
+      v-if="image"
+      :src="image"
+      class="-mx-4 mt-3 aspect-[1.91/1] w-[calc(100%+2rem)] max-w-none object-cover"
+      alt=""
+      loading="lazy"
+      data-testid="sponsored-image"
+    />
     <button v-if="ad.cta" class="btn-primary mt-3 w-full" dir="auto" @click="open">{{ ad.cta }}</button>
   </article>
 </template>

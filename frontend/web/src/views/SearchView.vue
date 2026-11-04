@@ -13,7 +13,8 @@ import HashtagResult from "@/components/search/HashtagResult.vue";
 import PageResult from "@/components/search/PageResult.vue";
 import PersonResult from "@/components/search/PersonResult.vue";
 import PhotoResult from "@/components/search/PhotoResult.vue";
-import SearchBar from "@/components/search/SearchBar.vue";
+import GlobalSearch from "@/components/search/GlobalSearch.vue";
+import SearchHome from "@/components/search/SearchHome.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
@@ -38,7 +39,6 @@ const route = useRoute();
 const router = useRouter();
 
 const state = computed<SearchState>(() => stateFromQuery(route.query));
-const draft = ref(state.value.q);
 const isHashtag = computed(() => /^#\S/.test(state.value.q) && ["all", "posts", "hashtags"].includes(state.value.type));
 
 const loading = ref(false);
@@ -129,7 +129,6 @@ watch(
   () => route.fullPath,
   () => {
     if (route.name !== "search") return;
-    draft.value = state.value.q;
     load();
   },
 );
@@ -143,12 +142,13 @@ function update(patch: Partial<SearchState>) {
 function tabTo(tab: SearchTab) {
   return { name: "search", query: queryFromState({ ...state.value, type: tab }) };
 }
-function submit(value: string) {
-  const q = value.trim();
-  if (!q) return;
-  searchService.rememberQuery(q).catch(() => undefined);
-  router.push({ name: "search", query: queryFromState({ ...state.value, q }) });
+// Opening a result from the list records it in recent searches (people, pages,
+// groups, events, listings); buttons inside a result (Add friend, Join) don't.
+function rememberClick(e: MouseEvent, r: SearchResult) {
+  if (!(e.target as Element | null)?.closest?.("a")) return;
+  searchService.rememberEntity(r.type, r.id).catch(() => undefined);
 }
+
 function resetFilters() {
   router.replace({ name: "search", query: queryFromState({ q: state.value.q, type: state.value.type }) });
 }
@@ -223,8 +223,9 @@ const tabItems = computed(() => byType(TYPE_OF_TAB[state.value.type] ?? ""));
       <aside class="min-w-0 md:sticky md:top-20 md:w-64 md:shrink-0 lg:w-72">
         <div class="card p-3 md:p-4">
           <h1 class="mb-3 text-xl font-bold">{{ t("search.title") }}</h1>
-          <div class="sm:hidden">
-            <SearchBar v-model="draft" @submit="submit" />
+          <!-- Phones: the same live search as the top bar (suggestions, recent, trending). -->
+          <div class="sm:hidden" data-testid="search-mobile-field">
+            <GlobalSearch id-prefix="gsm" />
           </div>
 
           <nav :aria-label="t('search.categories')" class="mt-3 sm:mt-0">
@@ -359,10 +360,10 @@ const tabItems = computed(() => byType(TYPE_OF_TAB[state.value.type] ?? ""));
           {{ t("search.degraded") }}
         </p>
 
-        <EmptyState v-if="!state.q">{{ t("search.start") }}</EmptyState>
+        <SearchHome v-if="!state.q" />
         <LoadingSkeleton v-else-if="loading" :rows="3" />
         <ErrorState v-else-if="error && !results.length" @retry="load" />
-        <EmptyState v-else-if="isEmpty">{{ t("search.noResults", { q: state.q }) }}</EmptyState>
+        <EmptyState v-else-if="isEmpty" class="card">{{ t("search.noResults", { q: state.q }) }}</EmptyState>
 
         <!-- #tag: posts carrying the hashtag (existing behaviour) -->
         <div v-else-if="isHashtag" class="space-y-4">
@@ -380,7 +381,9 @@ const tabItems = computed(() => byType(TYPE_OF_TAB[state.value.type] ?? ""));
               </RouterLink>
             </div>
             <div v-if="section.type === 'listing'" class="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              <MarketplaceCard v-for="r in section.items" :key="r.id" :listing="resultToListing(r)" />
+              <div v-for="r in section.items" :key="r.id" @click="rememberClick($event, r)">
+                <MarketplaceCard :listing="resultToListing(r)" />
+              </div>
             </div>
             <div v-else-if="section.type === 'post'" class="space-y-4">
               <PostCard v-for="post in hydrated(section.items)" :key="post.id" :post="post" />
@@ -389,12 +392,12 @@ const tabItems = computed(() => byType(TYPE_OF_TAB[state.value.type] ?? ""));
               <HashtagResult v-for="r in section.items" :key="r.id" :result="r" />
             </div>
             <div v-else class="space-y-2">
-              <template v-for="r in section.items" :key="r.id">
+              <div v-for="r in section.items" :key="r.id" @click="rememberClick($event, r)">
                 <PersonResult v-if="r.type === 'user'" :result="r" />
                 <PageResult v-else-if="r.type === 'page'" :result="r" />
                 <GroupResult v-else-if="r.type === 'group'" :result="r" />
                 <EventResult v-else-if="r.type === 'gathering'" :result="r" />
-              </template>
+              </div>
             </div>
           </section>
         </div>
@@ -405,7 +408,9 @@ const tabItems = computed(() => byType(TYPE_OF_TAB[state.value.type] ?? ""));
             <PhotoResult v-for="r in tabItems" :key="r.id" :result="r" />
           </div>
           <div v-else-if="state.type === 'marketplace'" class="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <MarketplaceCard v-for="r in tabItems" :key="r.id" :listing="resultToListing(r)" />
+            <div v-for="r in tabItems" :key="r.id" @click="rememberClick($event, r)">
+              <MarketplaceCard :listing="resultToListing(r)" />
+            </div>
           </div>
           <div v-else-if="state.type === 'posts'" class="space-y-4">
             <PostCard v-for="post in hydrated(tabItems)" :key="post.id" :post="post" />
@@ -414,12 +419,12 @@ const tabItems = computed(() => byType(TYPE_OF_TAB[state.value.type] ?? ""));
             <HashtagResult v-for="r in tabItems" :key="r.id" :result="r" />
           </div>
           <div v-else class="space-y-2">
-            <template v-for="r in tabItems" :key="r.id">
+            <div v-for="r in tabItems" :key="r.id" @click="rememberClick($event, r)">
               <PersonResult v-if="r.type === 'user'" :result="r" />
               <PageResult v-else-if="r.type === 'page'" :result="r" />
               <GroupResult v-else-if="r.type === 'group'" :result="r" />
               <EventResult v-else-if="r.type === 'gathering'" :result="r" />
-            </template>
+            </div>
           </div>
 
           <div v-if="nextCursor" class="mt-4 flex justify-center">

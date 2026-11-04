@@ -105,7 +105,7 @@ describe("LoginCard", () => {
 
     host.querySelector("form")!.dispatchEvent(new Event("submit"));
     await flush();
-    expect(login).toHaveBeenCalledWith("sara_k", "Str0ng-Pass-987!", false);
+    expect(login).toHaveBeenCalledWith("sara_k", "Str0ng-Pass-987!", false, "");
     expect(router.currentRoute.value.fullPath).toBe("/settings");
   });
 
@@ -116,7 +116,7 @@ describe("LoginCard", () => {
     await type(field("input[autocomplete=current-password]"), "Str0ng-Pass-987!");
     host.querySelector("form")!.dispatchEvent(new Event("submit"));
     await flush();
-    expect(login).toHaveBeenCalledWith("sara@example.com", "Str0ng-Pass-987!", true);
+    expect(login).toHaveBeenCalledWith("sara@example.com", "Str0ng-Pass-987!", true, "");
     expect(router.currentRoute.value.fullPath).toBe("/settings");
   });
 
@@ -134,12 +134,76 @@ describe("LoginCard", () => {
   });
 });
 
+describe("LoginCard: two-factor and verification (T1)", () => {
+  const reject = (status: number, code: string) => ({ response: { status, data: { error: { code, message: "x" } } } });
+
+  it("asks for the second factor, then retries with the code", async () => {
+    const auth = await mountCard("/?redirect=/settings");
+    const login = vi
+      .spyOn(auth, "login")
+      .mockRejectedValueOnce(reject(401, "two_factor_required"))
+      .mockResolvedValueOnce();
+    await type(field("input[autocomplete=username]"), "sara_k");
+    await type(field("input[autocomplete=current-password]"), "Str0ng-Pass-987!");
+    host.querySelector("form")!.dispatchEvent(new Event("submit"));
+    await flush();
+    const step = host.querySelector("[data-testid=login-two-factor]") as HTMLFormElement;
+    expect(step).not.toBeNull();
+    expect(router.currentRoute.value.fullPath).toBe("/?redirect=/settings");
+    await type(field("input[autocomplete=one-time-code]"), " 123456 ");
+    step.dispatchEvent(new Event("submit"));
+    await flush();
+    expect(login).toHaveBeenLastCalledWith("sara_k", "Str0ng-Pass-987!", true, "123456");
+    expect(router.currentRoute.value.fullPath).toBe("/settings");
+  });
+
+  it("a wrong code keeps the step open with a message", async () => {
+    const auth = await mountCard();
+    vi.spyOn(auth, "login")
+      .mockRejectedValueOnce(reject(401, "two_factor_required"))
+      .mockRejectedValueOnce(reject(401, "two_factor_invalid"));
+    await type(field("input[autocomplete=username]"), "sara_k");
+    await type(field("input[autocomplete=current-password]"), "pw");
+    host.querySelector("form")!.dispatchEvent(new Event("submit"));
+    await flush();
+    await type(field("input[autocomplete=one-time-code]"), "000000");
+    (host.querySelector("[data-testid=login-two-factor]") as HTMLFormElement).dispatchEvent(new Event("submit"));
+    await flush();
+    expect(host.querySelector("[data-testid=login-two-factor]")).not.toBeNull();
+    expect(host.querySelector("[role=alert]")?.textContent).toBe(i18n.global.t("settingsCenter.login.invalid"));
+  });
+
+  it("offers a verification resend to an account awaiting it", async () => {
+    const auth = await mountCard();
+    vi.spyOn(auth, "login").mockRejectedValue(reject(403, "permission_denied"));
+    const resend = vi.spyOn(identityService, "resendVerification").mockResolvedValue();
+    await type(field("input[autocomplete=username]"), "sara@example.com");
+    await type(field("input[autocomplete=current-password]"), "pw");
+    host.querySelector("form")!.dispatchEvent(new Event("submit"));
+    await flush();
+    const button = host.querySelector("[data-testid=resend-verification-button]") as HTMLButtonElement;
+    expect(button).not.toBeNull();
+    button.click();
+    await flush();
+    expect(resend).toHaveBeenCalledWith("sara@example.com");
+    expect(host.querySelector("[data-testid=resend-verification] [role=status]")).not.toBeNull();
+    expect((host.querySelector("[data-testid=resend-verification-button]") as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
 describe("auth store login", () => {
   it("posts identifier and remember to the API", async () => {
     setActivePinia(createPinia());
     const post = vi.spyOn(api, "post").mockRejectedValue(new Error("stop here"));
     await expect(useAuthStore().login("sara_k", "pw", false)).rejects.toThrow("stop here");
     expect(post).toHaveBeenCalledWith("/auth/login/", { identifier: "sara_k", password: "pw", remember: false });
+  });
+
+  it("sends the second factor only when there is one", async () => {
+    setActivePinia(createPinia());
+    const post = vi.spyOn(api, "post").mockRejectedValue(new Error("stop here"));
+    await expect(useAuthStore().login("sara_k", "pw", true, "123456")).rejects.toThrow("stop here");
+    expect(post).toHaveBeenCalledWith("/auth/login/", { identifier: "sara_k", password: "pw", remember: true, otp: "123456" });
   });
 
   it("boot ends a session-only sign-in once the browser has closed, and revokes it", async () => {

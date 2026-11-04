@@ -4,6 +4,7 @@ import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
+import ReactionPicker from "@/components/post/ReactionPicker.vue";
 import RichText from "@/components/post/RichText.vue";
 import { relativeTime } from "@/lib/format";
 import { reactionByKey } from "@/lib/reactions";
@@ -143,14 +144,24 @@ function toggleLike() {
 
       <div v-if="!editing" class="mt-1 flex items-center gap-3 ps-2 text-[11px] text-gray-500 dark:text-gray-400">
         <time :datetime="comment.created_at">{{ relativeTime(comment.created_at) }}</time>
-        <button
-          class="font-semibold hover:underline"
-          :class="reaction ? reaction.color : ''"
-          :aria-pressed="!!reaction"
-          @click="toggleLike"
-        >
-          {{ reaction ? t(reaction.labelKey) : t("post.like") }}
-        </button>
+        <!-- Any reaction: hover, long press or ArrowUp opens the bar; a click likes or un-reacts. -->
+        <ReactionPicker small @pick="emit('react', $event)" @toggle="toggleLike">
+          <template #default="pick">
+            <button
+              class="font-semibold hover:underline"
+              :class="reaction ? reaction.color : ''"
+              :aria-pressed="!!reaction"
+              aria-keyshortcuts="ArrowUp"
+              data-testid="comment-like"
+              @click="pick.onClick"
+              @keydown="pick.onKeydown"
+              @touchstart.passive="pick.onTouchstart"
+              @touchend="pick.onTouchend"
+            >
+              {{ reaction ? t(reaction.labelKey) : t("post.like") }}
+            </button>
+          </template>
+        </ReactionPicker>
         <button v-if="canReply" class="font-semibold hover:underline" @click="emit('reply')">{{ t("post.reply") }}</button>
         <span v-if="comment.edited_at">{{ t("post.edited") }}</span>
       </div>

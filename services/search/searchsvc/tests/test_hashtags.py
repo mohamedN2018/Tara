@@ -351,6 +351,8 @@ def test_reconcile_drops_a_tag_old_code_edited_away(viewer):
         "links_removed": 1,
         "hashtags_purged": 1,
         "hashtags_restored": 0,
+        "page_posts_parked": 0,
+        "page_posts_restored": 0,
     }
     assert _all_zero(reconcile_hashtags())
 

@@ -32,18 +32,21 @@ def _isolated_settings(settings):
     return settings
 
 
-def make_access_token(account_id: str) -> str:
+def make_access_token(account_id: str, roles: list[str] | None = None) -> str:
     now = int(time.time())
+    claims = {
+        "sub": str(account_id),
+        "type": "access",
+        "scope": "user",
+        "iss": "tara-identity",
+        "aud": "tara",
+        "iat": now,
+        "exp": now + 900,
+    }
+    if roles:
+        claims["roles"] = roles
     return jwt.encode(
-        {
-            "sub": str(account_id),
-            "type": "access",
-            "scope": "user",
-            "iss": "tara-identity",
-            "aud": "tara",
-            "iat": now,
-            "exp": now + 900,
-        },
+        claims,
         _PRIVATE_PEM,
         algorithm="RS256",
         headers={"kid": "test-key"},
@@ -54,9 +57,9 @@ def make_access_token(account_id: str) -> str:
 def client_for():
     from rest_framework.test import APIClient
 
-    def _make(account_id: str):
+    def _make(account_id: str, roles: list[str] | None = None):
         c = APIClient()
-        c.credentials(HTTP_AUTHORIZATION=f"Bearer {make_access_token(account_id)}")
+        c.credentials(HTTP_AUTHORIZATION=f"Bearer {make_access_token(account_id, roles)}")
         return c
 
     return _make
@@ -125,4 +128,85 @@ def media(monkeypatch):
     fake = FakeMedia()
     monkeypatch.setattr("chat.media_client.lookup", fake.lookup)
     monkeypatch.setattr("chat.media_client.signed", fake.signed)
+    return fake
+
+
+class FakeGraph:
+    """Stands in for graph's friendship lookup. Everyone is friends unless a
+    test says otherwise, so a DM lands in the inbox as it did before requests."""
+
+    def __init__(self) -> None:
+        self.strangers: set[frozenset[str]] = set()
+        self.mutuals: set[frozenset[str]] = set()  # strangers who share a friend
+        self.down = False
+        self.calls = 0
+
+    def make_strangers(self, a: str, b: str) -> None:
+        self.strangers.add(frozenset({str(a), str(b)}))
+
+    def are_friends(self, a, b):
+        self.calls += 1
+        if self.down:
+            return None
+        return frozenset({str(a), str(b)}) not in self.strangers
+
+    def have_mutual_friends(self, a, b):
+        if self.down:
+            return None
+        return frozenset({str(a), str(b)}) in self.mutuals
+
+
+@pytest.fixture(autouse=True)
+def graph(monkeypatch):
+    fake = FakeGraph()
+    monkeypatch.setattr("chat.graph_client.are_friends", fake.are_friends)
+    monkeypatch.setattr("chat.graph_client.have_mutual_friends", fake.have_mutual_friends)
+    return fake
+
+
+class FakeProfile:
+    """Stands in for profile's page access lookup: pages and their teams."""
+
+    def __init__(self) -> None:
+        import uuid
+
+        self._uuid = uuid
+        self.pages: dict[str, dict] = {}
+        self.down = False
+
+    def add_page(self, name="Cafe Tara", status="published", team=None) -> str:
+        page_id = str(self._uuid.uuid4())
+        self.pages[page_id] = {"name": name, "status": status, "team": dict(team or {})}
+        return page_id
+
+    def page_access(self, page_id, account_id):
+        if self.down:
+            from chat.profile_client import _unavailable
+
+            raise _unavailable()
+        page = self.pages.get(str(page_id))
+        if page is None:
+            return None
+        return {
+            "page_id": str(page_id),
+            "handle": "cafe",
+            "name": page["name"],
+            "status": page["status"],
+            "role": page["team"].get(str(account_id)),
+        }
+
+    def page_team(self, page_id):
+        from chat.profile_client import PAGE_MESSAGE_ROLES
+
+        page = self.pages.get(str(page_id))
+        if self.down or page is None:
+            return []  # the real client degrades the same way
+        return [a for a, role in page["team"].items() if role in PAGE_MESSAGE_ROLES]
+
+
+@pytest.fixture(autouse=True)
+def profile(monkeypatch):
+    fake = FakeProfile()
+    monkeypatch.setattr("chat.profile_client.page_access", fake.page_access)
+    monkeypatch.setattr("chat.profile_client.page_team", fake.page_team)
     return fake

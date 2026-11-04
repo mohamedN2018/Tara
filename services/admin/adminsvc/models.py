@@ -118,6 +118,25 @@ class PlatformStat(models.Model):
         db_table = "platform_stat"
 
 
+class SystemNotice(models.Model):
+    """An administrative notice staff sent to some accounts (``system.notice``).
+
+    The text is staff-written and meant for the recipients: notification shows
+    it as the row's body. Admin keeps what was sent, by whom and to how many.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    body = models.CharField(max_length=300)
+    recipient_ids = models.JSONField(default=list, blank=True)
+    recipient_count = models.PositiveIntegerField(default=0)
+    created_by = models.UUIDField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "system_notice"
+        indexes = [models.Index(fields=["-created_at", "-id"], name="system_notice_time_idx")]
+
+
 class OutboxEvent(AbstractOutboxEvent):
     class Meta(AbstractOutboxEvent.Meta):
         abstract = False  # inheriting an abstract Meta re-inherits abstract=True

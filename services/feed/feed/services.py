@@ -74,9 +74,12 @@ def shows_content(snapshot: dict, recipient_id, author_id) -> bool:
 
     Anything else may have become invisible to the recipient since fan-out (an
     unfriend, an audience change); the client hydrates it through
-    `/posts/batch/`, which checks visibility now.
+    `/posts/batch/`, which checks visibility now. A page's post keeps ids only
+    too: the page may have been set back to draft, suspended or deleted since.
     """
-    return snapshot.get("audience") == "public" or str(recipient_id) == str(author_id)
+    if str(recipient_id) == str(author_id):
+        return True
+    return snapshot.get("audience") == "public" and snapshot.get("author_type", "user") != "page"
 
 
 def snapshot_for(snapshot: dict, recipient_id, author_id) -> dict:
@@ -86,15 +89,21 @@ def snapshot_for(snapshot: dict, recipient_id, author_id) -> dict:
     return {k: snapshot[k] for k in _ID_KEYS if k in snapshot}
 
 
-def _recipients(author_id: str, audience: str) -> list[tuple[str, str]]:
-    """``[(recipient, reason)]``: the author first, then friends, then followers."""
+def _recipients(author_id: str, audience: str, author_type: str = "user") -> list[tuple[str, str]]:
+    """``[(recipient, reason)]``: the author first, then friends, then followers
+    (a page's followers for a post published as a page)."""
     out = [(author_id, Reason.SELF)]
     if audience != _FRIENDS_ONLY and audience not in _FRIENDS_AND_FOLLOWERS:
         if audience != "only_me":
             logger.warning("unknown audience; author only", extra={"audience": audience})
         return out
 
-    data = fanout_audience(author_id)  # raises GraphUnavailable -> consumer retries
+    # raises GraphUnavailable -> consumer retries
+    data = (
+        fanout_audience(author_id)
+        if author_type == "user"
+        else fanout_audience(author_id, target_type=author_type)
+    )
     friends = {_norm(x) for x in data.get("friends", [])} - {author_id}
     out += [(r, Reason.FRIEND) for r in sorted(friends)]
     if audience in _FRIENDS_AND_FOLLOWERS:
@@ -163,7 +172,7 @@ def fan_out_post(payload: dict) -> int:
     audience = payload.get("audience", "public")
     created_at = parse_datetime(payload.get("created_at") or "") or timezone.now()
 
-    recipients = _recipients(author_id, audience)
+    recipients = _recipients(author_id, audience, payload.get("author_type") or "user")
     cap = max(settings.FANOUT_MAX_RECIPIENTS, 1)  # the author's own item always fits
     if len(recipients) > cap:
         logger.warning(
@@ -225,6 +234,57 @@ def remove_follow_items(follower_id: str, author_id: str) -> int:
         recipient_id=follower_id, author_id=author_id, reason=Reason.FOLLOW
     ).delete()
     return deleted
+
+
+def hold_post(post_id: str, when: datetime) -> bool:
+    """``post.hidden``: keep the post's rows, show them nowhere. False when stale."""
+    with transaction.atomic():
+        state, created = PostState.objects.select_for_update().get_or_create(
+            post_id=post_id, defaults={"occurred_at": when, "hidden": True, "hidden_at": when}
+        )
+        if created:
+            return True
+        if state.hidden_at is not None and when < state.hidden_at:
+            return False
+        state.hidden, state.hidden_at = True, when
+        state.save(update_fields=["hidden", "hidden_at"])
+        return True
+
+
+def release_post(payload: dict, when: datetime) -> int:
+    """``post.unhidden``: show the kept rows again and fan the post out to anyone
+    who has no row for it (rows a ``post.deleted`` from an older release dropped,
+    or a fan-out the hide cut short). Returns the count of new rows; nothing when
+    the event is stale.
+
+    The payload is the post as it is at ``when``, so it replaces an older stored
+    audience and excerpt. A stored delete older than ``when`` is the one an older
+    release emitted on deactivation: post sends ``post.unhidden`` only for a post
+    that is live, so it is undone too.
+    """
+    post_id = payload["post_id"]
+    with transaction.atomic():
+        state, created = PostState.objects.select_for_update().get_or_create(
+            post_id=post_id,
+            defaults={
+                "occurred_at": when,
+                "hidden": False,
+                "hidden_at": when,
+                "audience": payload.get("audience") or "",
+                "excerpt": payload.get("excerpt") or "",
+            },
+        )
+        if not created:
+            if state.hidden_at is not None and when < state.hidden_at:
+                logger.info("stale post.unhidden ignored", extra={"post_id": post_id})
+                return 0
+            state.hidden, state.hidden_at = False, when
+            if when >= state.occurred_at:
+                state.occurred_at, state.deleted = when, False
+                state.audience = payload.get("audience") or state.audience
+                state.excerpt = payload.get("excerpt", state.excerpt)
+            state.save()
+    return fan_out_post(payload)
 
 
 def remove_post(post_id: str, when: datetime | None = None) -> None:

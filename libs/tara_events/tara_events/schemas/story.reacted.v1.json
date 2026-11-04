@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/story.reacted.v1.json",
+  "title": "story.reacted v1 payload",
+  "description": "An account reacted to a story it can see, for the first time (a changed reaction emits nothing). author_id is the recipient.",
+  "type": "object",
+  "properties": {
+    "story_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "author_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reactor": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reaction_type": {
+      "type": "string",
+      "enum": [
+        "like",
+        "love",
+        "care",
+        "haha",
+        "wow",
+        "sad",
+        "angry"
+      ]
+    }
+  },
+  "required": [
+    "story_id",
+    "author_id",
+    "reactor",
+    "reaction_type"
+  ],
+  "additionalProperties": false
+}

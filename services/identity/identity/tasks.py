@@ -11,3 +11,11 @@ def lift_expired_suspensions() -> int:
     from .account_admin import lift_expired_suspensions as lift
 
     return lift()
+
+
+@shared_task(name="identity.purge_scheduled_deletions", ignore_result=True)
+def purge_scheduled_deletions() -> int:
+    """Erase accounts whose 30-day deletion grace ended (3C); emits account.deleted."""
+    from .account_center import purge_due_deletions
+
+    return purge_due_deletions()

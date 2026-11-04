@@ -4,6 +4,7 @@ forward), search, shared media and attachment URLs."""
 
 from __future__ import annotations
 
+import uuid
 from datetime import timedelta
 
 from django.utils import timezone
@@ -22,6 +23,7 @@ from . import services
 from .models import Message
 from .serializers import (
     ArchiveSerializer,
+    ChatSettingsSerializer,
     ConversationSerializer,
     DMCreateSerializer,
     ForwardSerializer,
@@ -31,18 +33,40 @@ from .serializers import (
     MembersAddSerializer,
     MessageCreateSerializer,
     MessageEditSerializer,
+    MessageReportSerializer,
     MessageSerializer,
     MuteSerializer,
+    PageConversationSerializer,
     PinSerializer,
     ReactionSerializer,
     ReadSerializer,
+    RequestActionSerializer,
     SharedMediaSerializer,
+    TeamConversationSerializer,
+    TeamMessageSerializer,
+    TeamReplySerializer,
     VoiceMessageSerializer,
 )
 
 
 def _me(request: Request) -> str:
     return request.user.account_id
+
+
+def _uuid_param(request: Request, name: str) -> str | None:
+    raw = request.query_params.get(name) or None
+    if raw is None:
+        return None
+    try:
+        return str(uuid.UUID(raw))
+    except ValueError as exc:
+        raise TaraAPIError(
+            f"'{name}' must be a UUID.", code="validation_error", http_status_code=400
+        ) from exc
+
+
+def _caps(request: Request):
+    return getattr(request.user, "capabilities", ()) or ()
 
 
 def _paginate(request, queryset, serializer_cls, context=None):
@@ -64,9 +88,19 @@ class ConversationsView(APIView):
     @extend_schema(responses={200: ConversationSerializer(many=True)}, tags=["chat"])
     def get(self, request: Request) -> Response:
         archived = request.query_params.get("archived", "").lower() in ("1", "true", "yes")
+        # `folder`: inbox | archived | requests | spam; `type`: one conversation type;
+        # `unread=1`: only threads with unread messages.
         return _paginate(
             request,
-            services.list_conversations(_me(request), archived=archived),
+            services.list_conversations(
+                _me(request),
+                archived=archived,
+                folder=request.query_params.get("folder") or None,
+                kind=request.query_params.get("type") or None,
+                unread=request.query_params.get("unread", "").lower() in ("1", "true", "yes"),
+                listing_id=_uuid_param(request, "listing_id"),
+                with_id=_uuid_param(request, "with"),
+            ),
             ConversationSerializer,
             {"viewer_id": _me(request)},
         )
@@ -82,6 +116,15 @@ class ConversationsView(APIView):
                 [str(m) for m in serializer.validated_data["member_ids"]],
                 serializer.validated_data["title"],
             )
+        elif conv_type == "page":
+            # Write to a Page; its team answers (owner, admins, editors, moderators).
+            serializer = PageConversationSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            conversation = services.open_page_conversation(
+                _me(request), str(serializer.validated_data["page_id"])
+            )
+        elif conv_type == "support":
+            conversation = services.open_support_conversation(_me(request))
         else:
             serializer = DMCreateSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
@@ -319,6 +362,43 @@ class ConversationClearView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class ConversationRequestView(APIView):
+    """Answer a message request: accept moves it to the inbox, decline to the
+    spam folder (and the sender cannot send more)."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        request=RequestActionSerializer, responses={200: ConversationSerializer}, tags=["chat"]
+    )
+    def post(self, request: Request, conversation_id: str) -> Response:
+        serializer = RequestActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        if serializer.validated_data["action"] == "accept":
+            services.accept_request(_me(request), conversation_id)
+        else:
+            services.decline_request(_me(request), conversation_id)
+        return data_response(_conversation_data(request, conversation_id))
+
+
+class MessageReportView(APIView):
+    """Report a message to moderation (once per reporter per message)."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=MessageReportSerializer, responses={201: None, 200: None}, tags=["chat"])
+    def post(self, request: Request, message_id: str) -> Response:
+        serializer = MessageReportSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        created = services.report_message(
+            _me(request), message_id, serializer.validated_data["reason"]
+        )
+        return data_response(
+            {"reported": True},
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+
 # ---- message lifecycle -------------------------------------------------------
 
 
@@ -426,3 +506,96 @@ class ConversationMediaView(APIView):
             ),
             SharedMediaSerializer,
         )
+
+
+class ChatSettingsView(APIView):
+    """The caller's "who can message me" setting (spec B)."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: ChatSettingsSerializer}, tags=["chat"])
+    def get(self, request: Request) -> Response:
+        return data_response({"message_from": services.message_setting(_me(request))})
+
+    @extend_schema(
+        request=ChatSettingsSerializer, responses={200: ChatSettingsSerializer}, tags=["chat"]
+    )
+    def patch(self, request: Request) -> Response:
+        serializer = ChatSettingsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        value = services.set_message_setting(
+            _me(request), serializer.validated_data["message_from"]
+        )
+        return data_response({"message_from": value})
+
+
+class TeamConversationsView(APIView):
+    """A team inbox: ``?page_id=`` for a page's team, otherwise the support
+    inbox (staff with the support capability). Anyone else gets 404."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: TeamConversationSerializer(many=True)}, tags=["chat"])
+    def get(self, request: Request) -> Response:
+        return _paginate(
+            request,
+            services.team_conversations(
+                _me(request), _caps(request), page_id=_uuid_param(request, "page_id")
+            ),
+            TeamConversationSerializer,
+        )
+
+
+class TeamUnreadView(APIView):
+    """The team inbox's badge (``?page_id=`` or the support inbox); 404 off the team."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(tags=["chat"])
+    def get(self, request: Request) -> Response:
+        return data_response(
+            services.team_unread(
+                _me(request), _caps(request), page_id=_uuid_param(request, "page_id")
+            )
+        )
+
+
+class TeamConversationView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: TeamConversationSerializer}, tags=["chat"])
+    def get(self, request: Request, conversation_id: str) -> Response:
+        conversation = services.require_team(_me(request), _caps(request), conversation_id)
+        return data_response(TeamConversationSerializer(conversation).data)
+
+
+class TeamMessagesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: TeamMessageSerializer(many=True)}, tags=["chat"])
+    def get(self, request: Request, conversation_id: str) -> Response:
+        return _paginate(
+            request,
+            services.team_messages(_me(request), _caps(request), conversation_id),
+            TeamMessageSerializer,
+        )
+
+    @extend_schema(
+        request=TeamReplySerializer, responses={201: TeamMessageSerializer}, tags=["chat"]
+    )
+    def post(self, request: Request, conversation_id: str) -> Response:
+        serializer = TeamReplySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        message = services.team_reply(
+            _me(request), _caps(request), conversation_id, serializer.validated_data["body"]
+        )
+        return data_response(TeamMessageSerializer(message).data, status=status.HTTP_201_CREATED)
+
+
+class TeamReadView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={204: None}, tags=["chat"])
+    def post(self, request: Request, conversation_id: str) -> Response:
+        services.team_mark_read(_me(request), _caps(request), conversation_id)
+        return Response(status=status.HTTP_204_NO_CONTENT)

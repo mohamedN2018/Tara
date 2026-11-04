@@ -1,6 +1,6 @@
 """Search's backfill export (roadmap 1.15), under ``/internal/v1/search/export/``.
 
-Only what search may index: public, live profiles; published, live pages; and
+Only what search may index: public, live, searchable profiles; published, live pages; and
 live public or private groups (never hidden ones), in the same payload shape as
 ``profile.updated``, ``page.updated`` and ``group.updated``.
 """
@@ -34,7 +34,7 @@ urlpatterns = [
         "export/people/",
         SearchExportView.as_view(
             source=lambda: UserProfile.objects.filter(
-                deleted_at__isnull=True, visibility=Visibility.PUBLIC
+                deleted_at__isnull=True, visibility=Visibility.PUBLIC, searchable=True
             ),
             to_item=lambda p: (p.account_id, profile_search_payload(p, changed=[])),
         ),

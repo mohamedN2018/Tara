@@ -25,6 +25,7 @@ export const CAPABILITIES = [
   "admin.audit.view",
   "admin.audit.export",
   "admin.monitor.view",
+  "admin.notices.send",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

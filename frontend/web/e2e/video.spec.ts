@@ -6,7 +6,7 @@ import { join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { type APIRequestContext, type Page, expect, request, test } from "@playwright/test";
 
-import { API, BASE_URL, apiAs, befriend, expectNoUuid, pageAs, sharedAccounts, unfriend, unique } from "./helpers";
+import { API, apiAs, BASE_URL, befriend, expectNoUuid, pageAs, sharedAccounts, unfriend, unique, useLocale } from "./helpers";
 
 // Video in posts (roadmap 5.2, 5.3, 5.7): the composer uploads a clip, media's
 // transcoder turns it into HLS, the post plays it through a token-checked
@@ -87,7 +87,7 @@ for (const lang of ["ar", "en"] as const) {
     const { a } = await sharedAccounts();
     const clip = makeClip(3);
     const page = await pageAs(browser, a);
-    if (lang === "en") await page.addInitScript(() => localStorage.setItem("tara.locale", "en"));
+    if (lang === "en") await useLocale(page, "en");
     await page.goto("/home");
     await expect(page.locator("html")).toHaveAttribute("dir", lang === "ar" ? "rtl" : "ltr");
 
@@ -144,7 +144,7 @@ for (const lang of ["ar", "en"] as const) {
     expect((await stranger.get(`${API}/media/${mediaId}/playback/`)).status()).toBe(404);
     expect((await stranger.get(`${API}/media/${mediaId}/`)).status()).toBe(404);
     const strangerPage = await pageAs(browser, c);
-    if (lang === "en") await strangerPage.addInitScript(() => localStorage.setItem("tara.locale", "en"));
+    if (lang === "en") await useLocale(strangerPage, "en");
     await strangerPage.goto(`/posts/${postId}`);
     await expect(strangerPage.getByRole("button", { name: lang === "ar" ? "إعادة المحاولة" : "Retry", exact: true })).toBeVisible();
     await expect(strangerPage.getByTestId("video-element")).toHaveCount(0);
@@ -157,7 +157,7 @@ for (const lang of ["ar", "en"] as const) {
     const token = new URL(hlsPath, "http://x/").searchParams.get("token");
     expect((await stranger.get(`${API}/media/${mediaId}/hls/master.m3u8?token=${token}x`)).status()).toBe(401);
     const friendPage = await pageAs(browser, b);
-    if (lang === "en") await friendPage.addInitScript(() => localStorage.setItem("tara.locale", "en"));
+    if (lang === "en") await useLocale(friendPage, "en");
     await friendPage.goto(`/posts/${postId}`);
     await expectPlaying(friendPage);
 

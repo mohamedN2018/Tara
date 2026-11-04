@@ -26,9 +26,11 @@ from .serializers import (
     CampaignUpdateSerializer,
     CreativeCreateSerializer,
     CreativeSerializer,
+    CreativeUpdateSerializer,
     EventSerializer,
     ReviewQueueSerializer,
     ReviewSerializer,
+    SlotQuerySerializer,
 )
 
 
@@ -108,6 +110,41 @@ class CreativesView(APIView):
             data["media_id"] = str(data["media_id"])
         creative = services.create_creative(_me(request), ad_set_id, data)
         return data_response(CreativeSerializer(creative).data, status=status.HTTP_201_CREATED)
+
+
+class CreativeDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        request=CreativeUpdateSerializer, responses={200: CreativeSerializer}, tags=["ads"]
+    )
+    def patch(self, request: Request, creative_id: str) -> Response:
+        serializer = CreativeUpdateSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        data = dict(serializer.validated_data)
+        if data.get("media_id"):
+            data["media_id"] = str(data["media_id"])
+        creative = services.update_creative(_me(request), creative_id, data)
+        return data_response(CreativeSerializer(creative).data)
+
+
+class SlotView(APIView):
+    """A sponsored slot for a placement the web client renders itself (marketplace).
+
+    Same rules as feed's internal slot: nothing while serving is switched off
+    (``ADS_SERVING_ENABLED``), and the serve token is bound to this viewer.
+    """
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "ad_slots"
+
+    @extend_schema(responses={200: None}, tags=["ads"])
+    def get(self, request: Request) -> Response:
+        query = SlotQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        placement = query.validated_data["placement"]
+        return data_response({"sponsored": services.pick_for_viewer(_me(request), placement)})
 
 
 class ReviewQueueView(APIView):

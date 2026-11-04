@@ -900,3 +900,24 @@ def test_relationship_client_raises_graph_unavailable(monkeypatch):
 
     with pytest.raises(GraphUnavailable):
         clients.relationship("a-id", "b-id")
+
+
+def test_a_page_post_keeps_ids_only_for_its_followers():
+    """A page may be set back to draft, suspended or deleted after fan-out: the
+    client hydrates its posts through /posts/batch/, which checks the page now."""
+    page = _acct()
+    snap = {
+        "post_id": str(uuid.uuid4()),
+        "author_id": page,
+        "author_type": "page",
+        "type": "text",
+        "audience": "public",
+        "excerpt": "hello world",
+        "media_ids": [str(uuid.uuid4())],
+        "created_at": timezone.now().isoformat(),
+    }
+    shown = services.snapshot_for(snap, _acct(), page)
+    assert "excerpt" not in shown and "media_ids" not in shown
+    assert shown["author_type"] == "page"
+    person = {**snap, "author_type": "user"}
+    assert services.snapshot_for(person, _acct(), page)["excerpt"] == "hello world"

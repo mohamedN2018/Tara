@@ -15,10 +15,12 @@ import type { Post } from "@/types";
 // composer for text, photos, polls, tags, feeling, location, drafts and
 // scheduling). With `groupId` the post goes into that group: no audience
 // picker (the server forces the group audience), no drafts or scheduling, and
-// the home "create post" shortcut is left alone.
-const props = withDefaults(defineProps<{ groupId?: string | null; groupName?: string }>(), {
+// the home "create post" shortcut is left alone. `listenShortcuts=false` leaves
+// it alone too (the own-profile timeline: Home answers the shortcut).
+const props = withDefaults(defineProps<{ groupId?: string | null; groupName?: string; listenShortcuts?: boolean }>(), {
   groupId: null,
   groupName: "",
+  listenShortcuts: true,
 });
 const emit = defineEmits<{ created: [post: Post]; saved: [post: ComposerPost] }>();
 
@@ -48,7 +50,7 @@ function onFiles(e: Event) {
 watch(
   () => ui.composeRequested,
   (requested) => {
-    if (!requested || props.groupId) return;
+    if (!requested || props.groupId || !props.listenShortcuts) return;
     ui.composeRequested = false;
     openComposer();
   },
@@ -59,36 +61,49 @@ const authorName = () => auth.profile?.display_name || auth.account?.email?.spli
 </script>
 
 <template>
-  <div class="card p-4">
+  <div class="card p-3 sm:p-4">
     <!-- Behind the open (modal) dialog: hidden from assistive tech and from focus. -->
     <div :inert="open || undefined" :aria-hidden="open || undefined">
-    <div class="flex items-center gap-3">
+    <div class="flex items-center gap-1.5 sm:gap-2">
       <UserAvatar :name="authorName()" :media-id="auth.profile?.avatar_media_id" :size="40" />
       <button
         type="button"
-        class="h-11 flex-1 rounded-full border border-transparent bg-gray-100 px-5 text-start text-sm text-gray-500 transition hover:border-brand-200 hover:bg-white dark:bg-gray-800/70 dark:text-gray-400 dark:hover:border-brand-900 dark:hover:bg-gray-800"
+        class="h-11 min-w-0 flex-1 truncate rounded-full border border-transparent bg-gray-100 px-5 text-start text-sm text-gray-600 transition hover:border-brand-200 hover:bg-white dark:bg-gray-800/70 dark:text-gray-400 dark:hover:border-brand-900 dark:hover:bg-gray-800"
         aria-haspopup="dialog"
         data-testid="composer-open"
         @click="openComposer()"
       >
         {{ groupId ? t("groups.composer.placeholder") : t("feed.composerPlaceholder") }}
       </button>
-    </div>
 
-    <!-- Quick actions: each opens the composer in that mode. -->
-    <div class="mt-3 grid grid-cols-3 gap-1 border-t border-gray-100 pt-2 dark:border-gray-800">
-      <label class="btn-ghost cursor-pointer justify-center focus-within:ring-2 focus-within:ring-brand-400">
-        <ImagePlus class="h-5 w-5 text-emerald-500" aria-hidden="true" />
-        <span>{{ t("feed.photo") }}</span>
+      <!-- Quick actions beside the field (reference layout): each opens the composer in that mode. -->
+      <label
+        class="inline-flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full transition hover:bg-gray-100 focus-within:ring-2 focus-within:ring-brand-400 dark:hover:bg-gray-800"
+        :title="t('feed.photo')"
+        data-testid="composer-quick-photo"
+      >
+        <ImagePlus class="h-6 w-6 text-emerald-500" aria-hidden="true" />
         <input type="file" :accept="IMAGE_ACCEPT" multiple class="sr-only" :aria-label="t('feed.addPhotos')" @change="onFiles" />
       </label>
-      <button type="button" class="btn-ghost justify-center" aria-haspopup="dialog" @click="openComposer('feeling')">
-        <Smile class="h-5 w-5 text-amber-500" aria-hidden="true" />
-        <span class="truncate">{{ t("composer.feeling") }}</span>
+      <button
+        type="button"
+        class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition hover:bg-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 dark:hover:bg-gray-800"
+        :aria-label="t('composer.feeling')"
+        :title="t('composer.feeling')"
+        aria-haspopup="dialog"
+        @click="openComposer('feeling')"
+      >
+        <Smile class="h-6 w-6 text-amber-500" aria-hidden="true" />
       </button>
-      <button type="button" class="btn-ghost justify-center" aria-haspopup="dialog" @click="openComposer('poll')">
-        <BarChart3 class="h-5 w-5 text-accent-500" aria-hidden="true" />
-        <span>{{ t("feed.poll") }}</span>
+      <button
+        type="button"
+        class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition hover:bg-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 dark:hover:bg-gray-800"
+        :aria-label="t('feed.poll')"
+        :title="t('feed.poll')"
+        aria-haspopup="dialog"
+        @click="openComposer('poll')"
+      >
+        <BarChart3 class="h-6 w-6 text-accent-500" aria-hidden="true" />
       </button>
     </div>
     </div>

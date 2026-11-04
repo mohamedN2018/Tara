@@ -221,12 +221,14 @@ def visible_for(recipient_id: str):
     return Notification.objects.filter(recipient_id=recipient_id, visible_in_app=True)
 
 
-def list_for(recipient_id: str, *, unread_only: bool = False, category: str = ""):
+def list_for(recipient_id: str, *, unread_only: bool = False, category: str = "", kind: str = ""):
     qs = visible_for(recipient_id)
     if unread_only:
         qs = qs.filter(read_at__isnull=True)
     if category:
         qs = qs.filter(category=category)
+    if kind:
+        qs = qs.filter(kind=kind)
     return qs.order_by("-last_event_at", "-id")
 
 
@@ -372,7 +374,7 @@ def forget_message(conversation_id: str, message_id: str, *, deleted: bool) -> i
     source is unknown. Idempotent. Returns the number of rows changed.
     """
     rows = Notification.objects.filter(
-        kind="message", subject_ref=f"conversation:{conversation_id}"
+        kind__in=("message", "message.page"), subject_ref=f"conversation:{conversation_id}"
     )
     latest = rows.filter(data__message_id=str(message_id))
     removed = 0

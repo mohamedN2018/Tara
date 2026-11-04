@@ -1,8 +1,19 @@
+import commerceAr from "./commerce.ar";
 import composerAr from "./composer.ar";
 import groupsAr from "./groups.ar";
+import pageHubAr from "./pageHub.ar";
+import discoverabilityAr from "./discoverability.ar";
 import homeFeedAr from "./homeFeed.ar";
+import postsFeedAr from "./postsFeed.ar";
+import peopleAr from "./people.ar";
+import settingsCenterAr from "./settingsCenter.ar";
+import messengerAr from "./messenger.ar";
+import chatTeamAr from "./chatTeam.ar";
 import registerAr from "./register.ar";
 import shellAr from "./shell.ar";
+import studioAr from "./studio.ar";
+import safetyAr from "./safety.ar";
+import storiesAr from "./stories.ar";
 import suggestionsAr from "./suggestions.ar";
 import videoAr from "./video.ar";
 
@@ -88,6 +99,7 @@ export default {
       helpCenter: "مركز المساعدة",
       support: "الدعم",
       adReview: "مراجعة الإعلانات",
+      communityStandards: "معايير المجتمع",
     },
     desc: {
       profile: "صفحتك كما يراها الآخرون",
@@ -108,6 +120,8 @@ export default {
       myGroups: "المجموعات التي انضممت إليها",
       settings: "الحساب والخصوصية والأمان والإشعارات",
       adReview: "الإعلانات التي تنتظر المراجعة",
+      support: "حالة حسابك وبلاغاتك وإشعارات تارا",
+      communityStandards: "ما المسموح وما الممنوع على تارا",
       admin: "لوحة التحكم في المنصة",
     },
     createItems: {
@@ -611,6 +625,7 @@ export default {
       post_tag: "أشار إليك {name} في منشور",
       video_ready: "أصبح الفيديو الذي رفعته جاهزًا",
       post_reaction: "تفاعل {name} مع منشورك",
+      story_reaction: "تفاعل {name} مع قصتك",
       post_comment: "علّق {name} على منشورك",
       comment_reply: "ردّ {name} على تعليقك",
       friend_request: "أرسل {name} طلب صداقة",
@@ -650,6 +665,8 @@ export default {
         "ردّ {name} على فعاليتك | ردّ {name} وشخص آخر على فعاليتك | ردّ {name} وشخصان آخران على فعاليتك | ردّ {name} و{count} أشخاص آخرين على فعاليتك | ردّ {name} و{count} شخصًا آخر على فعاليتك | ردّ {name} و{count} شخص آخر على فعاليتك",
       post_reaction:
         "تفاعل {name} مع منشورك | تفاعل {name} وشخص آخر مع منشورك | تفاعل {name} وشخصان آخران مع منشورك | تفاعل {name} و{count} أشخاص آخرين مع منشورك | تفاعل {name} و{count} شخصًا آخر مع منشورك | تفاعل {name} و{count} شخص آخر مع منشورك",
+      story_reaction:
+        "تفاعل {name} مع قصتك | تفاعل {name} وشخص آخر مع قصتك | تفاعل {name} وشخصان آخران مع قصتك | تفاعل {name} و{count} أشخاص آخرين مع قصتك | تفاعل {name} و{count} شخصًا آخر مع قصتك | تفاعل {name} و{count} شخص آخر مع قصتك",
       post_comment:
         "علّق {name} على منشورك | علّق {name} وشخص آخر على منشورك | علّق {name} وشخصان آخران على منشورك | علّق {name} و{count} أشخاص آخرين على منشورك | علّق {name} و{count} شخصًا آخر على منشورك | علّق {name} و{count} شخص آخر على منشورك",
       post_share:
@@ -692,6 +709,7 @@ export default {
       pages: "الصفحات",
       ads: "الإعلانات",
       groups: "المجموعات",
+      account: "حالة الحساب والإشعارات الإدارية",
     },
     prefs: {
       in_app: "داخل التطبيق",
@@ -907,6 +925,7 @@ export default {
         account_unsuspended: "رفع إيقاف",
         account_signed_out: "تسجيل خروج من كل الأجهزة",
         account_verification_resent: "إعادة إرسال رسالة التحقق",
+        system_notice_sent: "أُرسل إشعار إداري",
       },
     },
     monitor: {
@@ -1070,12 +1089,14 @@ export default {
       post_tag: "الإشارة إليّ في المنشورات",
       video_ready: "جاهزية الفيديوهات التي أرفعها",
       post_reaction: "التفاعلات على منشوراتي",
+      story_reaction: "التفاعلات على قصصي",
       post_comment: "التعليقات على منشوراتي",
       comment_reply: "الردود على تعليقاتي",
       friend_request: "طلبات الصداقة",
       friend_accepted: "قبول طلبات الصداقة",
       follow: "المتابعون الجدد",
       message: "الرسائل",
+      message_page: "الرسائل إلى صفحاتي",
       listing_status: "تغيّر حالة الإعلانات",
       listing_inquiry: "الاستفسارات عن إعلاناتي",
       page_follow: "متابعو صفحاتي الجدد",
@@ -1177,6 +1198,7 @@ export default {
     },
   },
   errors: {
+    messaging_restricted: "هذا الشخص لا يستقبل رسائل منك.",
     validation_error: "تحقّق مما أدخلته وحاول مرة أخرى.",
     parse_error: "تعذّر فهم الطلب.",
     unauthenticated: "يرجى تسجيل الدخول مرة أخرى.",
@@ -1421,9 +1443,20 @@ export default {
   },
   composer: composerAr,
   groups: groupsAr,
+  pageHub: pageHubAr,
+  discoverability: discoverabilityAr,
   homeFeed: homeFeedAr,
+  postsFeed: postsFeedAr,
   register: registerAr,
   shell: shellAr,
+  studio: studioAr,
+  safety: safetyAr,
+  stories: storiesAr,
+  people: peopleAr,
+  commerce: commerceAr,
+  settingsCenter: settingsCenterAr,
+  messenger: messengerAr,
+  chatTeam: chatTeamAr,
   suggestions: suggestionsAr,
   video: videoAr,
   landing: {

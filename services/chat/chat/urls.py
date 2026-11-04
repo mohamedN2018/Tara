@@ -7,6 +7,24 @@ app_name = "chat"
 urlpatterns = [
     path("conversations/", views.ConversationsView.as_view(), name="conversations"),
     path("conversations/unread/", views.UnreadView.as_view(), name="unread"),
+    path("conversations/settings/", views.ChatSettingsView.as_view(), name="settings"),
+    path("conversations/team/", views.TeamConversationsView.as_view(), name="team"),
+    path("conversations/team/unread/", views.TeamUnreadView.as_view(), name="team-unread"),
+    path(
+        "conversations/team/<uuid:conversation_id>/",
+        views.TeamConversationView.as_view(),
+        name="team-conversation",
+    ),
+    path(
+        "conversations/team/<uuid:conversation_id>/messages/",
+        views.TeamMessagesView.as_view(),
+        name="team-messages",
+    ),
+    path(
+        "conversations/team/<uuid:conversation_id>/read/",
+        views.TeamReadView.as_view(),
+        name="team-read",
+    ),
     path("conversations/delivered/", views.DeliveredView.as_view(), name="delivered"),
     path(
         "conversations/<uuid:conversation_id>/",
@@ -66,7 +84,17 @@ urlpatterns = [
         views.ConversationMediaView.as_view(),
         name="shared-media",
     ),
+    path(
+        "conversations/<uuid:conversation_id>/request/",
+        views.ConversationRequestView.as_view(),
+        name="request",
+    ),
     path("messages/search/", views.MessageSearchView.as_view(), name="message-search"),
+    path(
+        "messages/<uuid:message_id>/report/",
+        views.MessageReportView.as_view(),
+        name="message-report",
+    ),
     path("messages/<uuid:message_id>/", views.MessageDetailView.as_view(), name="message"),
     path(
         "messages/<uuid:message_id>/forward/",

@@ -1,6 +1,6 @@
 import { api } from "@/lib/api";
 import { postService } from "@/services/post";
-import type { FeedItem, Post, SponsoredSlot } from "@/types";
+import type { CursorPage, FeedItem, Post, SponsoredSlot } from "@/types";
 
 export interface FeedResponse {
   data: FeedItem[];
@@ -18,8 +18,19 @@ export type FeedMode = (typeof FEED_MODES)[number];
 export const HIDE_REASONS = ["not_interested", "spam", "sexual", "annoying", "dislike_creator", "other"] as const;
 export type HideReason = (typeof HIDE_REASONS)[number];
 
+/** Why a post is in this viewer's feed (feed's FeedItem.Reason). */
+export type FeedReason = "self" | "friend" | "follow";
+
+export interface Snooze {
+  author_id: string;
+  until: string;
+  snoozed_at: string;
+}
+
 export interface HydratedFeedPage {
   posts: Post[];
+  /** post id -> why it reached this feed. */
+  reasons: Record<string, FeedReason>;
   sponsored: SponsoredSlot[];
   nextCursor: string | null;
   hasMore: boolean;
@@ -72,13 +83,17 @@ export const feedService = {
     let resp = await this.home(cursor, mode);
     const modeApplied = !!mode && resp.mode === mode;
     let posts = await hydrateFeed(resp.data);
+    const reasons: Record<string, FeedReason> = {};
+    const note = (items: FeedItem[]) => items.forEach((i) => (reasons[i.post_id] = i.reason as FeedReason));
+    note(resp.data);
     const sponsored = resp.sponsored ? [resp.sponsored] : [];
     for (let i = 0; i < MAX_EMPTY_PAGES; i++) {
       if (posts.length || !resp.page.has_more || !resp.page.next_cursor) break;
       resp = await this.home(resp.page.next_cursor, mode);
+      note(resp.data);
       posts = await hydrateFeed(resp.data);
     }
-    return { posts, sponsored, nextCursor: resp.page.next_cursor, hasMore: resp.page.has_more, modeApplied };
+    return { posts, reasons, sponsored, nextCursor: resp.page.next_cursor, hasMore: resp.page.has_more, modeApplied };
   },
 
   /** Hide a post from this viewer's feed, with why (201). */
@@ -98,5 +113,11 @@ export const feedService = {
 
   async unsnooze(authorId: string): Promise<void> {
     await api.delete(`/feed/snooze/${authorId}/`);
+  },
+
+  /** Active snoozes, newest first (feed preferences). */
+  async snoozes(cursor?: string | null): Promise<CursorPage<Snooze>> {
+    const { data } = await api.get<CursorPage<Snooze>>("/feed/snoozes/", { params: { cursor: cursor || undefined } });
+    return data;
   },
 };

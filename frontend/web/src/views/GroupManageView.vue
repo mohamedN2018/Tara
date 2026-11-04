@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Ban, FileClock, Flag, ListOrdered, Settings2, UserCheck, Users } from "lucide-vue-next";
+import { ArrowLeft, Ban, FileClock, Flag, ListOrdered, MailQuestion, Settings2, UserCheck, Users } from "lucide-vue-next";
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
@@ -31,6 +31,7 @@ const version = ref(0);
 
 const ICONS: Record<ManageSection, typeof Users> = {
   requests: UserCheck,
+  invited: MailQuestion,
   posts: FileClock,
   members: Users,
   banned: Ban,
@@ -92,7 +93,7 @@ watch(() => route.params.handle, () => {
         <aside class="card h-fit space-y-3 p-3 lg:sticky lg:top-20">
           <RouterLink :to="groupPath(group)" class="btn-ghost w-full justify-start">
             <ArrowLeft class="h-4 w-4 rtl:rotate-180" aria-hidden="true" />
-            <span class="truncate" dir="auto">{{ group.name }}</span>
+            <span class="truncate"><bdi>{{ group.name }}</bdi></span>
           </RouterLink>
           <h1 class="px-2 text-lg font-bold">{{ t("groups.manage.title") }}</h1>
           <nav class="flex gap-1 overflow-x-auto lg:flex-col" :aria-label="t('groups.manage.title')">
@@ -117,6 +118,7 @@ watch(() => route.params.handle, () => {
             <p class="text-sm text-gray-500 dark:text-gray-400">{{ t(`groups.manage.hints.${section}`) }}</p>
           </div>
           <GroupMemberList v-if="section === 'requests'" :key="`requests-${version}`" :group="group" state="requested" manage @changed="refresh" />
+          <GroupMemberList v-else-if="section === 'invited'" :key="`invited-${version}`" :group="group" state="invited" manage @changed="refresh" />
           <GroupPostList v-else-if="section === 'posts'" :group="group" view="pending" :version="version" />
           <GroupMemberList v-else-if="section === 'members'" :key="`members-${version}`" :group="group" state="active" manage @changed="refresh" />
           <GroupMemberList v-else-if="section === 'banned'" :key="`banned-${version}`" :group="group" state="banned" manage @changed="refresh" />

@@ -9,6 +9,7 @@ import { useRouter } from "vue-router";
 import GoogleSignInButton from "@/components/auth/GoogleSignInButton.vue";
 import PasswordStrength from "@/components/auth/PasswordStrength.vue";
 import AuthLayout from "@/components/brand/AuthLayout.vue";
+import ResendVerification from "@/components/auth/ResendVerification.vue";
 import { apiError } from "@/lib/api";
 import { markProfileToComplete } from "@/lib/completeProfile";
 import { errorMessage } from "@/lib/errors";
@@ -293,6 +294,7 @@ const GENDERS: Array<{ value: Exclude<RegisterPayload["gender"], "">; label: str
       <p class="rounded-xl bg-brand-50 px-3 py-3 text-sm text-brand-800 dark:bg-brand-950 dark:text-brand-100" role="status">
         {{ t("auth.verifyEmail") }}
       </p>
+      <ResendVerification :email="form.email.trim()" />
       <RouterLink to="/login" class="btn-gradient w-full py-3 text-base">{{ t("auth.loginCta") }}</RouterLink>
     </div>
 

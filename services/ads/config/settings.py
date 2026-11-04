@@ -93,7 +93,11 @@ REST_FRAMEWORK = {
     # The platform read/write limits for every endpoint; the events endpoint
     # uses its own `ad_events` scope instead (views.EventsView).
     **_throttling,
-    "DEFAULT_THROTTLE_RATES": {**_throttling["DEFAULT_THROTTLE_RATES"], "ad_events": "600/min"},
+    "DEFAULT_THROTTLE_RATES": {
+        **_throttling["DEFAULT_THROTTLE_RATES"],
+        "ad_events": "600/min",
+        "ad_slots": "120/min",
+    },
 }
 
 SPECTACULAR_SETTINGS = {

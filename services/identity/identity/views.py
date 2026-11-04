@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from django.conf import settings
+from django.db import transaction
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import status
 from rest_framework.exceptions import AuthenticationFailed
@@ -163,6 +164,7 @@ class LoginView(APIView):
         issued = services.login(
             identifier=serializer.validated_data["identifier"],
             password=serializer.validated_data["password"],
+            otp=serializer.validated_data["otp"],
             ip_region=meta["ip_region"],
             user_agent=meta["user_agent"],
             correlation_id=meta["correlation_id"],
@@ -307,7 +309,16 @@ class MeView(APIView):
         account = _get_account(request)
         serializer = AccountUpdateSerializer(account, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        serializer.save()
+        was_shown = account.show_presence
+        with transaction.atomic():
+            serializer.save()
+            if account.show_presence != was_shown:
+                # Realtime keeps the current choice from this event and trusts
+                # it over the show_presence claim of older access tokens (3C).
+                from .account_center import emit_presence_changed
+
+                correlation_id = _client_meta(request)["correlation_id"]
+                emit_presence_changed(account, correlation_id=correlation_id)
         return data_response(AccountSerializer(account).data)
 
 

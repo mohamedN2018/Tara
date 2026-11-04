@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { type Page, expect, test } from "@playwright/test";
 
-import { pageAs, sharedAccounts } from "./helpers";
+import { pageAs, sharedAccounts, useLocale } from "./helpers";
 
 // Wave 1A: the top bar's centre tabs (active underline, RTL order), the main
 // menu (categories, permissions, Create column, search, keyboard), the
@@ -64,7 +64,7 @@ test("the active tab is underlined after navigating, in Arabic, and the tabs run
 test("the active tab is underlined after navigating, in English, left to right", async ({ browser }) => {
   const { b } = await sharedAccounts();
   const page = await pageAs(browser, b);
-  await page.addInitScript(() => localStorage.setItem("tara.locale", "en"));
+  await useLocale(page, "en");
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/home");
   await expect(page.locator("html")).toHaveAttribute("dir", "ltr");
@@ -106,8 +106,8 @@ test("a plain member sees the built services by category, no admin item and no u
   for (const section of ["حسابك", "اجتماعي", "تجاري", "التواصل", "إدارة الصفحات والمجموعات", "النظام"]) {
     await expect(menu.getByRole("group", { name: section })).toBeVisible();
   }
-  // Nothing is built for these two categories yet, so they are not shown at all.
-  await expect(menu.getByRole("group", { name: "صانع المحتوى" })).toHaveCount(0);
+  // Creator studio is built now (T8), so its category shows; Professional still has nothing built.
+  await expect(menu.getByRole("group", { name: "صانع المحتوى" })).toBeVisible();
   await expect(menu.getByRole("group", { name: "احترافي" })).toHaveCount(0);
 
   // No staff entries for a member without capabilities.
@@ -115,14 +115,16 @@ test("a plain member sees the built services by category, no admin item and no u
   await expect(menu.getByRole("menuitem", { name: "مراجعة الإعلانات" })).toHaveCount(0);
   await expect(page.getByTestId("menu-item-admin")).toHaveCount(0);
   // Unbuilt modules are hidden, never shown disabled.
-  for (const name of ["الذكريات", "الريلز", "البث المباشر", "مركز المساعدة", "طلبات الرسائل"]) {
+  for (const name of ["الذكريات", "الريلز", "البث المباشر", "مركز المساعدة"]) {
     await expect(menu.getByRole("menuitem", { name })).toHaveCount(0);
   }
+  // Message requests and archived chats are real inbox folders now (T5).
+  await expect(menu.getByRole("menuitem", { name: "طلبات الرسائل" })).toHaveCount(1);
   await expect(menu.locator('[aria-disabled="true"], [disabled]')).toHaveCount(0);
 
   // The Create column offers only flows that exist.
   const create = menu.getByRole("menu", { name: "إنشاء" });
-  await expect(create.getByRole("menuitem")).toHaveText(["منشور", "صفحة", "مجموعة", "فعالية", "منتج في السوق"]);
+  await expect(create.getByRole("menuitem")).toHaveText(["منشور", "إنشاء قصة", "صفحة", "مجموعة", "فعالية", "منتج في السوق"]);
 
   // Search in the menu narrows it (Arabic spelling variants fold together).
   await page.getByTestId("main-menu-search").fill("الاعدادات");
@@ -185,10 +187,12 @@ test("arrow keys move through the main menu and the profile menu, Escape returns
   await expect(page.getByTestId("profile-menu-profile")).toBeFocused();
   await expect(menu.getByRole("menuitem", { name: "الإعدادات والخصوصية" })).toBeVisible();
   await expect(menu.getByRole("menuitem", { name: "تسجيل الخروج" })).toBeVisible();
-  // No help centre exists yet, so the entry is hidden.
-  await expect(menu.getByRole("menuitem", { name: "المساعدة والدعم" })).toHaveCount(0);
+  // Help & support opens the member's Support inbox (T7).
+  await expect(menu.getByRole("menuitem", { name: "المساعدة والدعم" })).toHaveCount(1);
   await page.keyboard.press("ArrowDown");
   await expect(page.getByTestId("profile-menu-settings")).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByTestId("profile-menu-help")).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(page.getByTestId("profile-menu-display")).toBeFocused();
   await page.keyboard.press("Enter");

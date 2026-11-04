@@ -4,17 +4,7 @@ import { readFileSync } from "node:fs";
 import AxeBuilder from "@axe-core/playwright";
 import { type Page, expect, request, test } from "@playwright/test";
 
-import {
-  type Account,
-  API,
-  PASSWORD,
-  apiAs,
-  pageAs,
-  sharedAccounts,
-  signupData,
-  unique,
-  verificationToken,
-} from "./helpers";
+import { type Account, API, apiAs, pageAs, PASSWORD, sharedAccounts, signupData, unique, useLocale, verificationToken } from "./helpers";
 
 const promote = (email: string) =>
   execSync(`docker exec tara-identity-1 python manage.py create_admin ${email}`, { stdio: "pipe" });
@@ -53,6 +43,9 @@ test("campaign to feed: review, serve token, stats, and forged events are refuse
   // An admin grants the reviewer role; it reaches Bob's token on his next login.
   const admin = await pageAs(browser, c);
   await admin.goto("/admin");
+  // Roles live in their own console section (T7).
+  await admin.getByRole("navigation", { name: "أقسام الإدارة" }).getByRole("link", { name: "الأدوار" }).click();
+  await expect(admin).toHaveURL(/\/admin\/roles$/);
   await admin.getByRole("textbox", { name: "بريد الحساب" }).fill(b.email);
   await admin.getByRole("combobox", { name: "الدور" }).selectOption("ad_reviewer");
   await admin.getByRole("button", { name: "منح الدور" }).click();
@@ -124,6 +117,8 @@ test("feature flags can be added and toggled, and only admins see the panels", a
   promote(c.email);
   const admin = await pageAs(browser, c);
   await admin.goto("/admin");
+  await admin.getByRole("navigation", { name: "أقسام الإدارة" }).getByRole("link", { name: "مفاتيح الميزات" }).click();
+  await expect(admin).toHaveURL(/\/admin\/flags$/);
   await admin.getByRole("textbox", { name: "مفتاح جديد" }).fill(key);
   await admin.getByRole("button", { name: "إضافة", exact: true }).click();
   const row = admin.getByTestId("feature-flags").locator("li", { hasText: key });
@@ -256,7 +251,7 @@ test("the monitor shows service health and platform statistics, in Arabic and En
   await expect(admin.getByRole("navigation", { name: "أقسام الإدارة" }).getByRole("link", { name: "المراقبة" })).toBeVisible();
 
   const english = await pageAs(browser, c);
-  await english.addInitScript(() => localStorage.setItem("tara.locale", "en"));
+  await useLocale(english, "en");
   await english.goto("/admin/monitor");
   await expect(english.getByRole("heading", { name: "Platform statistics" })).toBeVisible();
   await expect(english.getByTestId("platform-stats").locator('[data-metric="open_cases"]')).toContainText("Open moderation cases");
@@ -408,9 +403,9 @@ test("the users console reads in English and refuses members without the capabil
   const { b, c } = await sharedAccounts();
   promote(c.email);
   const english = await pageAs(browser, c);
-  await english.addInitScript(() => localStorage.setItem("tara.locale", "en"));
+  await useLocale(english, "en");
   await english.goto(`/admin/users?q=${encodeURIComponent(b.email)}&field=email`);
-  await expect(english.getByRole("heading", { name: "Users" })).toBeVisible();
+  await expect(english.getByRole("heading", { name: "Users", level: 1 })).toBeVisible();
   await expect(english.getByTestId("user-results").locator(`tr[data-account="${b.id}"]`)).toBeVisible();
 
   const member = await pageAs(browser, b);

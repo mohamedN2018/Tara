@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/system.notice.v1.json",
+  "title": "system.notice v1 payload",
+  "description": "Staff sent an administrative notice to some accounts (admin service). The body is staff-written text meant for the recipients.",
+  "type": "object",
+  "properties": {
+    "notice_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "recipients": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "minItems": 1,
+      "maxItems": 50
+    },
+    "body": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    }
+  },
+  "required": [
+    "notice_id",
+    "recipients",
+    "body"
+  ],
+  "additionalProperties": false
+}

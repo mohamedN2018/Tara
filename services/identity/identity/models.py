@@ -79,6 +79,16 @@ class Account(AbstractBaseUser, PermissionsMixin):
         max_length=16, choices=PersonalVisibility.choices, default=PersonalVisibility.ONLY_ME
     )
 
+    # Settings centre (plan 08 wave 3C). ``show_presence`` travels in the access
+    # token, so realtime hides the account's active status without a lookup.
+    show_presence = models.BooleanField(default=True)
+    # Email the owner when a sign-in comes from a device not seen before.
+    login_alerts = models.BooleanField(default=True)
+    # "Delete account" (3C): set with the status DEACTIVATED when the owner
+    # asks; signing in before this moment cancels it, after it the beat task
+    # erases the account and emits account.deleted.
+    deletion_scheduled_for = models.DateTimeField(null=True, blank=True)
+
     objects = AccountManager()
 
     USERNAME_FIELD = "email"
@@ -411,16 +421,38 @@ class SecurityEvent(models.Model):
 
 
 class TwoFactorSecret(models.Model):
-    """2FA scaffolding (TOTP). Present now; enabled in a later phase."""
+    """The account's TOTP secret (RFC 6238), encrypted at rest (see two_factor.py).
+
+    Two-factor sign-in is on once ``confirmed_at`` is set: the owner proved the
+    authenticator app holds the secret. ``last_used_step`` is the newest time
+    step accepted, so one code can never be used twice.
+    """
 
     account = models.OneToOneField(Account, on_delete=models.CASCADE, primary_key=True)
     type = models.CharField(max_length=16, default="totp")
     secret_enc = models.BinaryField()
     confirmed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    last_used_step = models.BigIntegerField(null=True, blank=True)
 
     class Meta:
         db_table = "two_factor_secret"
+
+
+class TwoFactorRecoveryCode(models.Model):
+    """One single-use recovery code. Only its SHA-256 hash is stored."""
+
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    account = models.ForeignKey(
+        Account, on_delete=models.CASCADE, related_name="two_factor_recovery_codes"
+    )
+    code_hash = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "two_factor_recovery_code"
+        indexes = [models.Index(fields=["account", "used_at"], name="recovery_account_idx")]
 
 
 # ---- Platform tables this service owns (concrete subclasses of shared kernel) ----

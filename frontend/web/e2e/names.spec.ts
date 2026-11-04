@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { API, apiAs, expectNoUuid, pageAs, sharedAccounts, unique } from "./helpers";
+import { API, apiAs, expectNoUuid, pageAs, sharedAccounts, unique, useLocale } from "./helpers";
 
 test("people show as names everywhere, never ids", async ({ browser }) => {
   const { a, b } = await sharedAccounts();
@@ -137,18 +137,27 @@ test("a moderation action that fails leaves the case in the queue", async ({ bro
     return route.fulfill({ json: { data: [] } });
   });
 
+  // The queue lives in the console's Moderation section (T7).
   await page.goto("/admin");
-  const row = page.getByRole("listitem").filter({ hasText: "منشور · 3 بلاغات · مفتوحة" });
-  await expect(row).toBeVisible();
-  await expect(page.getByText("أداء منخفض")).toBeVisible();
-  await row.getByRole("button", { name: "إزالة" }).click();
+  await page.getByRole("navigation", { name: "أقسام الإدارة" }).getByRole("link", { name: "الإشراف" }).click();
+  await expect(page).toHaveURL(/\/admin\/moderation/);
+  const row = page.getByTestId("mod-case").filter({ hasText: "منشور" });
+  await expect(row).toContainText("3 بلاغات");
+  await expect(row).toContainText("مفتوحة");
+  await row.getByRole("button", { name: "اتخاذ قرار" }).click();
+  const decision = page.getByTestId("case-decision-dialog");
+  await decision.getByRole("radio", { name: /إزالة/ }).check();
+  await decision.getByTestId("decision-confirm").click();
   await expect(page.getByRole("status").filter({ hasText: "هذه الخدمة غير متاحة مؤقتًا" })).toBeVisible();
+  await decision.getByRole("button", { name: "إلغاء" }).click();
   await expect(row).toBeVisible();
 
   // An appeal whose resolution fails stays open, too.
-  const appeal = page.getByTestId("appeals").getByRole("listitem").filter({ hasText: "طعن تجريبي" });
+  await page.getByRole("tab", { name: "طلبات المراجعة" }).click();
+  const appeal = page.getByTestId("mod-appeal").filter({ hasText: "طعن تجريبي" });
   await expect(appeal).toContainText("تعليق");
   await appeal.getByRole("button", { name: "إلغاء القرار" }).click();
+  await page.getByTestId("overturn-confirm").getByRole("button", { name: "إلغاء القرار" }).click();
   await expect(page.getByRole("status").filter({ hasText: "هذه الخدمة غير متاحة مؤقتًا" }).last()).toBeVisible();
   await expect(appeal).toBeVisible();
 });
@@ -176,7 +185,7 @@ test("modals are dialogs that trap focus, and Escape gives it back", async ({ br
 test("English works too: LTR, translated, singular and plural", async ({ browser }) => {
   const { a } = await sharedAccounts();
   const page = await pageAs(browser, a);
-  await page.addInitScript(() => localStorage.setItem("tara.locale", "en"));
+  await useLocale(page, "en");
   await page.goto("/home");
   await expect(page.locator("html")).toHaveAttribute("dir", "ltr");
   await expect(page.locator("html")).toHaveAttribute("lang", "en");

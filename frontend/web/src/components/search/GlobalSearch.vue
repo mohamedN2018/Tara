@@ -6,6 +6,7 @@ import { useRoute, useRouter } from "vue-router";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import { groupSuggestions, nextActive } from "@/lib/search";
+import { entityRoute } from "@/lib/searchRoutes";
 import {
   type RecentSearch,
   type SearchResult,
@@ -19,7 +20,11 @@ const route = useRoute();
 const router = useRouter();
 const directory = useDirectoryStore();
 
-const LISTBOX_ID = "global-search-listbox";
+// The top bar's instance keeps the "gs" ids; another one (the phone's search
+// screen) passes its own prefix so ids stay unique on the page.
+const props = withDefaults(defineProps<{ idPrefix?: string }>(), { idPrefix: "gs" });
+const LISTBOX_ID = props.idPrefix === "gs" ? "global-search-listbox" : `${props.idPrefix}-listbox`;
+const labelId = (sectionId: string) => (props.idPrefix === "gs" ? `${sectionId}-label` : `${props.idPrefix}-${sectionId}-label`);
 const DEBOUNCE_MS = 220;
 
 const input = ref<HTMLInputElement | null>(null);
@@ -74,7 +79,7 @@ const sections = computed<Section[]>(() => {
 
 const rows = computed(() => sections.value.flatMap((s) => s.rows));
 const indexOf = (row: Row) => rows.value.indexOf(row);
-const optionId = (i: number) => `gs-option-${i}`;
+const optionId = (i: number) => `${props.idPrefix}-option-${i}`;
 const activeId = computed(() => (open.value && active.value >= 0 ? optionId(active.value) : undefined));
 
 watch(rows, () => (active.value = -1));
@@ -150,11 +155,8 @@ function go(term: string) {
 
 function openEntity(type: string, id: string, title: string, handle?: string) {
   close();
-  if (type === "user") router.push({ name: "profile-by-id", params: { id } });
-  else if (type === "page" && handle) router.push({ name: "page", params: { handle } });
-  else if (type === "group") router.push(`/groups/${encodeURIComponent(handle || id)}`);
-  else if (type === "hashtag") router.push({ name: "search", query: { q: title.startsWith("#") ? title : `#${title}` } });
-  else router.push({ name: "search", query: { q: title, type: type === "page" ? "pages" : type === "group" ? "groups" : undefined } });
+  // Listings and events open their own page (shared with the search page's recents).
+  router.push(entityRoute(type, id, title, handle));
 }
 
 function activate(row: Row) {
@@ -287,12 +289,12 @@ function recentTitle(r: RecentSearch): string {
             v-for="section in sections"
             :key="section.id"
             :role="section.label ? 'group' : 'presentation'"
-            :aria-labelledby="section.label && section.id !== 'gs-recent' ? `${section.id}-label` : undefined"
+            :aria-labelledby="section.label && section.id !== 'gs-recent' ? labelId(section.id) : undefined"
             :aria-label="section.id === 'gs-recent' ? section.label : undefined"
           >
             <div
               v-if="section.label && section.id !== 'gs-recent'"
-              :id="`${section.id}-label`"
+              :id="labelId(section.id)"
               class="px-3 pb-1 pt-2 text-xs font-bold text-gray-500 dark:text-gray-400"
             >
               {{ section.label }}
@@ -320,7 +322,7 @@ function recentTitle(r: RecentSearch): string {
                 <span v-else class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-300">
                   <Clock class="h-4 w-4" aria-hidden="true" />
                 </span>
-                <span class="min-w-0 flex-1 truncate font-medium" dir="auto">{{ recentTitle(row.item) }}</span>
+                <span class="min-w-0 flex-1 truncate font-medium text-start"><bdi>{{ recentTitle(row.item) }}</bdi></span>
                 <span
                   aria-hidden="true"
                   class="rounded-full p-1 text-gray-400 hover:bg-gray-200 hover:text-gray-700 dark:hover:bg-gray-700 dark:hover:text-gray-100"
@@ -337,7 +339,7 @@ function recentTitle(r: RecentSearch): string {
                 <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-50 text-accent-600 dark:bg-accent-900/30 dark:text-accent-300">
                   <TrendingUp class="h-4 w-4" aria-hidden="true" />
                 </span>
-                <span class="min-w-0 flex-1 truncate font-medium" dir="auto">#{{ row.tag.tag }}</span>
+                <span class="min-w-0 flex-1 truncate font-medium text-start"><bdi>#{{ row.tag.tag }}</bdi></span>
               </template>
 
               <!-- live suggestion -->
@@ -353,8 +355,8 @@ function recentTitle(r: RecentSearch): string {
                   <UsersRound v-else class="h-4 w-4" aria-hidden="true" />
                 </span>
                 <span class="min-w-0 flex-1">
-                  <span class="block truncate font-semibold" dir="auto">{{ row.item.title }}</span>
-                  <span v-if="subtitle(row.item)" class="block truncate text-xs text-gray-500 dark:text-gray-400" dir="auto">{{ subtitle(row.item) }}</span>
+                  <span class="block truncate font-semibold text-start"><bdi>{{ row.item.title }}</bdi></span>
+                  <span v-if="subtitle(row.item)" class="block truncate text-xs text-gray-500 dark:text-gray-400 text-start"><bdi>{{ subtitle(row.item) }}</bdi></span>
                 </span>
               </template>
 

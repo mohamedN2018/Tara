@@ -127,3 +127,25 @@ def test_internal_relationship_requires_token_and_reports_flags(client_for):
     resp = anon.get(reverse("relationship"), {"a": a, "b": b})
     assert resp.status_code == 200
     assert resp.json()["data"]["are_friends"] is True
+
+
+def test_internal_relationship_reports_mutual_friends_only_when_asked():
+    """Chat's "friends of friends may message me" (spec B) asks with ?mutual=1."""
+    from rest_framework.test import APIClient
+
+    a, b, shared = _acct(), _acct(), _acct()
+    for x in (a, b):
+        services.send_friend_request(x, shared)
+        fid = Friendship.objects.filter(status=Friendship.Status.PENDING).get().id
+        services.accept_friend_request(shared, str(fid))
+
+    client = APIClient()
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {_internal_token()}")
+    plain = client.get(reverse("relationship"), {"a": a, "b": b}).json()["data"]
+    assert "has_mutual_friends" not in plain
+    asked = client.get(reverse("relationship"), {"a": a, "b": b, "mutual": "1"}).json()["data"]
+    assert asked["are_friends"] is False
+    assert asked["has_mutual_friends"] is True
+    stranger = _acct()
+    other = client.get(reverse("relationship"), {"a": a, "b": stranger, "mutual": "1"}).json()
+    assert other["data"]["has_mutual_friends"] is False

@@ -10,11 +10,11 @@ import type { CursorPage, Message } from "@/types";
 // Message search. With `conversationId` it searches one conversation,
 // otherwise every conversation the viewer belongs to. Matching is done on the
 // server (Arabic-normalised, so "احمد" finds "أحمد").
-const props = defineProps<{ conversationId?: string; nameOf: (id: string) => string }>();
+const props = defineProps<{ conversationId?: string; nameOf: (id: string) => string; initialQuery?: string }>();
 const emit = defineEmits<{ open: [message: Message] }>();
 const { t } = useI18n();
 
-const query = ref("");
+const query = ref(props.initialQuery ?? "");
 const results = ref<Message[]>([]);
 const next = ref<string | null>(null);
 const loading = ref(false);
@@ -59,6 +59,8 @@ watch(
   () => props.conversationId,
   () => void run(),
 );
+// Opened with a query (the top bar's "Search Messenger"): search right away.
+if (query.value.trim()) void run();
 onBeforeUnmount(() => {
   if (timer) window.clearTimeout(timer);
 });

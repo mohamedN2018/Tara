@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { ChevronLeft, ChevronRight, X } from "lucide-vue-next";
+import { ChevronLeft, ChevronRight, Download, X } from "lucide-vue-next";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
+import { downloadMedia } from "@/lib/downloadMedia";
 import { type Direction, keyToDelta, pageDirection, stepIndex, swipeToDelta } from "@/lib/mediaViewer";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import { useFocusTrap } from "@/lib/useFocusTrap";
 import { useMediaList } from "@/lib/useMediaList";
+import { useToastStore } from "@/stores/toasts";
 
 // Full-screen photo viewer (QTech's "theater", rewritten): the parent keeps the
 // open index in the URL; this component only shows it and asks to move.
@@ -15,6 +17,22 @@ const emit = defineEmits<{ go: [index: number]; close: [] }>();
 const { t } = useI18n();
 
 const urls = useMediaList(() => props.mediaIds);
+const toasts = useToastStore();
+
+// Download the photo on screen through its signed URL (media decides who may).
+const downloading = ref(false);
+async function download() {
+  const id = props.mediaIds[props.index];
+  if (!id || downloading.value) return;
+  downloading.value = true;
+  try {
+    await downloadMedia(id);
+  } catch {
+    toasts.push({ text: t("postsFeed.media.downloadFailed"), icon: "error" });
+  } finally {
+    downloading.value = false;
+  }
+}
 const total = computed(() => props.mediaIds.length);
 const many = computed(() => total.value > 1);
 const dir = ref<Direction>(pageDirection());
@@ -102,6 +120,15 @@ const alt = (i: number) => t("post.imageAlt", { n: i + 1, name: props.authorName
           class="rounded-full bg-black/50 px-3 py-1 text-sm font-semibold tabular-nums"
           aria-live="polite"
         >{{ t("post.viewer.counter", { n: index + 1, total }) }}</span>
+        <button
+          type="button"
+          class="ms-auto inline-flex h-11 items-center gap-2 rounded-full bg-white/15 px-4 text-sm font-semibold transition hover:bg-white/25 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-300 disabled:opacity-60"
+          :disabled="downloading"
+          data-testid="theater-download"
+          @click="download"
+        >
+          <Download class="h-5 w-5" aria-hidden="true" /> {{ t("postsFeed.media.download") }}
+        </button>
       </div>
 
       <div

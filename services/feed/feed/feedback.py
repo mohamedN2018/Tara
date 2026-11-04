@@ -18,7 +18,7 @@ from django.utils import timezone
 from tara_common.exceptions import TaraAPIError
 
 from . import readmodels, tasks
-from .models import AuthorSnooze, FeedItem, PostHide
+from .models import AuthorSnooze, FeedItem, PostHide, PostState
 
 SNOOZE_DAYS = 30
 FLAG_REASONS = frozenset({PostHide.Reason.SPAM, PostHide.Reason.SEXUAL})
@@ -40,8 +40,8 @@ def hide_post(viewer_id, post_id, reason: str) -> PostHide:
     404, so the endpoint tells nobody whether a post exists.
     """
     item = FeedItem.objects.filter(recipient_id=viewer_id, post_id=post_id).first()
-    if item is None:
-        raise _not_found()
+    if item is None or PostState.objects.filter(post_id=post_id, hidden=True).exists():
+        raise _not_found()  # a deactivated author's post is hidden: as if absent
     mine = PostHide.objects.select_for_update().filter(account_id=viewer_id, post_id=post_id)
     with transaction.atomic():
         hide = mine.first()

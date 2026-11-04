@@ -8,8 +8,11 @@ import UserAvatar from "@/components/common/UserAvatar.vue";
 import AppShell from "@/components/layout/AppShell.vue";
 import { menuSections } from "@/components/layout/menuCatalog";
 import { cachedShortcuts, type Shortcut } from "@/components/layout/shortcuts";
+import { badgeText } from "@/lib/chat";
 import { legalPath } from "@/lib/legal";
 import { useAuthStore } from "@/stores/auth";
+import { useChatUnreadStore } from "@/stores/chatUnread";
+import { useNotificationStore } from "@/stores/notifications";
 
 /**
  * `/menu`: the mobile menu (the bottom bar's fifth tab). The categorised main
@@ -25,6 +28,16 @@ const profileTo = computed<RouteLocationRaw>(() => {
   return "/settings";
 });
 const sections = computed(() => menuSections(auth.capabilities, "personal", { profile: profileTo.value }));
+
+// Phones have no Messenger button in the bottom bar: the tiles carry the counts.
+const chatUnread = useChatUnreadStore();
+const notifications = useNotificationStore();
+function badgeFor(id: string): number {
+  if (id === "messenger") return chatUnread.conversations;
+  if (id === "messageRequests") return chatUnread.requests;
+  if (id === "notifications") return notifications.unread;
+  return 0;
+}
 
 const shortcuts = ref<Shortcut[]>([]);
 onMounted(async () => {
@@ -85,8 +98,11 @@ async function logout() {
               class="card flex h-full min-w-0 flex-col gap-2 p-3 transition hover:border-brand-200 dark:hover:border-brand-900"
               :data-testid="`menu-item-${item.id}`"
             >
-              <span class="flex h-9 w-9 items-center justify-center rounded-full bg-brand-50 text-brand-600 dark:bg-brand-950/60 dark:text-brand-300">
-                <component :is="item.icon" class="h-5 w-5" aria-hidden="true" />
+              <span class="flex items-center justify-between gap-2">
+                <span class="flex h-9 w-9 items-center justify-center rounded-full bg-brand-50 text-brand-600 dark:bg-brand-950/60 dark:text-brand-300">
+                  <component :is="item.icon" class="h-5 w-5" aria-hidden="true" />
+                </span>
+                <span v-if="badgeFor(item.id) > 0" class="badge" :data-testid="`menu-badge-${item.id}`">{{ badgeText(badgeFor(item.id)) }}</span>
               </span>
               <span class="break-words text-sm font-semibold">{{ t(item.labelKey) }}</span>
             </RouterLink>

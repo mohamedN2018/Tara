@@ -14,16 +14,17 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Exists, F, OuterRef, Prefetch, Q
-from django.db.models.functions import Coalesce, Greatest
+from django.db.models import Exists, F, OuterRef, Prefetch, Q, Subquery
+from django.db.models.functions import Coalesce, Greatest, JSONObject, Left
 from django.utils import timezone
 
 from tara_common.exceptions import Conflict, TaraAPIError
 
-from . import events, media_client, text
+from . import events, graph_client, media_client, profile_client, text
 from .models import (
     MESSAGE_REACTION_TYPES,
     BlockedPair,
+    ChatSettings,
     Conversation,
     ConversationMember,
     Message,
@@ -31,6 +32,7 @@ from .models import (
     MessageEdit,
     MessageHidden,
     MessageReaction,
+    MessageReport,
     PinnedMessage,
 )
 
@@ -48,6 +50,26 @@ ATTACHMENT_MEDIA_KINDS = {
     "audio": {"audio"},
     "voice": {"voice", "audio"},
 }
+# Inbox folders (plan 08 3D): message requests and the spam folder live apart.
+FOLDERS = ("inbox", "archived", "requests", "spam")
+REQUEST_STATES = (ConversationMember.Request.PENDING, ConversationMember.Request.SPAM)
+# The same reason enum as the other `*.reported` events.
+REPORT_REASONS = (
+    "spam",
+    "scam",
+    "hate",
+    "violence",
+    "nudity",
+    "harassment",
+    "false_information",
+    "other",
+)
+# Page and support conversations (team inboxes). A support reply is sent as
+# "Tara Support": this fixed id, never a real account, is its ``sender_id``.
+SUPPORT_SENDER_ID = uuid.UUID("018f0000-0000-7000-8000-00000000c0de")
+TEAM_TYPES = ("page", "support")
+#: Staff who answer support conversations: the moderation team.
+SUPPORT_CAPABILITY = "moderation.case.view"
 # Shared-media panel filters -> attachment kinds.
 MEDIA_PANEL_KINDS = {
     "image": ["image"],
@@ -119,9 +141,10 @@ def _find_pair(key: str) -> Conversation | None:
     return Conversation.objects.filter(dm_key=key).first()
 
 
-def _get_or_create_pair(key: str, a: str, b: str, **fields) -> Conversation:
+def _get_or_create_pair(key: str, a: str, b: str, *, b_request: str = "", **fields) -> Conversation:
     """The two-member conversation with this ``dm_key``, created at most once:
-    a concurrent request that loses the unique-key race gets the winner's row."""
+    a concurrent request that loses the unique-key race gets the winner's row.
+    ``b_request`` is the recipient's request state on a new thread."""
     existing = _find_pair(key)
     if existing:
         return existing
@@ -131,7 +154,9 @@ def _get_or_create_pair(key: str, a: str, b: str, **fields) -> Conversation:
             ConversationMember.objects.bulk_create(
                 [
                     ConversationMember(conversation=conversation, account_id=a),
-                    ConversationMember(conversation=conversation, account_id=b),
+                    ConversationMember(
+                        conversation=conversation, account_id=b, request_status=b_request
+                    ),
                 ]
             )
     except IntegrityError:
@@ -144,30 +169,314 @@ def create_or_get_dm(actor_id: str, other_id: str) -> Conversation:
         raise TaraAPIError("Cannot DM yourself.", code="validation_error", http_status_code=400)
     if is_blocked(actor_id, other_id):
         raise TaraAPIError("Action not allowed.", code="permission_denied", http_status_code=403)
+    key = _dm_key(actor_id, other_id)
+    existing = _find_pair(key)
+    if existing:
+        return existing
+    request = first_contact_state(actor_id, other_id)
     return _get_or_create_pair(
-        _dm_key(actor_id, other_id), actor_id, other_id, type=Conversation.Type.DM
+        key, actor_id, other_id, b_request=request, type=Conversation.Type.DM
     )
 
 
+# ---- who can message me (spec B) ---------------------------------------------
+
+
+def message_setting(account_id: str) -> str:
+    row = ChatSettings.objects.filter(account_id=account_id).values_list("message_from", flat=True)
+    return row.first() or ChatSettings.MessageFrom.EVERYONE
+
+
+def set_message_setting(account_id: str, value: str) -> str:
+    if value not in ChatSettings.MessageFrom.values:
+        raise _invalid("Unknown setting.")
+    ChatSettings.objects.update_or_create(account_id=account_id, defaults={"message_from": value})
+    return value
+
+
+def _restricted() -> TaraAPIError:
+    return TaraAPIError(
+        "This person isn't accepting messages from you.",
+        code="messaging_restricted",
+        http_status_code=403,
+    )
+
+
+def _graph_unavailable() -> TaraAPIError:
+    return TaraAPIError(
+        "Can't check who may message this person right now; try again.",
+        code="dependency_unavailable",
+        http_status_code=503,
+    )
+
+
+def first_contact_state(actor_id: str, other_id: str) -> str:
+    """Where a new DM from ``actor_id`` lands for ``other_id``: the inbox
+    (``""``), message requests (``pending``), or nowhere (403).
+
+    Friends always reach the inbox. Otherwise the recipient's "who can message
+    me" setting decides: ``everyone`` sends the stranger to requests;
+    ``friends_of_friends`` sends someone with a mutual friend to requests and
+    refuses the rest; ``friends`` refuses everyone else. When graph cannot
+    answer, ``everyone`` still means "requests" (the safe side), while a
+    restricted setting answers 503 rather than guessing either way.
+    """
+    setting = message_setting(other_id)
+    everyone = setting == ChatSettings.MessageFrom.EVERYONE
+    if everyone and not settings.CHAT_MESSAGE_REQUESTS:
+        return ""  # requests off: everyone reaches the inbox, no graph call
+    friends = graph_client.are_friends(actor_id, other_id)
+    if friends is True:
+        return ""
+    pending = ConversationMember.Request.PENDING if settings.CHAT_MESSAGE_REQUESTS else ""
+    if everyone:
+        return pending
+    if friends is None:
+        raise _graph_unavailable()
+    if setting == ChatSettings.MessageFrom.FRIENDS_OF_FRIENDS:
+        mutual = graph_client.have_mutual_friends(actor_id, other_id)
+        if mutual is None:
+            raise _graph_unavailable()
+        if mutual:
+            return pending
+    raise _restricted()
+
+
+# ---- page and support conversations (team inboxes) --------------------------
+
+
+def _get_or_create_solo(key: str, account_id: str, **fields) -> tuple[Conversation, bool]:
+    """A conversation with one member: the person who wrote to a team."""
+    existing = _find_pair(key)
+    if existing:
+        return existing, False
+    try:
+        with transaction.atomic():
+            conversation = Conversation.objects.create(dm_key=key, created_by=account_id, **fields)
+            ConversationMember.objects.create(conversation=conversation, account_id=account_id)
+    except IntegrityError:
+        return Conversation.objects.get(dm_key=key), False
+    return conversation, True
+
+
+def open_page_conversation(actor_id: str, page_id: str) -> Conversation:
+    """Write to a Page: one thread per member and page, answered by its team.
+
+    404 for a page that does not exist or that the caller may not see (a draft
+    or suspended page); 400 for the page's own team, whose page inbox it is.
+    """
+    access = profile_client.page_access(page_id, actor_id)
+    if access is None:
+        raise _not_found("Page")
+    if access.get("role"):
+        raise _invalid("You manage this page: its messages are in the page's inbox.")
+    if access.get("status") != "published":
+        raise _not_found("Page")
+    name = (access.get("name") or "")[:160]
+    conversation, created = _get_or_create_solo(
+        f"page:{page_id}:{actor_id}",
+        actor_id,
+        type=Conversation.Type.PAGE,
+        page_id=page_id,
+        title=name,
+    )
+    if not created and name and conversation.title != name:  # the page was renamed
+        Conversation.objects.filter(id=conversation.id).update(title=name)
+    return conversation
+
+
+def open_support_conversation(actor_id: str) -> Conversation:
+    """Contact support: one thread per member, answered by the moderation team."""
+    conversation, _ = _get_or_create_solo(
+        f"support:{actor_id}", actor_id, type=Conversation.Type.SUPPORT
+    )
+    return conversation
+
+
+def _require_page_team(actor_id: str, page_id: str) -> dict:
+    access = profile_client.page_access(page_id, actor_id)
+    if not profile_client.can_answer(access):
+        raise _not_found("Page")  # not on the team: the inbox does not exist
+    return access
+
+
+def _require_support_team(capabilities) -> None:
+    if SUPPORT_CAPABILITY not in set(capabilities or ()):
+        raise _not_found("Conversation")
+
+
+def team_conversations(actor_id: str, capabilities, *, page_id: str | None = None):
+    """A page's inbox (``page_id``, for its team) or the support inbox (staff).
+    Only threads with a message; newest activity first."""
+    if page_id:
+        _require_page_team(actor_id, page_id)
+        qs = Conversation.objects.filter(type=Conversation.Type.PAGE, page_id=page_id)
+    else:
+        _require_support_team(capabilities)
+        qs = Conversation.objects.filter(type=Conversation.Type.SUPPORT)
+    newest = (
+        Message.objects.filter(conversation_id=OuterRef("pk"), moderation_removed_at__isnull=True)
+        .order_by("-created_at", "-id")
+        .values(
+            preview=JSONObject(
+                id="id",
+                sender_id="sender_id",
+                type="type",
+                body=Left("body", 120),
+                deleted_at="deleted_at",
+                created_at="created_at",
+            )
+        )[:1]
+    )
+    return (
+        qs.filter(last_message_at__isnull=False)
+        .annotate(last_message_preview=Subquery(newest))
+        .prefetch_related(
+            Prefetch(
+                "members",
+                queryset=ConversationMember.objects.order_by("joined_at"),
+                to_attr="all_members",
+            )
+        )
+        .order_by("-last_message_at", "-id")
+    )
+
+
+def team_unread(actor_id: str, capabilities, *, page_id: str | None = None) -> dict:
+    """The team inbox's badge: threads with messages the team has not read."""
+    if page_id:
+        _require_page_team(actor_id, page_id)
+        qs = Conversation.objects.filter(type=Conversation.Type.PAGE, page_id=page_id)
+    else:
+        _require_support_team(capabilities)
+        qs = Conversation.objects.filter(type=Conversation.Type.SUPPORT)
+    count = qs.filter(last_message_at__isnull=False, last_seq__gt=F("team_read_seq")).count()
+    return {"conversations": count}
+
+
+def require_team(actor_id: str, capabilities, conversation_id: str) -> Conversation:
+    """The team's view of one page or support conversation, or 404."""
+    conversation = Conversation.objects.filter(id=conversation_id, type__in=TEAM_TYPES).first()
+    if conversation is None:
+        raise _not_found("Conversation")
+    if conversation.type == Conversation.Type.PAGE:
+        _require_page_team(actor_id, str(conversation.page_id))
+    else:
+        _require_support_team(capabilities)
+    return conversation
+
+
+def team_messages(actor_id: str, capabilities, conversation_id: str):
+    conversation = require_team(actor_id, capabilities, conversation_id)
+    return (
+        Message.objects.filter(conversation=conversation, moderation_removed_at__isnull=True)
+        .select_related("reply_to")
+        .prefetch_related("attachments", "reactions")
+        .order_by("-created_at", "-id")
+    )
+
+
+def team_mark_read(actor_id: str, capabilities, conversation_id: str) -> None:
+    conversation = require_team(actor_id, capabilities, conversation_id)
+    Conversation.objects.filter(id=conversation.id, team_read_seq__lt=F("last_seq")).update(
+        team_read_seq=F("last_seq")
+    )
+
+
+def team_reply(actor_id: str, capabilities, conversation_id: str, body: str) -> Message:
+    """The team answers as the Page (or as Tara Support); ``author_id`` keeps
+    who wrote it, for the team only."""
+    conversation = require_team(actor_id, capabilities, conversation_id)
+    body = body.strip()
+    if not body:
+        raise _invalid("Message is empty.")
+    if not conversation.members.filter(left_at__isnull=True).exists():
+        raise _invalid("This person has left the conversation.")
+    sender = (
+        conversation.page_id if conversation.type == Conversation.Type.PAGE else SUPPORT_SENDER_ID
+    )
+    message = _record_message(
+        str(conversation.id),
+        str(sender),
+        body=body,
+        message_type=Message.Type.TEXT,
+        team_author=str(actor_id),
+    )
+    # Answering reads the thread for the whole team.
+    Conversation.objects.filter(id=conversation.id).update(team_read_seq=F("last_seq"))
+    return message
+
+
+def _listing_snapshot(title: str | None, cover_media_id: str | None) -> dict:
+    return {
+        "listing_title": (title or "")[:160],
+        "listing_cover_media_id": cover_media_id or None,
+    }
+
+
 def create_marketplace_conversation(
-    buyer_id: str, seller_id: str, listing_id: str
+    buyer_id: str,
+    seller_id: str,
+    listing_id: str,
+    *,
+    title: str | None = None,
+    cover_media_id: str | None = None,
 ) -> Conversation | None:
     """Create (idempotently) a buyer↔seller conversation for a listing.
 
     Driven by the `marketplace.contact.requested` event (doc 01 §2.10). Keyed so
-    repeated contact requests reuse the same thread.
+    repeated contact requests reuse the same thread. The listing's title and
+    cover (when the event carries them) are kept on the thread for its row.
     """
     if is_blocked(buyer_id, seller_id):
         raise TaraAPIError("Action not allowed.", code="permission_denied", http_status_code=403)
     if str(buyer_id) == str(seller_id):
         return None  # nothing to do
-    return _get_or_create_pair(
+    snapshot = _listing_snapshot(title, cover_media_id) if title else {}
+    conversation = _get_or_create_pair(
         f"mkt:{listing_id}:{buyer_id}:{seller_id}",
         buyer_id,
         seller_id,
         type=Conversation.Type.MARKETPLACE,
         listing_id=listing_id,
+        **snapshot,
     )
+    if snapshot and any(getattr(conversation, k) != v for k, v in snapshot.items()):
+        Conversation.objects.filter(id=conversation.id).update(**snapshot)
+        for k, v in snapshot.items():
+            setattr(conversation, k, v)
+    return conversation
+
+
+#: A listing in these states shows no photo on its threads (moderators removed
+#: it, or review rejected it); the title stays, both sides already saw it.
+_LISTING_HIDDEN_STATUSES = frozenset({"removed", "rejected"})
+
+
+def refresh_listing_snapshot(
+    listing_id: str, *, title: str | None, cover_media_id: str | None, status: str | None
+) -> int:
+    """A listing changed (``listing.updated`` / ``listing.status.changed``):
+    its threads show the new title and cover. Idempotent; returns rows changed."""
+    if not title:
+        return 0  # an older event without the searchable state
+    if status in _LISTING_HIDDEN_STATUSES:
+        cover_media_id = None
+    return Conversation.objects.filter(
+        type=Conversation.Type.MARKETPLACE, listing_id=listing_id
+    ).update(**_listing_snapshot(title, cover_media_id))
+
+
+def _group_request_states(actor_id: str, account_ids) -> dict[str, str]:
+    """Each account's request state when ``actor_id`` puts them in a group.
+
+    The same "who can message me" rule as a first DM (spec B), so a group is
+    no way around it: a friend joins the group in their inbox, a stranger sees
+    it in message requests, and an account that refuses the actor makes the
+    whole call fail with 403 ``messaging_restricted`` (503 when graph cannot
+    answer for a restricted setting). Asked before any row lock is taken.
+    """
+    return {str(a): first_contact_state(actor_id, a) for a in account_ids}
 
 
 def create_group(actor_id: str, member_account_ids: list[str], title: str = "") -> Conversation:
@@ -182,6 +491,7 @@ def create_group(actor_id: str, member_account_ids: list[str], title: str = "") 
         raise _invalid("This group is full.")
     if _blocked_with_any(actor_id, others):
         raise TaraAPIError("Action not allowed.", code="permission_denied", http_status_code=403)
+    requests = _group_request_states(actor_id, others)
     with transaction.atomic():
         conversation = Conversation.objects.create(
             type=Conversation.Type.GROUP, created_by=actor_id, title=title
@@ -191,7 +501,12 @@ def create_group(actor_id: str, member_account_ids: list[str], title: str = "") 
             members.setdefault(mid, ConversationMember.Role.MEMBER)
         ConversationMember.objects.bulk_create(
             [
-                ConversationMember(conversation=conversation, account_id=mid, role=role)
+                ConversationMember(
+                    conversation=conversation,
+                    account_id=mid,
+                    role=role,
+                    request_status=requests.get(mid, ""),
+                )
                 for mid, role in members.items()
             ]
         )
@@ -264,6 +579,12 @@ def _lock_conversation(conversation_id: str) -> None:
 
 
 def add_members(actor_id: str, conversation_id: str, account_ids: list[str]) -> None:
+    # Graph is asked outside the lock, for everyone not yet in the group.
+    group = _require_group_admin(actor_id, conversation_id).conversation
+    wanted = {str(a) for a in account_ids} - set(member_ids(group)) - {str(actor_id)}
+    if _blocked_with_any(actor_id, wanted):
+        raise _denied()
+    requests = _group_request_states(actor_id, wanted)
     with transaction.atomic():
         _lock_conversation(conversation_id)
         member = _require_group_admin(actor_id, conversation_id)
@@ -274,6 +595,8 @@ def add_members(actor_id: str, conversation_id: str, account_ids: list[str]) -> 
             raise _denied()
         if len(current) + len(new_ids) > MAX_GROUP_MEMBERS:
             raise _invalid("This group is full.")
+        for account in new_ids - set(requests):  # named in a race with a leave
+            requests[account] = first_contact_state(actor_id, account)
         now = timezone.now()
         for account in new_ids:
             # Someone who left comes back as an ordinary member, on the same row.
@@ -284,6 +607,7 @@ def add_members(actor_id: str, conversation_id: str, account_ids: list[str]) -> 
                 defaults={
                     "left_at": None,
                     "role": ConversationMember.Role.MEMBER,
+                    "request_status": requests[account],
                     "joined_at": now,
                     "cleared_at": None,
                     "archived_at": None,
@@ -335,10 +659,34 @@ def set_member_role(actor_id: str, conversation_id: str, account_id: str, role: 
         _emit_changed(conversation, actor_id, "role_changed")
 
 
+def _last_message(viewer_id: str):
+    """The newest message the viewer can see in the outer conversation, as a
+    small JSON object (the inbox row preview). Same rules as ``visible_messages``."""
+    hidden = MessageHidden.objects.filter(message=OuterRef("pk"), account_id=viewer_id)
+    newest = (
+        Message.objects.filter(conversation_id=OuterRef("pk"), moderation_removed_at__isnull=True)
+        .filter(Exists(_saw_it(viewer_id)), ~Exists(hidden))
+        .order_by("-created_at", "-id")
+        .values(
+            preview=JSONObject(
+                id="id",
+                sender_id="sender_id",
+                type="type",
+                body=Left("body", 120),
+                deleted_at="deleted_at",
+                created_at="created_at",
+            )
+        )[:1]
+    )
+    return Subquery(newest)
+
+
 def with_state(queryset, viewer_id: str):
     """Load members and pins up front; the serializer reads these attributes.
-    Each pin says whether the viewer hid its message (``hidden_by_viewer``)."""
+    Each pin says whether the viewer hid its message (``hidden_by_viewer``),
+    and ``last_message_preview`` is the row preview."""
     hidden = MessageHidden.objects.filter(message=OuterRef("message_id"), account_id=viewer_id)
+    queryset = queryset.annotate(last_message_preview=_last_message(viewer_id))
     return queryset.prefetch_related(
         Prefetch(
             "members",
@@ -363,13 +711,55 @@ def get_conversation(account_id: str, conversation_id: str) -> Conversation:
     return with_state(Conversation.objects.filter(id=conversation_id), account_id).get()
 
 
-def list_conversations(account_id: str, *, archived: bool = False):
-    """The inbox (or the archived folder), most recent activity first. A thread
-    with no messages yet sorts by creation time: the cursor position cannot be null.
+def list_conversations(
+    account_id: str,
+    *,
+    archived: bool = False,
+    folder: str | None = None,
+    kind: str | None = None,
+    unread: bool = False,
+    listing_id: str | None = None,
+    with_id: str | None = None,
+):
+    """One folder, most recent activity first. A thread with no messages yet
+    sorts by creation time: the cursor position cannot be null.
+
+    ``inbox`` and ``archived`` hold accepted threads; ``requests`` holds DMs
+    from non-friends waiting for an answer and ``spam`` the declined ones. A
+    request only shows once it has a message. ``kind`` narrows the folder to one
+    conversation type (the marketplace inbox); ``unread`` to threads with unread
+    messages (numbered ones: ``backfill_message_seq`` numbers older threads).
     """
-    conv_ids = ConversationMember.objects.filter(
-        account_id=account_id, left_at__isnull=True, archived_at__isnull=not archived
-    ).values("conversation_id")
+    folder = folder or ("archived" if archived else "inbox")
+    if folder not in FOLDERS:
+        raise _invalid("Unknown folder.")
+    if kind and kind not in Conversation.Type.values:
+        raise _invalid("Unknown conversation type.")
+    mine = ConversationMember.objects.filter(account_id=account_id, left_at__isnull=True)
+    if folder in ("inbox", "archived"):
+        mine = mine.filter(request_status="", archived_at__isnull=folder == "inbox")
+    else:
+        status = (
+            ConversationMember.Request.PENDING
+            if folder == "requests"
+            else ConversationMember.Request.SPAM
+        )
+        mine = mine.filter(request_status=status, conversation__last_message_at__isnull=False)
+    if kind:
+        mine = mine.filter(conversation__type=kind)
+    # The marketplace thread about one listing (and with one buyer or seller):
+    # "Message seller" and the Marketplace inbox open it instead of a plain DM.
+    if listing_id:
+        mine = mine.filter(conversation__listing_id=listing_id)
+    if with_id:
+        mine = mine.filter(
+            conversation__members__account_id=with_id, conversation__members__left_at__isnull=True
+        )
+    if unread:
+        mine = mine.filter(
+            conversation__seq_ready=True, last_read_seq__lt=F("conversation__last_seq")
+        )
+    conv_ids = mine.values("conversation_id")
     return with_state(
         Conversation.objects.filter(id__in=conv_ids)
         .annotate(activity_at=Coalesce("last_message_at", "created_at"))
@@ -403,7 +793,10 @@ def unread_summary(account_id: str) -> dict:
     now = timezone.now()
     members = (
         ConversationMember.objects.filter(
-            account_id=account_id, left_at__isnull=True, archived_at__isnull=True
+            account_id=account_id,
+            left_at__isnull=True,
+            archived_at__isnull=True,
+            request_status="",
         )
         .filter(Q(muted_until__isnull=True) | Q(muted_until__lte=now))
         .select_related("conversation")
@@ -415,7 +808,14 @@ def unread_summary(account_id: str) -> dict:
     for member in members.filter(conversation__seq_ready=False):
         counts.append(legacy_unread(member))
     counts = [c for c in counts if c > 0]
-    return {"messages": sum(counts), "conversations": len(counts)}
+    # Message requests are counted apart (the "Message requests" entry), never in the badge.
+    requests = ConversationMember.objects.filter(
+        account_id=account_id,
+        left_at__isnull=True,
+        request_status=ConversationMember.Request.PENDING,
+        conversation__last_message_at__isnull=False,
+    ).count()
+    return {"messages": sum(counts), "conversations": len(counts), "requests": requests}
 
 
 def set_archived(actor_id: str, conversation_id: str, archived: bool) -> None:
@@ -441,9 +841,17 @@ def presence_peers(account_id: str) -> list[str]:
     Group co-members are deliberately left out (roadmap 3.6: shared groups would
     expose people to strangers). Blocked pairs are never peers.
     """
-    dm_ids = ConversationMember.objects.filter(
-        account_id=account_id, left_at__isnull=True, conversation__type=Conversation.Type.DM
-    ).values("conversation_id")
+    # An unanswered (or declined) message request shares no presence either way.
+    requests = ConversationMember.objects.filter(request_status__in=REQUEST_STATES).values(
+        "conversation_id"
+    )
+    dm_ids = (
+        ConversationMember.objects.filter(
+            account_id=account_id, left_at__isnull=True, conversation__type=Conversation.Type.DM
+        )
+        .exclude(conversation_id__in=requests)
+        .values("conversation_id")
+    )
     peers = {
         str(p)
         for p in ConversationMember.objects.filter(conversation_id__in=dm_ids, left_at__isnull=True)
@@ -513,6 +921,28 @@ def _forbid_if_blocked(conversation: Conversation, actor_id: str) -> None:
         others = [m for m in member_ids(conversation) if m != str(actor_id)]
         if others and is_blocked(actor_id, others[0]):
             raise _denied()
+
+
+def _forbid_if_declined(conversation: Conversation, actor_id: str) -> None:
+    """The recipient declined this message request: nothing more gets through.
+    Same answer as a block, so the sender learns no more than that."""
+    if conversation.type != Conversation.Type.DM:
+        return
+    declined = conversation.members.filter(
+        left_at__isnull=True, request_status=ConversationMember.Request.SPAM
+    ).exclude(account_id=actor_id)
+    if declined.exists():
+        raise _denied()
+
+
+def request_pending(conversation: Conversation) -> bool:
+    """A DM that is still (or was declined as) a message request: no calls."""
+    return (
+        conversation.type == Conversation.Type.DM
+        and conversation.members.filter(
+            left_at__isnull=True, request_status__in=REQUEST_STATES
+        ).exists()
+    )
 
 
 def visible_messages(member: ConversationMember):
@@ -630,7 +1060,13 @@ def _receipt_recipients(
 
 def _after_send(conversation: Conversation, message: Message, actor_id: str) -> None:
     now = timezone.now()
-    mine = {"archived_at": None, "last_read_message_id": message.id, "last_read_at": now}
+    # Replying to a message request accepts it.
+    mine = {
+        "archived_at": None,
+        "last_read_message_id": message.id,
+        "last_read_at": now,
+        "request_status": "",
+    }
     if message.seq is not None:
         # Sending reads everything before it.
         mine["last_read_seq"] = Greatest(F("last_read_seq"), message.seq)
@@ -654,8 +1090,16 @@ def _record_message(
     reply_to_id: str | None = None,
     attachments: list[dict] = (),
     forwarded_from: str | None = None,
+    team_author: str | None = None,
+    team_recipients: list[str] | None = None,
 ) -> Message:
     """Write a message under the conversation row lock and tell the members.
+
+    ``team_author``: a page or support team's reply. ``actor_id`` is then the
+    Page (or Tara Support) it is sent as; the team member is not a member of
+    the conversation, so the membership check does not apply.
+    ``team_recipients``: a member wrote to a page; the page's team, who hear of
+    it (the event's ``team``), since they are not members of the conversation.
 
     The lock makes ``seq`` gap-free and unique per conversation (doc 05 §7.3).
     The caller has already checked membership, blocks and attachments.
@@ -669,6 +1113,7 @@ def _record_message(
         # caller's check must not get a message in.
         if (
             not system
+            and team_author is None
             and not conversation.members.filter(account_id=actor_id, left_at__isnull=True).exists()
         ):
             raise TaraAPIError("Conversation not found.", code="not_found", http_status_code=404)
@@ -682,6 +1127,7 @@ def _record_message(
             seq=seq,
             reply_to_id=reply_to_id,
             forwarded_from_message_id=forwarded_from,
+            author_id=team_author,
         )
         MessageAttachment.objects.bulk_create(
             [
@@ -705,19 +1151,37 @@ def _record_message(
             fields.append("last_seq")
         conversation.save(update_fields=fields)
         _after_send(conversation, message, actor_id)
+        payload = {
+            "conversation_id": str(conversation.id),
+            "message_id": str(message.id),
+            "sender": str(actor_id),
+            "type": message_type,
+            "seq": seq,
+            "recipients": member_ids(conversation),
+            "muted": _muted_ids(conversation),
+            "preview": body[:140],
+        }
+        if team_author is not None:
+            # Who the reply is from, for the notification ("<Page>: ..."); the
+            # team member who wrote it is never in the event.
+            payload["sender_as"] = {
+                "kind": conversation.type,
+                "id": str(actor_id),
+                "name": conversation.title if conversation.type == Conversation.Type.PAGE else "",
+            }
+        elif conversation.type in TEAM_TYPES:
+            # A member wrote to the team: the team is told (notification) and
+            # its inbox badge counts it. Support staff are not listed yet.
+            payload["team"] = {
+                "kind": conversation.type,
+                "page_id": str(conversation.page_id) if conversation.page_id else None,
+                "name": conversation.title,
+                "recipients": sorted(set(team_recipients or ()) - {str(actor_id)}),
+            }
         events.emit(
             "message.created",
             subject_id=str(message.id),
-            payload={
-                "conversation_id": str(conversation.id),
-                "message_id": str(message.id),
-                "sender": str(actor_id),
-                "type": message_type,
-                "seq": seq,
-                "recipients": member_ids(conversation),
-                "muted": _muted_ids(conversation),
-                "preview": body[:140],
-            },
+            payload=payload,
             actor_id=str(actor_id),
             partition_key=f"conversation:{conversation.id}",
         )
@@ -744,10 +1208,15 @@ def send_message(
         raise _invalid("The message being replied to was not found.")
 
     _forbid_if_blocked(conversation, actor_id)
+    _forbid_if_declined(conversation, actor_id)
 
     if not body and not attachments:
         raise _invalid("Message is empty.")
     resolved = _validate_attachments(actor_id, attachments or [])
+    team = None
+    if conversation.type == Conversation.Type.PAGE and conversation.page_id:
+        # Asked before the row lock; a failure only loses the team's notice.
+        team = profile_client.page_team(str(conversation.page_id))
     return _record_message(
         conversation_id,
         actor_id,
@@ -755,16 +1224,18 @@ def send_message(
         message_type=_message_type(resolved),
         reply_to_id=reply_to_id,
         attachments=resolved,
+        team_recipients=team,
     )
 
 
 def _muted_ids(conversation: Conversation) -> list[str]:
-    """Members who should get the message but no alert."""
+    """Members who should get the message but no alert: muted ones, and the
+    recipient of a message request (no push or notification from a stranger)."""
     return [
         str(m)
-        for m in conversation.members.filter(
-            left_at__isnull=True, muted_until__gt=timezone.now()
-        ).values_list("account_id", flat=True)
+        for m in conversation.members.filter(left_at__isnull=True)
+        .filter(Q(muted_until__gt=timezone.now()) | Q(request_status__in=REQUEST_STATES))
+        .values_list("account_id", flat=True)
     ]
 
 
@@ -937,6 +1408,7 @@ def forward_message(actor_id: str, message_id: str, conversation_ids: list[str])
     for conversation_id in targets:
         member = require_member(actor_id, conversation_id)
         _forbid_if_blocked(member.conversation, actor_id)
+        _forbid_if_declined(member.conversation, actor_id)
     attachments = [
         {
             "media_id": a.media_id,
@@ -1095,6 +1567,9 @@ def mark_read(actor_id: str, conversation_id: str, up_to_message_id: str) -> Non
     message = visible_messages(member).filter(id=up_to_message_id).first()
     if message is None:
         raise _not_found()
+    if member.request_status:
+        # Reading a message request tells its sender nothing until it is accepted.
+        return
     conversation = member.conversation
     now = timezone.now()
     with transaction.atomic():
@@ -1260,3 +1735,98 @@ def unpin_message(actor_id: str, conversation_id: str, message_id: str) -> None:
         ).delete()
         if deleted:
             _emit_changed(member.conversation, actor_id, "unpinned")
+
+
+# ---- message requests (plan 08 3D) --------------------------------------------
+
+
+def _emit_request_changed(conversation: Conversation, actor_id: str, action: str) -> None:
+    """Only the member's own tabs hear it: the sender is never told."""
+    events.emit(
+        "conversation.member.changed",
+        subject_id=str(conversation.id),
+        payload={
+            "conversation_id": str(conversation.id),
+            "action": action,
+            "recipients": [str(actor_id)],
+            "revoked": [],
+        },
+        actor_id=str(actor_id),
+        partition_key=f"conversation:{conversation.id}",
+    )
+
+
+def accept_request(actor_id: str, conversation_id: str) -> None:
+    """Move a message request (or a declined one) into the inbox. Idempotent."""
+    with transaction.atomic():
+        member = require_member(actor_id, conversation_id)
+        if not member.request_status:
+            return
+        member.request_status = ""
+        member.save(update_fields=["request_status"])
+        _emit_request_changed(member.conversation, actor_id, "request_accepted")
+
+
+def decline_request(actor_id: str, conversation_id: str) -> None:
+    """Decline a message request: it moves to the spam folder and the sender
+    cannot send more. Accepting it later from there undoes this."""
+    with transaction.atomic():
+        member = require_member(actor_id, conversation_id)
+        if member.request_status == ConversationMember.Request.SPAM:
+            return
+        if member.request_status != ConversationMember.Request.PENDING:
+            raise Conflict("This conversation is not a message request.", code="not_a_request")
+        member.request_status = ConversationMember.Request.SPAM
+        member.save(update_fields=["request_status"])
+        _emit_request_changed(member.conversation, actor_id, "request_declined")
+
+
+def accept_pair_requests(a: str, b: str) -> int:
+    """They became friends: requests between them are no longer requests."""
+    conversations = Conversation.objects.filter(
+        type=Conversation.Type.DM, dm_key=_dm_key(a, b)
+    ).values("id")
+    return ConversationMember.objects.filter(
+        conversation_id__in=conversations, request_status__in=REQUEST_STATES
+    ).update(request_status="")
+
+
+# ---- reporting a message ------------------------------------------------------
+
+
+def report_message(actor_id: str, message_id: str, reason: str) -> bool:
+    """Report a message the caller can see and did not send. Once per reporter
+    per message; True when this call filed it. Moderation gets a text snapshot,
+    never attachment ids: those stay private to the conversation."""
+    if reason not in REPORT_REASONS:
+        raise _invalid("Unknown report reason.")
+    message, _ = get_visible_message(actor_id, message_id)
+    if str(message.sender_id) == str(actor_id):
+        raise _invalid("You cannot report your own message.")
+    if message.deleted_at or message.type == Message.Type.SYSTEM:
+        raise _invalid("This message cannot be reported.")
+    with transaction.atomic():
+        _, created = MessageReport.objects.get_or_create(
+            message=message, reporter_id=actor_id, defaults={"reason": reason}
+        )
+        if created and settings.CHAT_EMIT_MESSAGE_REPORTED:
+            events.emit(
+                "message.reported",
+                subject_id=str(message.id),
+                payload={
+                    "message_id": str(message.id),
+                    "conversation_id": str(message.conversation_id),
+                    "reporter": str(actor_id),
+                    "reason": reason,
+                    "owner_id": str(message.sender_id),
+                    "snapshot": {
+                        "type": message.type,
+                        "body": message.body[:1000],
+                        "created_at": message.created_at.isoformat(),
+                        "attachment_count": message.attachments.count(),
+                    },
+                },
+                actor_id=str(actor_id),
+                partition_key=f"conversation:{message.conversation_id}",
+            )
+    return created

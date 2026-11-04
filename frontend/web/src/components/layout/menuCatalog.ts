@@ -23,6 +23,7 @@ import {
   BadgeDollarSign,
   BarChart3,
   Bell,
+  BookOpenCheck,
   Bookmark,
   Briefcase,
   Building2,
@@ -45,11 +46,13 @@ import {
   type LucideIcon,
   Megaphone,
   MessageCircle,
+  Newspaper,
   PenSquare,
   Radio,
   Settings,
   Shield,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Store,
   Tag,
@@ -59,6 +62,7 @@ import {
   UsersRound,
   Video,
 } from "lucide-vue-next";
+import { shallowRef } from "vue";
 import type { RouteLocationRaw } from "vue-router";
 
 import { CAPABILITIES, namespaceOf } from "@/lib/capabilities";
@@ -135,6 +139,7 @@ export const MENU_CATALOG: readonly MenuItem[] = [
   { id: "friends", route: "/friends", labelKey: "nav.friends", descKey: d("friends"), icon: Users, category: "account", built: true },
   { id: "connections", route: "/connections", labelKey: "nav.connections", descKey: d("connections"), icon: UserCheck, category: "account", built: true },
   { id: "saved", route: "/saved", labelKey: "nav.saved", descKey: d("saved"), icon: Bookmark, category: "account", built: true },
+  { id: "storyArchive", route: "/stories/archive", labelKey: "stories.archive.title", descKey: "stories.hub.archiveHint", icon: Archive, category: "account", built: true },
   { id: "memories", route: "/memories", labelKey: "menu.items.memories", icon: History, category: "account", built: false },
   { id: "activityLog", route: "/activity", labelKey: "menu.items.activityLog", icon: Activity, category: "account", built: false },
 
@@ -144,21 +149,28 @@ export const MENU_CATALOG: readonly MenuItem[] = [
   { id: "groups", route: "/groups", labelKey: "nav.groups", descKey: d("groups"), icon: UsersRound, category: "social", built: true },
   { id: "events", route: "/events", labelKey: "nav.events", descKey: d("events"), icon: CalendarDays, category: "social", built: true },
   { id: "pages", route: "/pages", labelKey: "nav.pages", descKey: d("pages"), icon: Flag, category: "social", built: true },
-  { id: "stories", route: "/stories", labelKey: "menu.items.stories", icon: CircleDot, category: "social", built: false },
+  { id: "followedPages", route: { path: "/pages", query: { tab: "followed" } }, labelKey: "pageHub.manager.followed", descKey: "pageHub.menu.followedDesc", icon: Flag, category: "social", built: true },
+  { id: "stories", route: "/stories", labelKey: "menu.items.stories", descKey: "stories.hub.subtitle", icon: CircleDot, category: "social", built: true },
   { id: "reels", route: "/reels", labelKey: "menu.items.reels", icon: Clapperboard, category: "social", built: false },
-  { id: "videos", route: "/videos", labelKey: "menu.items.videos", icon: Video, category: "social", built: false },
+  { id: "videos", route: "/videos", labelKey: "menu.items.videos", icon: Video, category: "social", built: true },
+  { id: "feeds", route: { path: "/home", query: { mode: "for_you" } }, labelKey: "postsFeed.feeds.nav", icon: Newspaper, category: "social", built: true },
+  { id: "feedPreferences", route: "/feeds/manage", labelKey: "postsFeed.manage.title", icon: SlidersHorizontal, category: "social", built: true },
   { id: "live", route: "/live", labelKey: "menu.items.live", icon: Radio, category: "social", built: false },
 
   // ---- Commercial
   { id: "marketplace", route: "/marketplace", labelKey: "nav.marketplace", descKey: d("marketplace"), icon: Store, category: "commercial", built: true },
   { id: "myListings", route: { path: "/marketplace", query: { tab: "mine" } }, labelKey: "menu.items.myListings", descKey: d("myListings"), icon: Tag, category: "commercial", built: true },
+  { id: "marketplaceInbox", route: { path: "/marketplace", query: { tab: "inbox" } }, labelKey: "commerce.menu.inbox", descKey: "commerce.menu.inboxDesc", icon: Inbox, category: "commercial", built: true },
+  { id: "marketplaceChats", route: { path: "/messages", query: { folder: "marketplace" } }, labelKey: "messenger.marketplaceChats", icon: MessageCircle, category: "commercial", built: true },
   { id: "adsManager", route: "/ads", labelKey: "menu.items.adsManager", descKey: d("adsManager"), icon: Megaphone, category: "commercial", built: true },
   { id: "businessCenter", route: "/business", labelKey: "menu.items.businessCenter", icon: Briefcase, category: "commercial", built: false },
 
   // ---- Creator
-  { id: "creatorStudio", route: "/studio", labelKey: "menu.items.creatorStudio", icon: Sparkles, category: "creator", built: false },
-  { id: "contentLibrary", route: "/studio/library", labelKey: "menu.items.contentLibrary", icon: Library, category: "creator", built: false },
-  { id: "analytics", route: "/studio/insights", labelKey: "menu.items.analytics", icon: BarChart3, category: "creator", built: false },
+  { id: "creatorStudio", route: "/studio", labelKey: "menu.items.creatorStudio", descKey: "studio.home.subtitle", icon: Sparkles, category: "creator", built: true },
+  { id: "contentLibrary", route: "/studio/library", labelKey: "menu.items.contentLibrary", icon: Library, category: "creator", built: true },
+  { id: "planner", route: "/studio/planner", labelKey: "studio.nav.planner", icon: CalendarDays, category: "creator", built: true },
+  { id: "drafts", route: { path: "/studio/library", query: { tab: "drafts" } }, labelKey: "composer.draftsAndScheduled", icon: FileText, category: "creator", built: true },
+  { id: "analytics", route: "/studio/insights", labelKey: "menu.items.analytics", icon: BarChart3, category: "creator", built: true },
   { id: "monetization", route: "/studio/monetization", labelKey: "menu.items.monetization", icon: BadgeDollarSign, category: "creator", built: false },
 
   // ---- Professional
@@ -170,38 +182,51 @@ export const MENU_CATALOG: readonly MenuItem[] = [
   // ---- Communication
   { id: "messenger", route: "/messages", labelKey: "nav.messages", descKey: d("messenger"), icon: MessageCircle, category: "communication", built: true },
   { id: "notifications", route: "/notifications", labelKey: "nav.notifications", descKey: d("notifications"), icon: Bell, category: "communication", built: true },
-  { id: "messageRequests", route: "/messages/requests", labelKey: "menu.items.messageRequests", icon: Inbox, category: "communication", built: false },
-  { id: "archived", route: "/messages/archived", labelKey: "menu.items.archived", icon: Archive, category: "communication", built: false },
+  // Folders of the inbox: `?folder=` (the "/messages/:id?" route would read a path segment as a conversation id).
+  { id: "messageRequests", route: { path: "/messages", query: { folder: "requests" } }, labelKey: "menu.items.messageRequests", icon: Inbox, category: "communication", built: true },
+  { id: "archived", route: { path: "/messages", query: { folder: "archived" } }, labelKey: "menu.items.archived", icon: Archive, category: "communication", built: true },
 
   // ---- Management
   { id: "myPages", route: { path: "/pages", query: { tab: "mine" } }, labelKey: "menu.items.myPages", descKey: d("myPages"), icon: Flag, category: "management", built: true },
   { id: "myGroups", route: { path: "/groups", query: { tab: "mine" } }, labelKey: "menu.items.myGroups", descKey: d("myGroups"), icon: UsersRound, category: "management", built: true },
-  { id: "pageManagement", route: "/pages/manage", labelKey: "menu.items.pageManagement", icon: Flag, category: "management", built: false },
-  { id: "groupManagement", route: "/groups/manage", labelKey: "menu.items.groupManagement", icon: Shield, category: "management", built: false },
+  { id: "pageManagement", route: { path: "/pages", query: { tab: "manage" } }, labelKey: "menu.items.pageManagement", descKey: "pageHub.menu.manageDesc", icon: Flag, category: "management", built: true },
+  { id: "groupManagement", route: { path: "/groups", query: { tab: "manage" } }, labelKey: "menu.items.groupManagement", descKey: "pageHub.menu.groupsDesc", icon: Shield, category: "management", built: true },
 
   // ---- System
   { id: "settings", route: "/settings", labelKey: "nav.settings", descKey: d("settings"), icon: Settings, category: "system", built: true },
-  { id: "privacyCenter", route: "/settings/privacy", labelKey: "menu.items.privacyCenter", icon: Lock, category: "system", built: false },
-  { id: "securityCenter", route: "/settings/security", labelKey: "menu.items.securityCenter", icon: ShieldCheck, category: "system", built: false },
+  { id: "privacyCenter", route: "/settings/privacy", labelKey: "menu.items.privacyCenter", icon: Lock, category: "system", built: true },
+  { id: "securityCenter", route: "/settings/security", labelKey: "menu.items.securityCenter", icon: ShieldCheck, category: "system", built: true },
   { id: "helpCenter", route: "/help", labelKey: "menu.items.helpCenter", icon: HelpCircle, category: "system", built: false },
-  { id: "support", route: "/support", labelKey: "menu.items.support", icon: LifeBuoy, category: "system", built: false },
+  { id: "support", route: "/support", labelKey: "menu.items.support", descKey: d("support"), icon: LifeBuoy, category: "system", built: true },
+  { id: "communityStandards", route: "/legal/community-standards", labelKey: "menu.items.communityStandards", descKey: d("communityStandards"), icon: BookOpenCheck, category: "system", built: true },
   { id: "adReview", route: "/ads/review", labelKey: "menu.items.adReview", descKey: d("adReview"), icon: BadgeCheck, category: "system", caps: ["ads.review"], built: true },
   { id: "admin", route: "/admin", labelKey: "nav.admin", descKey: d("admin"), icon: Shield, category: "system", caps: CONSOLE_CAPS, built: true },
 ];
 
 export const CREATE_CATALOG: readonly CreateItem[] = [
   { id: "post", route: "/home", labelKey: "menu.createItems.post", icon: PenSquare, built: true },
+  { id: "story", route: { path: "/stories", query: { create: "1" } }, labelKey: "stories.create.title", icon: CircleDot, built: true },
   { id: "page", route: { path: "/pages", query: { create: "1" } }, labelKey: "menu.createItems.page", icon: FilePlus2, built: true },
   { id: "group", route: "/groups/new", labelKey: "menu.createItems.group", icon: UsersRound, built: true },
   { id: "event", route: "/events/new", labelKey: "menu.createItems.event", icon: CalendarPlus, built: true },
   { id: "listing", route: { path: "/marketplace", query: { create: "1" } }, labelKey: "menu.createItems.listing", icon: Store, built: true },
 ];
 
-type Gated = Pick<MenuItem, "caps" | "accountTypes" | "built">;
+type Gated = Pick<MenuItem, "caps" | "accountTypes" | "built"> & { id?: string };
+
+/** Feature flags named `ui.<item id>` decide who sees a menu destination (stores/flags.ts). */
+export const UI_FLAG_PREFIX = "ui.";
+const flaggedOff = shallowRef<ReadonlySet<string>>(new Set());
+
+/** Item ids switched off for the signed-in account by their `ui.<id>` flag. Staff items never are. */
+export function setFlaggedOff(ids: Iterable<string>): void {
+  flaggedOff.value = new Set(ids);
+}
 
 /** Whether an item shows for this account: built, allowed by caps and by account type. */
 export function isVisible(item: Gated, caps: ReadonlySet<string>, accountType: AccountType): boolean {
   if (!item.built) return false;
+  if (item.id && !item.caps && flaggedOff.value.has(item.id)) return false;
   if (item.caps && !item.caps.some((key) => caps.has(key))) return false;
   if (item.accountTypes && !item.accountTypes.includes(accountType)) return false;
   return true;

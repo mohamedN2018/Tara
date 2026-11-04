@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/moderation.actioned.v1.json",
+  "title": "moderation.actioned v1 payload",
+  "description": "A moderator decided a case (or an overturned appeal reverses one); the owning content service enforces it. owner_id and reason were added additively.",
+  "type": "object",
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "target_type": {
+      "type": "string",
+      "maxLength": 20
+    },
+    "target_id": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "remove",
+        "restrict",
+        "warn",
+        "shadow",
+        "dismiss",
+        "approve"
+      ]
+    },
+    "owner_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid",
+      "description": "Who the decision is about (added by T7); null when the case never learned its owner."
+    },
+    "reason": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "Optional, additive: the note the moderator chose to share with the owner (\"\" when none). Sent on a moderator's decision; an appeal reversal leaves it out. Never the reporters or the appeal text."
+    }
+  },
+  "required": [
+    "case_id",
+    "target_type",
+    "target_id",
+    "action"
+  ],
+  "additionalProperties": false
+}

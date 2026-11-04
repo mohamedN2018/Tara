@@ -99,6 +99,18 @@ TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-s
 MEDIA_INTERNAL_URL = os.getenv("MEDIA_INTERNAL_URL", "http://media:8000")
 MEDIA_CALL_TIMEOUT = float(os.getenv("MEDIA_CALL_TIMEOUT", "2.0"))
 
+# Message requests (plan 08 3D): a DM a non-friend starts goes to the
+# recipient's requests folder. Graph answers "are they friends?".
+GRAPH_INTERNAL_URL = os.getenv("GRAPH_INTERNAL_URL", "http://graph:8000")
+GRAPH_CALL_TIMEOUT = float(os.getenv("GRAPH_CALL_TIMEOUT", "2.0"))
+CHAT_MESSAGE_REQUESTS = os.getenv("CHAT_MESSAGE_REQUESTS", "true").lower() == "true"
+# Page conversations: profile says whether a page exists and the caller's role on
+# its team (the team answers the page's messages). Every service already gets it.
+PROFILE_INTERNAL_URL = os.getenv("PROFILE_INTERNAL_URL", "http://profile:8000")
+PROFILE_CALL_TIMEOUT = float(os.getenv("PROFILE_CALL_TIMEOUT", "2.0"))
+# `message.reported` for moderation (moderation already consumes it).
+CHAT_EMIT_MESSAGE_REPORTED = os.getenv("CHAT_EMIT_MESSAGE_REPORTED", "true").lower() == "true"
+
 # Calls on LiveKit (roadmap 3.7). Off unless the key, the secret and the public
 # URL are all set: the API then answers 503 calls_unavailable.
 LIVEKIT_API_KEY = os.getenv("LIVEKIT_API_KEY", "")

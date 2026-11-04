@@ -61,6 +61,19 @@ def on_post_deleted(event: EventEnvelope) -> None:
     services.remove_post(event.payload["post_id"], services.occurred_at(event.occurred_at))
 
 
+@on_event("post.hidden")
+def on_post_hidden(event: EventEnvelope) -> None:
+    """The author's account was deactivated: rows kept, shown nowhere (reversible)."""
+    services.hold_post(event.payload["post_id"], services.occurred_at(event.occurred_at))
+
+
+@on_event("post.unhidden")
+def on_post_unhidden(event: EventEnvelope) -> None:
+    """Reactivated: the rows show again; anyone missing one gets it (Graph down -> retried)."""
+    count = services.release_post(event.payload, services.occurred_at(event.occurred_at))
+    logger.info("unhid post", extra={"post_id": event.payload.get("post_id"), "recipients": count})
+
+
 @on_event("post.updated")
 def on_post_updated(event: EventEnvelope) -> None:
     """Narrowing the audience drops the rows it no longer reaches (no Graph call)."""

@@ -15,7 +15,7 @@ from tara_common.pagination import CursorPagination
 from tara_common.responses import data_response
 from tara_resilience.idempotency import idempotent
 
-from . import composer, services
+from . import composer, saved, services
 from .models import IdempotencyRecord, PostState
 from .serializers import (
     CommentCreateSerializer,
@@ -30,7 +30,9 @@ from .serializers import (
     ReactionSerializer,
     ReactorSerializer,
     ReportSerializer,
+    SavedFilterSerializer,
     SavedItemSerializer,
+    SaveIntoSerializer,
     SaveSerializer,
     ShareCreateSerializer,
     SharerSerializer,
@@ -91,11 +93,13 @@ class PostCreateView(APIView):
         following ``page.next_cursor`` until ``has_more`` is false.
         """
         hashtag = request.query_params.get("hashtag")
-        queryset = (
-            services.hashtag_posts_queryset(hashtag)
-            if hashtag
-            else services.author_posts_queryset(request.query_params.get("author_id"))
-        )
+        if request.query_params.get("type") == "video" and not hashtag:
+            # The home "Videos" rail and /videos (T4): video posts the viewer may see.
+            queryset = services.video_posts_queryset(request.query_params.get("author_id"))
+        elif hashtag:
+            queryset = services.hashtag_posts_queryset(hashtag)
+        else:
+            queryset = services.author_posts_queryset(request.query_params.get("author_id"))
         paginator = CursorPagination()
         page = paginator.paginate_queryset(queryset, request)
         posts = services.only_visible(_me(request), page)
@@ -129,6 +133,7 @@ class PostCreateView(APIView):
                 feeling=v["feeling"],
                 state=state,
                 publish_at=v.get("publish_at"),
+                page_id=v.get("page_id"),
             )
             return data_response(_one(_me(request), post), status=status.HTTP_201_CREATED)
 
@@ -361,10 +366,17 @@ class VoteView(APIView):
 class SaveView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @extend_schema(responses={200: None}, tags=["saved"])
+    @extend_schema(request=SaveIntoSerializer, responses={200: SavedItemSerializer}, tags=["saved"])
     def post(self, request: Request, post_id: str) -> Response:
-        services.save_item(_me(request), "post", post_id)
-        return data_response({"detail": "saved"})
+        """Save a post I can see (404 otherwise), into ``collection_id`` when
+        given; a saved post is moved there."""
+        body = SaveIntoSerializer(data=request.data or {})
+        body.is_valid(raise_exception=True)
+        services.get_post(_me(request), str(post_id))
+        item = saved.save_into(
+            _me(request), "post", str(post_id), body.validated_data.get("collection_id")
+        )
+        return data_response({"detail": "saved", **SavedItemSerializer(item).data})
 
     @extend_schema(responses={204: None}, tags=["saved"])
     def delete(self, request: Request, post_id: str) -> Response:
@@ -380,8 +392,13 @@ class SavedListView(APIView):
     )
     def get(self, request: Request) -> Response:
         item_type = request.query_params.get("item_type")
+        query = SavedFilterSerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
         paginator = CursorPagination()
-        page = paginator.paginate_queryset(services.list_saved(_me(request), item_type), request)
+        page = paginator.paginate_queryset(
+            saved.list_saved(_me(request), item_type, query.validated_data.get("collection_id")),
+            request,
+        )
         return paginator.get_paginated_response(SavedItemSerializer(page, many=True).data)
 
     def post(self, request: Request) -> Response:
@@ -393,6 +410,23 @@ class SavedListView(APIView):
             str(serializer.validated_data["item_id"]),
         )
         return data_response({"detail": "saved"}, status=status.HTTP_201_CREATED)
+
+
+class SavedItemView(APIView):
+    """Whether I saved an item, and unsave any kind (a page, a listing, a video,
+    a post). Only ever about the signed-in account's own saves."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: None}, tags=["saved"])
+    def get(self, request: Request, item_type: str, item_id: str) -> Response:
+        found = services.list_saved(_me(request), item_type).filter(item_id=item_id).exists()
+        return data_response({"saved": found})
+
+    @extend_schema(responses={204: None}, tags=["saved"])
+    def delete(self, request: Request, item_type: str, item_id: str) -> Response:
+        services.unsave_item(_me(request), item_type, str(item_id))
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 @method_decorator(transaction.non_atomic_requests, name="dispatch")

@@ -263,7 +263,23 @@ def test_legacy_contact_also_records_the_inquiry(client_for, category):
     resp = client_for(buyer).post(reverse("marketplace:contact", args=[listing.id]))
     assert resp.status_code == 202
     assert ListingInquiry.objects.filter(listing=listing, buyer_id=buyer).exists()
-    assert _events("marketplace.contact.requested")[0]["inquiry_id"]
+    event = _events("marketplace.contact.requested")[0]
+    assert event["inquiry_id"]
+    # Chat keeps the listing's title and cover on the thread's row.
+    assert event["title"] == listing.title
+    assert "cover_media_id" in event
+
+
+def test_contact_request_carries_the_listing_cover(client_for, category):
+    from marketplace.models import ListingMedia
+
+    seller, buyer = _acct(), _acct()
+    listing = _live(seller, category)
+    cover = uuid.uuid4()
+    ListingMedia.objects.create(listing=listing, media_id=uuid.uuid4(), position=1)
+    ListingMedia.objects.create(listing=listing, media_id=cover, position=0)
+    client_for(buyer).post(reverse("marketplace:contact", args=[listing.id]))
+    assert _events("marketplace.contact.requested")[0]["cover_media_id"] == str(cover)
 
 
 # ---- sellers ----------------------------------------------------------------

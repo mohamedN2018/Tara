@@ -63,7 +63,7 @@ test("an unknown profile shows an error, not an empty shell", async ({ browser }
 test("notification preferences save the nested shape and persist", async ({ browser }) => {
   const { a } = await sharedAccounts();
   const page = await pageAs(browser, a);
-  await page.goto("/settings");
+  await page.goto("/settings/notifications");
   // Per-kind grid: one checkbox per channel (in-app, push).
   const box = page.getByTestId("pref-follow-in_app");
   await expect(box).toBeVisible();
@@ -88,11 +88,12 @@ test("my own profile: tabs, editing, and the sections work after the split", asy
   await page.goto(`/u/${a.handle}`);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(a.name);
 
-  await page.getByRole("button", { name: "الصور", exact: true }).click();
+  // Profile tabs are role="tab" in a tablist (a11y), not plain buttons.
+  await page.getByRole("tab", { name: "الصور", exact: true }).click();
   await expect(page.getByRole("heading", { name: "الصور" })).toBeVisible();
-  await page.getByRole("button", { name: "الأصدقاء", exact: true }).click();
+  await page.getByRole("tab", { name: "الأصدقاء", exact: true }).click();
   await expect(page.getByRole("heading", { name: "الأصدقاء" }).first()).toBeVisible();
-  await page.getByRole("button", { name: "المنشورات", exact: true }).click();
+  await page.getByRole("tab", { name: "المنشورات", exact: true }).click();
 
   const intro = `مرحبا ${unique()}`;
   await page.getByRole("button", { name: "تعديل الملف" }).first().click();

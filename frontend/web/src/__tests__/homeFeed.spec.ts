@@ -39,6 +39,7 @@ const post = (id: string, author = `author-${id}`): Post => ({
 });
 const hydrated = (posts: Post[], modeApplied = true): HydratedFeedPage => ({
   posts,
+  reasons: {},
   sponsored: [],
   nextCursor: null,
   hasMore: false,

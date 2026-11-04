@@ -93,6 +93,10 @@ Events are **never** published directly inside the business transaction. Instead
 | `account.unsuspended` | account | account_id, suspension_id, expired (true: the end date passed and the beat task or a sign-in lifted it; `actor_id` is then null) | Admin (audit log). Open (8.5): the same consumers as `account.suspended` |
 | `account.signed_out` | account | account_id, sessions (count revoked). A staff member signed the account out everywhere (8.6) | Admin (audit log). Open: realtime could drop sockets |
 | `account.verification.resent` | account | account_id. A staff member sent a new verification link; no address on the bus (8.6) | Admin (audit log) |
+| `account.deactivated` | account | account_id. The owner deactivated the account from Settings > Account (3C) after re-authenticating, **or scheduled its deletion** (the same state during the 30-day grace); every session and refresh token was revoked in the same transaction. `actor_id` = the account. Behind `IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS` | Profile (hides the profile: `deleted_at`), post (the account's published user posts move to state `held`, each emits `post.hidden`: feed keeps its rows but shows them nowhere, search drops it, post restricts its media, notifications stay; with `POST_EMIT_HIDE_EVENTS` off it emits `post.deleted` instead, which feed and notification cannot undo), search (parks the person's own documents under a `~` doc type). All idempotent. Open: graph lists, chat, realtime sockets |
+| `account.reactivated` | account | account_id. A deactivated account signed in again (password or Google, plus its second factor when 2FA is on), which reactivated it and cancelled any scheduled deletion (3C). Same flag | Profile, post (held posts back to `published`, each emits `post.unhidden` then `post.updated`: feed shows the kept rows again and fans the post out to anyone without one, search indexes it again), search (un-parks the documents): the exact reverse of `account.deactivated` |
+| `account.deleted` | account | account_id. The 30-day deletion grace ended without a sign-in, so identity's beat task (`identity.purge_scheduled_deletions`, hourly) erased the account (PII wiped, credentials/sessions/devices/2FA deleted, tombstone row with status `deleted`). `actor_id` null. Behind `IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS` | Profile (deletes the profile, its details, page roles and block rows), post (posts and comments wiped and deleted, reactions, votes and saves deleted), chat (messages wiped to tombstones, reactions and memberships removed), graph (every edge, setting and the account ref deleted), search (every document, parked document, recent search and block row deleted). All idempotent; see each handler for what remains |
+| `account.presence.updated` | account | account_id, show_presence. The owner changed Settings > Privacy "Show when you're active" (3C). Same flag | Realtime (stores the newest value and applies it to every open socket, over the stale token claim) |
 | `session.created` | session | device, ip_region | Notification (new-login alert), Security |
 | `session.revoked` | session | — | Realtime (drop sockets) |
 | `account.role.granted` | account | account_id, role; `actor_id` = the granting admin; `correlation_id` = admin's edge request id. Emitted only when a grant is new; behind `IDENTITY_EMIT_AUDIT_EVENTS` | Admin (audit log) |
@@ -102,7 +106,7 @@ Events are **never** published directly inside the business transaction. Instead
 ### Profile & Pages
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
-| `profile.updated` | account | changed_fields, public_snapshot (handle, display_name, visibility, avatar_media_id), city (additive, v1: only while the city's field privacy is public, else null; a city privacy change emits the event too). **Open (1.6):** profile adds `searchable` (bool); graph already copies it into `AccountRef` when present | Search, Feed/Post/Chat (refresh author cache), Graph (handle, searchable), Feed (`searchable` into `author_ref` when present, 2A) |
+| `profile.updated` | account | changed_fields, public_snapshot (handle, display_name, visibility, avatar_media_id), city (additive, v1: only while the city's field privacy is public, else null; a city privacy change emits the event too). additive (1.6, fix track C): `searchable` (bool, default true; "Let people find me in search"), carried on every `profile.updated`; graph copies it into `AccountRef`, search drops/re-adds the person | Search, Feed/Post/Chat (refresh author cache), Graph (handle, searchable), Feed (`searchable` into `author_ref` when present, 2A) |
 | `page.created` | page | handle, name, owner; additive, v1: category, location, status, avatar_media_id, deleted (the same searchable state as `page.updated`) | Search, Graph (suggested pages) |
 | `page.updated` | page | as `page.created`, plus changed[]. Emitted on every page edit (behind `PROFILE_EMIT_PAGE_UPDATED`); a draft or suspended status takes the page out of search. Schema `page.updated.v1.json` | Search, Graph (suggested pages) |
 | `page.member.changed` | page | member, role, action | (none yet) |
@@ -112,7 +116,7 @@ Events are **never** published directly inside the business transaction. Instead
 |-------|---------|-------------|-----------|
 | `friendship.requested` | request | from, to | Notification |
 | `friendship.request.withdrawn` | request | from, to (emitted only when the requester cancels; a reject by the recipient emits nothing) | Notification |
-| `friendship.accepted` | friendship | a, b | Notification, Feed (edge), Search (mutuals) |
+| `friendship.accepted` | friendship | a, b | Notification, Feed (edge), Search (mutuals), Chat (a pending or declined message request between the two becomes an ordinary thread; idempotent) |
 | `friendship.removed` | friendship | a, b, reason (`unfriend` \| `block`) | Feed |
 | `user.followed` | follow | follower, target(type) | Notification, Feed (edge) |
 | `user.unfollowed` | follow | follower, target, target_type, reason (`unfollow` \| `block`) | Feed (also ends the `following` mode edge, 2A) |
@@ -136,6 +140,8 @@ Mute and favorite exclude each other: favoriting a muted account emits `relation
 | `post.updated` | post | post_id, author_id, audience (may change on edit), comment_policy (additive, v1), excerpt, hashtags (the full list, additive, v1), new_mentions; type, author_type, media_ids, created_at (additive, v1, search v2: a post that becomes public is indexed with its photos and date); new_tagged_ids (additive, v1, 2C). Never emitted for a draft or a scheduled post. Also emitted, with no new_mentions, when an overturned appeal restores a removed post | Feed, Search |
 | `post.tagged` | post | post_id, author_id, recipient. One per tagged person, emitted by post's consumer of its own `post.created` (`tagged_ids`), `post.updated` (`new_tagged_ids`) and `post.approved` (`tagged_ids`), only to someone who can open the post, is still tagged and is not blocked either way with the author; never while a group post waits for approval. Behind `POST_EMIT_TAG_EVENTS` (2C). Schema `post.tagged.v1.json` | Notification (`post.tag`) |
 | `post.approved` | post | post_id, group_id, author_id, approved_by, tagged_ids (the people tagged at that moment). Emitted when a group's staff approve a post that waited for approval, in the approval's transaction. Post consumes it itself to emit `post.tagged`. Behind `POST_EMIT_GROUP_EVENTS` (2C). Schema `post.approved.v1.json` | Post |
+| `post.hidden` | post | post_id, author_id, reason (`account_deactivated`). The author's account was deactivated (3C): the published post moved to `held`; it is not deleted. Emitted in the same transaction as the move, behind `POST_EMIT_HIDE_EVENTS` (default on; consumers ship first). Schema `post.hidden.v1.json` | Feed (`PostState.hidden`, ordered by its own `hidden_at`: rows kept, shown in no mode, a viewer's hide of it is a 404), Search (out of the index, no tombstone), Post (restricts the post's media) |
+| `post.unhidden` | post | post_id, author_id, author_type, type, audience, excerpt, media_ids, created_at, group_id, reason (`account_reactivated`): the post as it is now. The account was reactivated; emitted only for a post that is still live, followed by `post.updated`. Same flag. Schema `post.unhidden.v1.json` | Feed (shows the rows again, undoes an older `post.deleted` from deactivation, and fans the post out to anyone missing a row; a newer real delete wins) |
 | `post.deleted` | post | post_id. Also emitted when moderation removes a post. Feed and search keep a tombstone, so a retried older `post.created`/`post.updated` cannot bring it back. Post consumes its own event to restrict the post's media through media's bind (retried while media is down), so only the owner can fetch them | Feed, Search, Post |
 | `post.reacted` | post | reactor, reaction_type | Notification, Feed (ranking: engagement and the reactor's affinity to the author, 1.7) |
 | `post.unreacted` | post | post_id, reactor, reaction_type, author_id. Once per removed reaction | Feed (ranking, 1.7); later notification clean-up |
@@ -167,6 +173,17 @@ Schemas: `libs/tara_events/tara_events/schemas/gathering.*.v1.json`. Ids, enums 
 Post consumes `moderation.actioned` with `target_type=gathering` (`remove` hides the event everywhere and emits `gathering.deleted`; `approve` restores it) and `user.blocked` (the blocked side loses its RSVP and invite on the other's events), and `friendship.removed` (on friends-only events hosted by either side, the other side loses its RSVP and invite, freeing the seat; invite-only and public events are untouched; graph is re-checked first so a stale event after a re-friend drops nothing; no notification). An event's cover is bound in media to the event id, restricted, and media asks post's `/internal/v1/posts/<id>/visibility/` for it like for post media.
 
 Additive (v1, roadmap 1.11): `gathering.created/updated/cancelled` carry `group_id` (null outside a group), and `audience` gains `group` for an event in a group.
+
+### Stories (post service `stories` app, roadmap 1.9)
+Schemas: `libs/tara_events/tara_events/schemas/story.*.v1.json`. Ids and enums only: never the story's text, background or media. Partition key `story:<id>`. Every row is written in the same transaction as the change, behind `POST_EMIT_STORY_EVENTS` (default on; two-release rollout: the consumers ship first). Creating, viewing and changing a reaction emit nothing.
+
+| Event | Subject | Key payload | Consumers |
+|-------|---------|-------------|-----------|
+| `story.reacted` | story | story_id, author_id (the recipient), reactor, reaction_type (`like`/`love`/`care`/`haha`/`wow`/`sad`/`angry`). Only an account's first reaction to a story it can see; never the author's own | Notification (`story.reaction` to the author, aggregated per story) |
+| `story.deleted` | story | story_id, author_id, by (`moderation` when a moderator removed it; absent for the author's delete) | Notification (purges `story:<id>`) |
+| `story.reported` | story | story_id, reporter, reason (the same enum as `gathering.reported`), owner_id (the author). Once per reporter per story, and only when the reporter can see it (an expired story is the author's alone, so it cannot be reported) | Moderation (`story` target) |
+
+Post consumes `moderation.actioned` with `target_type=story` (`remove` hides the story from everyone, the author too, and emits `story.deleted`; `approve` restores it), `user.blocked` (neither side stays on the other's close friends list) and `friendship.removed` (the same, after graph confirms they are not friends again; graph down retries). A story's photo is bound in media to the story id, restricted, and post's `/internal/v1/posts/<id>/visibility/` answers for it with the story rule: the author always; anyone else only while the story is active, inside its audience (`public`, `friends`, `close_friends`), and never across a block.
 
 ### Groups (profile `groups` app, roadmap 1.11)
 Schemas: `libs/tara_events/tara_events/schemas/group.*.v1.json`. Ids and enums only, plus a group's name and handle for public and private groups (search indexes them); a hidden group's `name` and `handle` are blank and its `privacy` is `hidden`, so search drops it. Partition key `group:<id>`. Every row is written in the same transaction as the state change. Profile emits the `group.*` events behind `PROFILE_EMIT_GROUP_EVENTS`, post its two behind `POST_EMIT_GROUP_EVENTS` (both default on; two-release rollout).
@@ -200,14 +217,14 @@ Video pipeline (roadmap 5.2 / 5.3). A video signed with `purpose=post` is stored
 ### Chat
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
-| `message.created` | message | conversation_id, message_id, sender, type, seq, recipients[] (active members), muted[], preview (first 140 characters of the body, for the notification text) | Realtime, Notification |
+| `message.created` | message | conversation_id, message_id, sender, type, seq, recipients[] (active members), muted[] (muted members, and since plan 08 3D the recipient of an unanswered or declined message request: delivered, no alert), preview (first 140 characters of the body, for the notification text); optional sender_as {kind: page\|support, id, name} on a Page or Tara Support team reply (fix track D: the teammate who wrote it is never in the event, Notification names the Page instead of a person) | Realtime, Notification |
 | `message.read` | receipt | conversation_id, reader, up_to_message_id, up_to_seq, recipients[] (a DM: both members; a group: the reader and the senders the pointer passed). Only when the pointer moves forward | Realtime, Notification (clears the conversation's notifications) |
 | `message.delivered` | receipt | conversation_id, account, up_to_seq, recipients[] (as for `message.read`) | Realtime |
 | `message.edited` | message | conversation_id, message_id, editor, recipients[]. No body: clients refetch | Realtime |
 | `message.deleted` | message | conversation_id, message_id, scope (`everyone`: a tombstone stays; `moderation`: hidden until restored), recipients[]. Emitted once per removal | Realtime |
 | `message.reacted` | reaction | conversation_id, message_id, reactor, type (null when the reaction was removed), recipients[] | Realtime |
 | `conversation.typing` | conversation | actor (ephemeral, Realtime-only; never echoed to the typist's own sockets) | Realtime |
-| `conversation.member.changed` | conversation | conversation_id, action (`created`, `added`, `removed`, `renamed`, `role_changed`, `pinned`, `unpinned`, `blocked`), recipients[], revoked[] (additive, v1: accounts that just lost access; Realtime drops their live subscriptions). `blocked` is emitted by Chat when it applies `user.blocked`, once per shared DM or marketplace thread, with no recipients so the blocked side is not told | Realtime |
+| `conversation.member.changed` | conversation | conversation_id, action (`created`, `added`, `removed`, `renamed`, `role_changed`, `pinned`, `unpinned`, `blocked`; additive, plan 08 3D: `request_accepted`, `request_declined`, sent only to the member who answered the message request, never to its sender), recipients[], revoked[] (additive, v1: accounts that just lost access; Realtime drops their live subscriptions). `blocked` is emitted by Chat when it applies `user.blocked`, once per shared DM or marketplace thread, with no recipients so the blocked side is not told | Realtime |
 | `user.presence.changed` | account | status, last_seen? (privacy-filtered). Not a bus event: Realtime pushes `presence.changed` frames only to DM peers and friends, and a block seen on the bus keeps the pair hidden even while Chat's copy of the block lags | Realtime |
 
 ### Calls (chat `calls` app, roadmap 3.7 / 3.8)
@@ -232,7 +249,8 @@ The call-log line in the conversation is an ordinary `message.created` with `typ
 | `listing.reported` | report | listing_id, reporter, owner_id (the seller; only the owner may appeal; absent before 1.2), reason; once per reporter per listing | Moderation |
 | `marketplace.contact.requested` | listing | buyer, seller | Chat (create conversation) |
 | `listing.availability.changed` | listing | listing_id, seller_id, from, to (available/reserved/sold or null) | Search, Notification |
-| `marketplace.inquiry.created` | listing | inquiry_id, listing_id, seller_id, buyer_id (first inquiry per buyer per listing) | (none yet; 4.7 metrics) |
+| `marketplace.inquiry.created` | listing | inquiry_id, listing_id, seller_id, buyer_id (first inquiry per buyer per listing) | Notification (`listing.inquiry` for the seller, one row per listing; plan 08 T5) |
+| `message.reported` | message | message_id, conversation_id, reporter, reason (the same enum as `gathering.reported`), owner_id (the sender), snapshot {type, body (first 1000 characters), created_at, attachment_count}. Never attachment ids: chat media stays private. Once per reporter per message, only when the reporter can see the message and did not send it. Behind `CHAT_EMIT_MESSAGE_REPORTED` (default true). Schema `message.reported.v1.json` | Moderation (`message` target; keeps the snapshot as the report's `evidence`, shown to moderators only, T7) |
 | `marketplace.review.created` | review | review_id, listing_id, seller_id, buyer_id, rating | (none yet) |
 | `marketplace.review.reported` | review | review_id, listing_id, seller_id, reporter, owner_id (the review's author), reason; once per reporter per review | Moderation (`listing_review` target) |
 | `marketplace.review.status.changed` | review | review_id, seller_id, from, to (published/removed) | (none yet) |
@@ -242,13 +260,18 @@ The call-log line in the conversation is an ordinary `message.created` with `typ
 |-------|---------|-------------|-----------|
 | `notification.created` | notification | recipient, kind | Realtime (push to client) |
 
+### Admin
+| Event | Subject | Key payload | Consumers |
+|-------|---------|-------------|-----------|
+| `system.notice` | notice | notice_id, recipients (account ids, at most 50), body (staff-written notice, at most 300 characters). Behind `ADMIN_EMIT_SYSTEM_NOTICES` (default on). Sent from the console's Announcements section (`admin.notices.send`) | Notification (`system.notice` row per recipient) |
+
 ### Moderation
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
 | `report.created` | report | target_type, target_id | Moderation (own queue) |
-| `moderation.actioned` | case | target, action (remove/restrict/warn/shadow/dismiss/approve). An overturned appeal emits it again only with the inverse of the decision: `approve` for removed content (post/comment/message/listing), and only when no other case's removal of that target still stands. Overturning a warning, or a user or page decision, emits nothing (audit log only). `appeal.resolved` records which appeal caused it | Post/Chat/Marketplace/Profile (enforce), Notification, Admin (audit log) |
+| `moderation.actioned` | case | target, action (remove/restrict/warn/shadow/dismiss/approve). An overturned appeal emits it again only with the inverse of the decision: `approve` for removed content (post/comment/message/listing), and only when no other case's removal of that target still stands. Overturning a warning, or a user or page decision, emits nothing (audit log only). `appeal.resolved` records which appeal caused it. `owner_id` (additive, T7; null when the case never learned its owner) names who the decision is about. `reason` (additive, optional, ≤2000 chars; `""` when none) is the note the moderator chose to share with the owner, sent on a moderator's decision and left out of an appeal reversal; Marketplace keeps it on a rejected/removed listing for the seller. Schema: `moderation.actioned.v1.json` | Post/Chat/Marketplace/Profile (enforce), Notification (`moderation.decision` to `owner_id` for remove/warn/restrict; never shadow), Admin (audit log) |
 | `appeal.created` | appeal | case_id | Moderation |
-| `appeal.resolved` | appeal | appeal_id, case_id, target_type, status (`upheld`/`overturned`), reversal (`approve` or null). Never the appeal text. Behind `MODERATION_EMIT_AUDIT_EVENTS` | Admin (audit log) |
+| `appeal.resolved` | appeal | appeal_id, case_id, target_type, status (`upheld`/`overturned`), reversal (`approve` or null), account_id (additive, T7: the appellant). Never the appeal text. Behind `MODERATION_EMIT_AUDIT_EVENTS` | Admin (audit log), Notification (`moderation.appeal` to `account_id`) |
 
 ### Advertisement
 | Event | Subject | Key payload | Consumers |

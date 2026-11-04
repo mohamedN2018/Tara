@@ -81,6 +81,7 @@ def test_an_upheld_appeal_emits_appeal_resolved_without_its_text(client_for):
         "target_type": "post",
         "status": "upheld",
         "reversal": None,
+        "account_id": str(appeal.account_id),
     }
     assert envelope["actor_id"] == mod
     assert event.correlation_id == "edge-m1"
