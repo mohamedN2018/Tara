@@ -87,6 +87,20 @@ services:
       timeout: 3s
       retries: 10
 
+  # Heavy, rebuildable state (feed ranking sessions, 1.7) kept out of the shared
+  # Redis. noeviction: a full redis-hot refuses writes and feed falls back to
+  # latest order; nothing is persisted.
+  redis-hot:
+    image: redis:7-alpine
+    profiles: ["core"]
+    command: ["redis-server", "--save", "", "--appendonly", "no",
+              "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
     profiles: ["core"]
@@ -426,7 +440,8 @@ services:
   media-relay:
     image: tara/media:dev
     profiles: ["core"]
-    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "2"]
+    # Only media's own queue: video transcoding belongs to media-transcoder.
+    command: ["celery", "-A", "config", "worker", "-B", "-Q", "media.tasks", "-l", "info", "--concurrency", "2"]
     env_file:
       - ../../.env
     environment:
@@ -437,6 +452,62 @@ services:
       RUN_MIGRATIONS: "false"
     depends_on:
       media: {condition: service_healthy}
+
+  # One-shot: the transcoder's MinIO user, scoped to videos/ (roadmap §5.1).
+  minio-init:
+    image: cgr.dev/chainguard/minio-client@sha256:39768db4c3fa811bc8f2e2a3e0add8ea391648b1c980de179985e1c353dc1805
+    profiles: ["core"]
+    entrypoint: ["/bin/sh", "/init/init-transcoder-user.sh"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      S3_BUCKET: ${S3_BUCKET:-tara-media}
+      MEDIA_TRANSCODER_S3_ACCESS_KEY: ${MEDIA_TRANSCODER_S3_ACCESS_KEY:-tara-transcoder}
+      MEDIA_TRANSCODER_S3_SECRET_KEY: ${MEDIA_TRANSCODER_S3_SECRET_KEY:-tara-transcoder-dev-pass}
+    volumes:
+      - ../minio:/init:ro
+    restart: "no"
+    depends_on:
+      minio: {condition: service_healthy}
+
+  # Video transcoder (roadmap 5.2): ffmpeg on its own queue, one job at a time.
+  # Minimal environment on purpose (no env_file): its database, the broker, a
+  # storage user that only reaches videos/, and the video limits. No JWT keys,
+  # no INTERNAL_JWT_SECRET, no MinIO root.
+  media-transcoder:
+    image: tara/media:dev
+    profiles: ["core"]
+    command: ["celery", "-A", "config", "worker", "-Q", "media.transcode", "--concurrency", "1",
+              "--prefetch-multiplier", "1", "-O", "fair", "--max-tasks-per-child", "50", "-l", "info"]
+    environment:
+      MEDIA_ROLE: transcoder
+      POSTGRES_HOST: postgres
+      MEDIA_DB_NAME: ${MEDIA_DB_NAME}
+      MEDIA_DB_USER: ${MEDIA_DB_USER}
+      MEDIA_DB_PASSWORD: ${MEDIA_DB_PASSWORD}
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      TARA_STORAGE_BACKEND: s3
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_BUCKET: ${S3_BUCKET:-tara-media}
+      AWS_ACCESS_KEY_ID: ${MEDIA_TRANSCODER_S3_ACCESS_KEY:-tara-transcoder}
+      AWS_SECRET_ACCESS_KEY: ${MEDIA_TRANSCODER_S3_SECRET_KEY:-tara-transcoder-dev-pass}
+      MEDIA_VIDEO_MAX_SECONDS_POST: ${MEDIA_VIDEO_MAX_SECONDS_POST:-600}
+      MEDIA_VIDEO_MAX_HEIGHT: ${MEDIA_VIDEO_MAX_HEIGHT:-720}
+      MEDIA_VIDEO_HDR_MODE: ${MEDIA_VIDEO_HDR_MODE:-tonemap}
+      MEDIA_VIDEO_MP4_FALLBACK: ${MEDIA_VIDEO_MP4_FALLBACK:-false}
+      MEDIA_KEEP_VIDEO_ORIGINALS: ${MEDIA_KEEP_VIDEO_ORIGINALS:-false}
+      MEDIA_TRANSCODE_STEP_TIMEOUT: ${MEDIA_TRANSCODE_STEP_TIMEOUT:-1200}
+      MEDIA_TRANSCODE_CONSUMER_TIMEOUT_MS: ${MEDIA_TRANSCODE_CONSUMER_TIMEOUT_MS:-7200000}
+      MEDIA_VIDEO_MAX_FPS: ${MEDIA_VIDEO_MAX_FPS:-30}
+      MEDIA_VIDEO_MAX_PIXELS: ${MEDIA_VIDEO_MAX_PIXELS:-8294400}
+      MEDIA_FFMPEG_THREADS: ${MEDIA_FFMPEG_THREADS:-2}
+      MEDIA_FFMPEG_MAX_MEMORY_MB: ${MEDIA_FFMPEG_MAX_MEMORY_MB:-1200}
+      LOG_FORMAT: console
+    mem_limit: 1.5g
+    cpus: 2
+    depends_on:
+      media: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
 
   # ---- Post service (Phase 3) ----------------------------------------------
   post:
@@ -511,6 +582,7 @@ services:
     environment:
       POSTGRES_HOST: postgres
       REDIS_URL: redis://redis:6379/5
+      REDIS_HOT_URL: ${REDIS_HOT_URL:-redis://redis-hot:6379/0}
       RABBITMQ_URL: ${RABBITMQ_URL}
       TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
       GRAPH_INTERNAL_URL: http://graph:8000
@@ -520,6 +592,7 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
+      redis-hot: {condition: service_started}
       rabbitmq: {condition: service_healthy}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz/"]

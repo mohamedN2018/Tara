@@ -28,7 +28,16 @@ def _isolated_settings(settings):
     settings.TARA_JWT_AUDIENCE = "tara"
     settings.TARA_EVENT_PUBLISHER = "null"
     settings.CELERY_TASK_ALWAYS_EAGER = True
-    settings.CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+    settings.CACHES = {
+        "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
+        "hot": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "feed-hot-tests",
+        },
+    }
+    from django.core.cache import caches
+
+    caches["hot"].clear()
     return settings
 
 

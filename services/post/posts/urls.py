@@ -7,6 +7,15 @@ app_name = "posts"
 urlpatterns = [
     path("posts/", views.PostCreateView.as_view(), name="post-create"),
     path("posts/batch/", views.PostBatchView.as_view(), name="post-batch"),
+    # The composer (2C): the author's drafts and scheduled posts, and tag settings.
+    path("posts/drafts/", views.DraftsView.as_view(), name="drafts"),
+    path("posts/drafts/<uuid:post_id>/", views.DraftDetailView.as_view(), name="draft-detail"),
+    path(
+        "posts/drafts/<uuid:post_id>/publish/",
+        views.DraftPublishView.as_view(),
+        name="draft-publish",
+    ),
+    path("posts/settings/", views.PostSettingsView.as_view(), name="post-settings"),
     # Groups (1.11): the group itself lives in profile under /api/v1/groups/.
     path("posts/groups/<uuid:group_id>/", group_views.GroupFeedView.as_view(), name="group-feed"),
     path(
@@ -33,6 +42,7 @@ urlpatterns = [
     path("posts/<uuid:post_id>/vote/", views.VoteView.as_view(), name="post-vote"),
     path("posts/<uuid:post_id>/save/", views.SaveView.as_view(), name="post-save"),
     path("posts/<uuid:post_id>/report/", views.ReportView.as_view(), name="post-report"),
+    path("posts/<uuid:post_id>/tags/me/", views.MyTagView.as_view(), name="post-my-tag"),
     path("comments/<uuid:comment_id>/", views.CommentDetailView.as_view(), name="comment-detail"),
     path(
         "comments/<uuid:comment_id>/replies/", views.RepliesView.as_view(), name="comment-replies"

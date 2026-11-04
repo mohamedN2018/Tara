@@ -16,9 +16,11 @@ import {
   PhoneMissed,
   Share2,
   ShoppingBag,
+  Tag,
   UserCheck,
   UserPlus,
   UsersRound,
+  Video,
 } from "lucide-vue-next";
 
 import { sameOriginPath } from "@/lib/redirect";
@@ -30,6 +32,7 @@ const KIND_ICONS: Record<string, LucideIcon> = {
   "comment.reply": MessageSquare,
   "post.share": Share2,
   mention: AtSign,
+  "post.tag": Tag,
   "friend.request": UserPlus,
   "friend.accepted": UserCheck,
   follow: UserPlus,
@@ -51,6 +54,7 @@ const KIND_ICONS: Record<string, LucideIcon> = {
   "group.post": UsersRound,
   "group.role": UsersRound,
   "group.announcement": Megaphone,
+  "video.ready": Video,
 };
 
 export const iconFor = (kind: string): LucideIcon => KIND_ICONS[kind] ?? Bell;

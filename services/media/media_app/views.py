@@ -4,16 +4,17 @@ from __future__ import annotations
 
 from django.conf import settings
 from django.db import transaction
+from django.http import HttpResponse
 from django.utils.decorators import method_decorator
 from drf_spectacular.utils import extend_schema
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from tara_common.responses import data_response
 
-from . import services
+from . import playback, services
 from .serializers import SignUploadSerializer
 
 
@@ -31,6 +32,7 @@ class SignUploadView(APIView):
             mime=v["mime"],
             size=v["size"],
             visibility=v["visibility"],
+            purpose=v["purpose"],
         )
         return data_response(result, status=201)
 
@@ -68,3 +70,55 @@ class DownloadUrlView(APIView):
     def get(self, request: Request, media_id: str) -> Response:
         url = services.download_url(request.user.account_id, media_id)
         return data_response({"download_url": url, "expires_in": settings.SIGNED_URL_TTL})
+
+
+# ---- video playback (roadmap 5.3) ----------------------------------------------------
+
+
+@method_decorator(transaction.non_atomic_requests, name="dispatch")
+class PlaybackView(APIView):
+    """Where and how to play a transcoded video: a tokenised HLS playlist URL
+    (relative to the API root), the poster and the MP4 fallback. 404 for a
+    viewer who may not see the video's post, and for anyone but the owner
+    before it is ready (the owner then gets its status and failure code)."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: None}, tags=["media"])
+    def get(self, request: Request, media_id: str) -> Response:
+        return data_response(playback.playback(request.user.account_id, str(media_id)))
+
+
+def _playlist_response(text: str) -> HttpResponse:
+    response = HttpResponse(text, content_type=playback.PLAYLIST_TYPE)
+    # Per viewer (the token is in the URL): never stored by a shared cache.
+    response["Cache-Control"] = f"private, max-age={settings.MEDIA_PLAYBACK_ACCESS_CACHE_SECONDS}"
+    response["Referrer-Policy"] = "no-referrer"
+    return response
+
+
+@method_decorator(transaction.non_atomic_requests, name="dispatch")
+class MasterPlaylistView(APIView):
+    """The HLS master playlist. Authorised by ``?token=`` (native HLS players
+    cannot send headers); access is checked again on every request."""
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+
+    @extend_schema(responses={200: None}, tags=["media"])
+    def get(self, request: Request, media_id: str) -> HttpResponse:
+        token = request.query_params.get("token", "")
+        return _playlist_response(playback.master_playlist(token, str(media_id)))
+
+
+@method_decorator(transaction.non_atomic_requests, name="dispatch")
+class RenditionPlaylistView(APIView):
+    """One rendition's playlist, its segment URLs presigned for the current time bucket."""
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+
+    @extend_schema(responses={200: None}, tags=["media"])
+    def get(self, request: Request, media_id: str, rung: int) -> HttpResponse:
+        token = request.query_params.get("token", "")
+        return _playlist_response(playback.rendition_playlist(token, str(media_id), int(rung)))

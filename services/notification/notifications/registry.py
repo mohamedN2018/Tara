@@ -50,6 +50,8 @@ _KINDS = [
     Kind("post.comment", "social", aggregate=PER_SUBJECT),
     Kind("comment.reply", "social"),
     Kind("mention", "social"),
+    Kind("post.tag", "social"),  # tagged in a post (2C)
+    Kind("video.ready", "social"),  # your uploaded video finished processing (5.2)
     Kind("post.share", "social", aggregate=PER_SUBJECT),
     Kind(
         "friend.request",

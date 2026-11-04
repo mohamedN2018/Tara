@@ -35,6 +35,54 @@ class ApprovalState(models.TextChoices):
     PENDING = "pending", "Waiting for the group's approval"
 
 
+class PostState(models.TextChoices):
+    """A draft or a scheduled post is seen by nobody but its author (2C)."""
+
+    PUBLISHED = "published", "Published"
+    DRAFT = "draft", "Draft"
+    SCHEDULED = "scheduled", "Scheduled"
+
+
+class TagPolicy(models.TextChoices):
+    """Who may tag an account in a post (the "who can tag me" setting)."""
+
+    EVERYONE = "everyone", "Everyone"
+    FRIENDS = "friends", "Friends"
+    NOBODY = "nobody", "Nobody"
+
+
+# Feeling and activity keys (2C): a fixed catalogue, translated by the clients.
+FEELING_KEYS = (
+    "happy",
+    "loved",
+    "excited",
+    "grateful",
+    "blessed",
+    "proud",
+    "relaxed",
+    "motivated",
+    "hopeful",
+    "sad",
+    "tired",
+    "sick",
+)
+ACTIVITY_KEYS = (
+    "celebrating",
+    "traveling",
+    "eating",
+    "drinking",
+    "watching",
+    "reading",
+    "listening",
+    "playing",
+    "working",
+    "studying",
+    "exercising",
+    "praying",
+)
+FEELINGS = FEELING_KEYS + ACTIVITY_KEYS
+
+
 class Post(models.Model):
     class Type(models.TextChoices):
         TEXT = "text", "Text"
@@ -69,6 +117,12 @@ class Post(models.Model):
         max_length=10, choices=ApprovalState.choices, default=ApprovalState.APPROVED
     )
     pinned_at = models.DateTimeField(null=True, blank=True)  # a group announcement
+    # Drafts and scheduling (2C). ``created_at`` is set again when a draft or a
+    # scheduled post is published, so it is always the publication time.
+    state = models.CharField(max_length=10, choices=PostState.choices, default=PostState.PUBLISHED)
+    publish_at = models.DateTimeField(null=True, blank=True)
+    location = models.CharField(max_length=120, blank=True, default="")
+    feeling = models.CharField(max_length=24, blank=True, default="")
     reaction_count = models.PositiveIntegerField(default=0)
     comment_count = models.PositiveIntegerField(default=0)
     share_count = models.PositiveIntegerField(default=0)
@@ -86,11 +140,32 @@ class Post(models.Model):
                 name="post_group_idx",
                 condition=models.Q(group_id__isnull=False),
             ),
+            # The publish-scheduled beat task, and an author's drafts list.
+            models.Index(
+                fields=["publish_at"],
+                name="post_scheduled_idx",
+                condition=models.Q(state="scheduled"),
+            ),
+            models.Index(
+                fields=["author_id", "-updated_at"],
+                name="post_drafts_idx",
+                condition=~models.Q(state="published"),
+            ),
         ]
 
     @property
+    def is_published(self) -> bool:
+        return self.state == PostState.PUBLISHED
+
+    @property
     def is_visible(self) -> bool:
-        return self.deleted_at is None and self.moderation_status != self.ModerationStatus.REMOVED
+        """Drafts and scheduled posts are not visible, not even to their author
+        through the public post API: they have their own endpoints."""
+        return (
+            self.deleted_at is None
+            and self.moderation_status != self.ModerationStatus.REMOVED
+            and self.state == PostState.PUBLISHED
+        )
 
 
 class Poll(models.Model):
@@ -275,6 +350,37 @@ class Mention(models.Model):
 
     class Meta:
         db_table = "mention"
+
+
+class PostTag(models.Model):
+    """A person tagged in a post (2C). Checked against blocks and the tagged
+    account's ``who_can_tag`` setting when added; the tagged person may remove it."""
+
+    id = models.BigAutoField(primary_key=True)
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name="tags")
+    account_id = models.UUIDField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "post_tag"
+        ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(fields=["post", "account_id"], name="post_tag_uniq"),
+        ]
+        indexes = [models.Index(fields=["account_id"], name="post_tag_account_idx")]
+
+
+class PostSettings(models.Model):
+    """An account's post settings kept by post (2C). No row means the defaults."""
+
+    account_id = models.UUIDField(primary_key=True)
+    who_can_tag = models.CharField(
+        max_length=8, choices=TagPolicy.choices, default=TagPolicy.FRIENDS
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "post_account_settings"
 
 
 class SavedCollection(models.Model):

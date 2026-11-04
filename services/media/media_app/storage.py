@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import hmac
 import logging
+import time
 from dataclasses import dataclass
-from urllib.parse import urlencode
+from pathlib import Path
+from urllib.parse import quote, urlencode, urlsplit
 
 from django.conf import settings
 
@@ -237,3 +240,104 @@ def delete(storage_key: str) -> None:
         _memory.pop(storage_key, None)
         return
     _client().delete_object(Bucket=settings.S3_BUCKET, Key=storage_key)
+
+
+# ---- video pipeline (roadmap 5.2 / 5.3) -----------------------------------------
+
+
+def download_to(storage_key: str, path: Path) -> None:
+    """Stream an object to a local file (the transcoder's scratch dir)."""
+    if _backend() == "memory":
+        Path(path).write_bytes(_memory[storage_key][0])
+        return
+    _client().download_file(settings.S3_BUCKET, storage_key, str(path))
+
+
+def upload_from(storage_key: str, path: Path, mime: str) -> None:
+    """Stream a local file to an object (multipart for big files)."""
+    if _backend() == "memory":
+        _memory[storage_key] = (Path(path).read_bytes(), mime)
+        return
+    _client().upload_file(
+        str(path), settings.S3_BUCKET, storage_key, ExtraArgs={"ContentType": mime}
+    )
+
+
+def delete_prefix(prefix: str) -> int:
+    """Delete every object under ``prefix`` (which must end with ``/``)."""
+    if not prefix.endswith("/"):
+        raise ValueError("prefix must end with /")
+    if _backend() == "memory":
+        keys = [k for k in _memory if k.startswith(prefix)]
+        for k in keys:
+            _memory.pop(k, None)
+        return len(keys)
+    client = _client()
+    deleted = 0
+    for page in client.get_paginator("list_objects_v2").paginate(
+        Bucket=settings.S3_BUCKET, Prefix=prefix
+    ):
+        keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+        if keys:
+            client.delete_objects(Bucket=settings.S3_BUCKET, Delete={"Objects": keys})
+            deleted += len(keys)
+    return deleted
+
+
+def memory_keys(prefix: str = "") -> list[str]:
+    """Keys held by the memory backend (tests)."""
+    return sorted(k for k in _memory if k.startswith(prefix))
+
+
+def _hmac(key: bytes, msg: str) -> bytes:
+    return hmac.new(key, msg.encode(), hashlib.sha256).digest()
+
+
+def presign_get_at(
+    storage_key: str, *, signed_at: int, expires: int, content_type: str = ""
+) -> str:
+    """A SigV4 presigned GET URL signed *as of* ``signed_at`` (epoch seconds).
+
+    boto3 always signs with the current time, so two viewers in the same
+    second get different URLs. HLS segment URLs are signed per time bucket
+    instead (roadmap 5.3): everyone gets the same URL for a segment within a
+    bucket, so browser and edge caches keep working, and the URL still expires.
+    Same algorithm as boto3's ``generate_presigned_url`` for a path-style GET.
+    """
+    if _backend() in ("fake", "memory"):
+        query = urlencode(
+            {
+                "fake-download": 1,
+                "X-Amz-Date": time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(signed_at)),
+                "X-Amz-Expires": expires,
+                **({"response-content-type": content_type} if content_type else {}),
+            }
+        )
+        return f"{settings.S3_PUBLIC_BASE}/{settings.S3_BUCKET}/{storage_key}?{query}"
+    endpoint = urlsplit(settings.S3_PUBLIC_ENDPOINT_URL or settings.S3_ENDPOINT_URL)
+    host = endpoint.netloc
+    uri = quote(f"{endpoint.path.rstrip('/')}/{settings.S3_BUCKET}/{storage_key}", safe="/-_.~")
+    amz_date = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(signed_at))
+    day = amz_date[:8]
+    scope = f"{day}/{settings.S3_REGION}/s3/aws4_request"
+    params = {
+        "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+        "X-Amz-Credential": f"{settings.S3_ACCESS_KEY}/{scope}",
+        "X-Amz-Date": amz_date,
+        "X-Amz-Expires": str(int(expires)),
+        "X-Amz-SignedHeaders": "host",
+    }
+    if content_type:
+        params["response-content-type"] = content_type
+    query = "&".join(
+        f"{quote(k, safe='-_.~')}={quote(v, safe='-_.~')}" for k, v in sorted(params.items())
+    )
+    canonical = "\n".join(["GET", uri, query, f"host:{host}\n", "host", "UNSIGNED-PAYLOAD"])
+    to_sign = "\n".join(
+        ["AWS4-HMAC-SHA256", amz_date, scope, hashlib.sha256(canonical.encode()).hexdigest()]
+    )
+    key = _hmac(("AWS4" + settings.S3_SECRET_KEY).encode(), day)
+    for part in (settings.S3_REGION, "s3", "aws4_request"):
+        key = _hmac(key, part)
+    signature = hmac.new(key, to_sign.encode(), hashlib.sha256).hexdigest()
+    return f"{endpoint.scheme}://{host}{uri}?{query}&X-Amz-Signature={signature}"

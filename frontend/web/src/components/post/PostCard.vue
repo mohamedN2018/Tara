@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   Bookmark,
+  EyeOff,
   Flag,
   Globe,
   Lock,
@@ -13,18 +14,23 @@ import {
   UserCheck,
   Users,
   UsersRound,
+  X,
 } from "lucide-vue-next";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import type { RouteLocationRaw } from "vue-router";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
+import CommentInput from "@/components/post/CommentInput.vue";
+import CommentItem from "@/components/post/CommentItem.vue";
 import CommentList from "@/components/post/CommentList.vue";
 import LinkPreviewCard from "@/components/post/LinkPreviewCard.vue";
+import VideoPlayer from "@/components/media/VideoPlayer.vue";
 import MediaGrid from "@/components/post/MediaGrid.vue";
 import MediaTheater from "@/components/post/MediaTheater.vue";
 import PollCard from "@/components/post/PollCard.vue";
 import PostActions from "@/components/post/PostActions.vue";
+import PostComposerMeta from "@/components/post/PostComposerMeta.vue";
 import ReactionsDialog from "@/components/post/ReactionsDialog.vue";
 import RichText from "@/components/post/RichText.vue";
 import ShareBox from "@/components/post/ShareBox.vue";
@@ -36,7 +42,7 @@ import { hasLink } from "@/lib/richText";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import { useMediaViewer } from "@/lib/useMediaViewer";
 import { groupPostsService } from "@/services/groups";
-import { COMMENT_POLICIES, type CommentPolicy, postService, REPORT_ERRORS } from "@/services/post";
+import { type Comment, COMMENT_POLICIES, type CommentPolicy, postService, REPORT_ERRORS } from "@/services/post";
 import { useAuthStore } from "@/stores/auth";
 import { useDirectoryStore } from "@/stores/directory";
 import { useToastStore } from "@/stores/toasts";
@@ -56,10 +62,24 @@ const props = withDefaults(
     groupModerator?: boolean;
     /** In a group feed: the viewer may pin announcements. */
     groupCanPin?: boolean;
+    /** In the home feed: offer "Hide post" (X and menu); the feed handles `hide`. */
+    hideable?: boolean;
   }>(),
-  { startCommentsOpen: false, focusCommentId: null, focusThreadId: null, groupModerator: false, groupCanPin: false },
+  {
+    startCommentsOpen: false,
+    focusCommentId: null,
+    focusThreadId: null,
+    groupModerator: false,
+    groupCanPin: false,
+    hideable: false,
+  },
 );
-const emit = defineEmits<{ removed: [id: string]; shared: [post: Post]; pinned: [id: string, pinned: boolean] }>();
+const emit = defineEmits<{
+  removed: [id: string];
+  shared: [post: Post];
+  pinned: [id: string, pinned: boolean];
+  hide: [post: Post];
+}>();
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -80,6 +100,12 @@ const canEdit = computed(
   () => isAuthor.value && !props.post.partial && props.post.type !== "poll",
 );
 const isShare = computed(() => !!props.post.shared_post_id);
+// Hiding your own post from your feed isn't offered.
+const canHide = computed(() => props.hideable && !isAuthor.value);
+function hidePost() {
+  menuOpen.value = false;
+  emit("hide", props.post);
+}
 
 // The server builds the preview after the post is saved, so a post just written
 // doesn't have it yet.
@@ -289,6 +315,100 @@ function toggleComments() {
   if (showComments.value) commentsMounted.value = true;
 }
 
+// Inline preview (plan 08, 2B): up to two comments the post serializer sends as
+// `top_comments` (2C), which the server filters for blocks. A server without the
+// field sends none, and only the comment box shows.
+const PREVIEW_MAX = 2;
+const previewComments = ref<Comment[]>(
+  ((props.post as Post & { top_comments?: Comment[] }).top_comments ?? []).slice(0, PREVIEW_MAX),
+);
+const moreToView = computed(() => commentCount.value > previewComments.value.length);
+const previewBusyId = ref<string | null>(null);
+const inlineSubmitting = ref(false);
+const previewReported = ref(new Set<string>());
+
+function replacePreview(c: Comment) {
+  previewComments.value = previewComments.value.map((x) => (x.id === c.id ? c : x));
+}
+
+/** Gone from the full list (or already gone on the server): a root takes its replies along. */
+function dropPreview(c: Pick<Comment, "id">) {
+  previewComments.value = previewComments.value.filter((x) => x.id !== c.id && x.parent_id !== c.id);
+}
+
+async function submitInline(body: string) {
+  if (inlineSubmitting.value) return;
+  inlineSubmitting.value = true;
+  try {
+    const created = await postService.addComment(props.post.id, body);
+    previewComments.value = [...previewComments.value.filter((c) => c.id !== created.id), created];
+    commentCount.value += 1;
+    // The full list loads afresh next time it opens.
+    commentsMounted.value = false;
+  } catch (e) {
+    toasts.error(e);
+  } finally {
+    inlineSubmitting.value = false;
+  }
+}
+
+async function editPreview(c: Comment, body: string) {
+  previewBusyId.value = c.id;
+  try {
+    replacePreview({ ...c, ...(await postService.editComment(c.id, body)) });
+  } catch (e) {
+    toasts.error(e);
+  } finally {
+    previewBusyId.value = null;
+  }
+}
+
+async function removePreview(c: Comment) {
+  previewBusyId.value = c.id;
+  try {
+    const { comment_count } = await postService.deleteComment(c.id);
+    previewComments.value = previewComments.value.filter((x) => x.id !== c.id);
+    commentCount.value = comment_count;
+    commentsMounted.value = false;
+  } catch (e) {
+    // 404: deleted already (elsewhere, or hidden from us): it has no place here.
+    if ((e as { response?: { status?: number } })?.response?.status === 404) dropPreview(c);
+    else toasts.error(e);
+  } finally {
+    previewBusyId.value = null;
+  }
+}
+
+async function reactPreview(c: Comment, type: string | null) {
+  const had = !!c.my_reaction;
+  const optimistic: Comment = {
+    ...c,
+    my_reaction: type,
+    reaction_count: Math.max(0, (c.reaction_count ?? 0) + (type && !had ? 1 : !type && had ? -1 : 0)),
+  };
+  replacePreview(optimistic);
+  try {
+    if (type) replacePreview({ ...optimistic, reaction_count: await postService.reactComment(c.id, type) });
+    else await postService.unreactComment(c.id);
+  } catch (e) {
+    replacePreview(c);
+    toasts.error(e);
+  }
+}
+
+async function reportPreview(c: Comment, reason: string) {
+  try {
+    await postService.reportComment(c.id, reason);
+    previewReported.value = new Set(previewReported.value).add(c.id);
+  } catch (e) {
+    toasts.error(e, REPORT_ERRORS);
+  }
+}
+
+function previewName(id: string): string {
+  return knownNames.value[id] || directory.label(id);
+}
+
 const sharing = ref(false);
 function onShared(post: Post) {
   sharing.value = false;
@@ -319,6 +439,7 @@ async function toggleSave() {
         <RouterLink :to="authorTo" class="block truncate text-[15px] font-bold text-gray-900 hover:text-brand-600 dark:text-white dark:hover:text-brand-300" dir="auto">
           {{ authorDisplay }}
         </RouterLink>
+        <PostComposerMeta :post="post" />
         <div class="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
           <RouterLink :to="`/posts/${post.id}`" class="hover:underline" :title="fullTime">
             {{ relativeTime(post.created_at) }}
@@ -397,6 +518,13 @@ async function toggleSave() {
                 <Trash2 class="h-4 w-4" /> {{ t("friends.delete") }}
               </button>
               <button
+                v-if="canHide"
+                class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-start text-sm transition hover:bg-gray-100 dark:hover:bg-gray-800"
+                @click="hidePost"
+              >
+                <EyeOff class="h-4 w-4" /> {{ t("homeFeed.hide.action") }}
+              </button>
+              <button
                 v-if="!isAuthor"
                 class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-start text-sm transition hover:bg-gray-100 dark:hover:bg-gray-800"
                 @click="menuOpen = false; showReport = true"
@@ -406,6 +534,17 @@ async function toggleSave() {
             </div>
           </template>
         </div>
+
+        <button
+          v-if="canHide"
+          class="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:text-gray-400"
+          :aria-label="t('homeFeed.hide.action')"
+          :title="t('homeFeed.hide.action')"
+          data-testid="hide-post"
+          @click="hidePost"
+        >
+          <X class="h-5 w-5" aria-hidden="true" />
+        </button>
       </div>
     </header>
 
@@ -437,7 +576,9 @@ async function toggleSave() {
     </div>
     <p v-if="reported" class="mt-2 text-xs font-medium text-green-600">{{ t("post.reportSent") }}</p>
 
-    <MediaGrid v-if="mediaIds.length" :media-ids="mediaIds" :author-name="authorDisplay" @open="viewer.open" />
+    <!-- A video post (5.7): one transcoded video, played through the media service's token-checked HLS. -->
+    <VideoPlayer v-if="post.type === 'video' && mediaIds.length" :media-id="mediaIds[0]" />
+    <MediaGrid v-else-if="mediaIds.length" :media-ids="mediaIds" :author-name="authorDisplay" @open="viewer.open" />
     <MediaTheater
       v-if="viewer.index.value !== null"
       :media-ids="mediaIds"
@@ -465,6 +606,39 @@ async function toggleSave() {
     <ShareBox v-if="sharing" :post="post" @cancel="sharing = false" @shared="onShared" />
 
     <section
+      v-if="!showComments && (previewComments.length || commentPolicy !== 'off')"
+      class="mt-2 space-y-2 border-t border-gray-100 pt-3 dark:border-gray-800"
+      :aria-label="previewComments.length ? t('homeFeed.comments.preview') : undefined"
+      data-testid="comment-preview"
+    >
+      <button
+        v-if="previewComments.length && moreToView"
+        type="button"
+        class="text-sm font-semibold text-gray-600 hover:underline dark:text-gray-300"
+        @click="toggleComments"
+      >
+        {{ t("post.moreComments") }}
+      </button>
+      <CommentItem
+        v-for="c in previewComments"
+        :key="c.id"
+        :comment="c"
+        :name="previewName(c.author_id)"
+        :can-edit="c.author_id === auth.account?.id"
+        :can-delete="c.author_id === auth.account?.id || isAuthor || groupModerator"
+        :can-reply="commentPolicy !== 'off'"
+        :busy="previewBusyId === c.id"
+        :reported="previewReported.has(c.id)"
+        @reply="toggleComments"
+        @edit="editPreview(c, $event)"
+        @remove="removePreview(c)"
+        @react="reactPreview(c, $event)"
+        @report="reportPreview(c, $event)"
+      />
+      <CommentInput v-if="commentPolicy !== 'off'" :submitting="inlineSubmitting" @submit="submitInline" />
+    </section>
+
+    <section
       v-if="commentsMounted"
       v-show="showComments"
       class="mt-3 border-t border-gray-100 pt-3 dark:border-gray-800"
@@ -479,6 +653,8 @@ async function toggleSave() {
         :can-moderate="groupModerator"
         @added="commentCount += 1"
         @total="commentCount = $event"
+        @edited="replacePreview"
+        @removed="dropPreview"
       />
     </section>
 

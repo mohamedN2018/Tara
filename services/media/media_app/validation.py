@@ -11,6 +11,15 @@ ALLOWED_MIME = {
     "file": {"application/pdf"},
 }
 
+# Videos the transcoder accepts (roadmap 5.2): it re-encodes them, so a
+# QuickTime upload from an iPhone is fine. Videos served as uploaded (chat)
+# stay with the types browsers play directly (``ALLOWED_MIME["video"]``).
+TRANSCODED_VIDEO_MIME = {"video/mp4", "video/quicktime", "video/webm"}
+
+# The ffmpeg demuxer forced for each transcoded type, so a file is never
+# probed as something else (an HLS playlist, an image sequence...).
+VIDEO_DEMUXERS = {"video/mp4": "mov", "video/quicktime": "mov", "video/webm": "matroska"}
+
 # How many leading bytes the checks below need.
 HEAD_BYTES = 64
 
@@ -29,7 +38,9 @@ def normalize_mime(mime: str) -> str:
     return mime.split(";")[0].strip().lower()
 
 
-def is_allowed(kind: str, mime: str) -> bool:
+def is_allowed(kind: str, mime: str, purpose: str = "") -> bool:
+    if kind == "video" and purpose:
+        return normalize_mime(mime) in TRANSCODED_VIDEO_MIME
     return normalize_mime(mime) in ALLOWED_MIME.get(kind, set())
 
 
@@ -57,6 +68,15 @@ def _is_heif(head: bytes) -> bool:
     return any(brand in HEIF_BRANDS for brand in brands)
 
 
+# Top-level atoms an old QuickTime file may start with instead of ``ftyp``.
+_QT_FIRST_ATOMS = frozenset({b"moov", b"mdat", b"wide", b"free", b"skip", b"pnot"})
+
+
+def _is_quicktime(head: bytes) -> bool:
+    """A QuickTime movie: an ``ftyp`` box, or one of the classic first atoms."""
+    return _is_iso_bmff(head) or (len(head) >= 8 and head[4:8] in _QT_FIRST_ATOMS)
+
+
 def _is_mp3(head: bytes) -> bool:
     if head.startswith(b"ID3"):
         return True
@@ -74,6 +94,7 @@ _CONTAINER_CHECKS = {
     "image/heif": _is_heif,
     "audio/wav": lambda h: _is_riff(h, b"WAVE"),
     "video/mp4": _is_iso_bmff,
+    "video/quicktime": _is_quicktime,
     "audio/mp4": _is_iso_bmff,
     "video/webm": lambda h: h.startswith(_EBML),
     "audio/webm": lambda h: h.startswith(_EBML),

@@ -85,6 +85,8 @@ POST_REPORT_RATE = os.getenv("POST_REPORT_RATE", "20/hour")
 # group.post.published / group.announcement.pinned (1.11): two-release rollout
 # (roadmap 3.3); deploy notification first, then turn this on.
 POST_EMIT_GROUP_EVENTS = env_bool("POST_EMIT_GROUP_EVENTS", True)
+# post.tagged (2C): two-release rollout; notification's post.tag consumer ships first.
+POST_EMIT_TAG_EVENTS = env_bool("POST_EMIT_TAG_EVENTS", True)
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Tara Post API",
@@ -123,6 +125,8 @@ CELERY_BEAT_SCHEDULE = {
     "purge-events": {"task": "tara_events.purge_events", "schedule": 3600.0},
     # Event reminders (about 24 h and 1 h before; once each) and marking ended events.
     "gatherings-tick": {"task": "gatherings.tick", "schedule": 300.0},
+    # Scheduled posts whose time has come (2C); SKIP LOCKED, so once per post.
+    "posts-publish-scheduled": {"task": "posts.publish_scheduled", "schedule": 60.0},
 }
 
 CORS_ALLOWED_ORIGINS = env_list("POST_CORS_ORIGINS", "http://localhost:5173")

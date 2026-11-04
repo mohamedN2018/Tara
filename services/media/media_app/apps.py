@@ -7,6 +7,9 @@ class MediaConfig(AppConfig):
     verbose_name = "Media"
 
     def ready(self) -> None:
+        # Registers the transcoder's tasks (media.video.*) with Celery.
+        from . import transcode  # noqa: F401
+
         try:
             from tara_observability.tracing import setup_tracing
 

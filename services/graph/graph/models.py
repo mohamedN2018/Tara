@@ -24,10 +24,133 @@ class AccountRef(models.Model):
 
     account_id = models.UUIDField(primary_key=True)
     handle = models.CharField(max_length=40, blank=True, default="")
+    # Profile's discoverability flag (``UserProfile.searchable``, carried in
+    # ``profile.updated``). ``False`` keeps the account out of suggestions.
+    searchable = models.BooleanField(default=True, db_default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "account_ref"
+
+
+class ListVisibility(models.TextChoices):
+    PUBLIC = "public", "Public"
+    FRIENDS = "friends", "Friends"
+    ONLY_ME = "only_me", "Only me"
+
+
+class RelationshipSettings(models.Model):
+    """Who may see an account's relationship lists and counts (roadmap 1.6).
+
+    A missing row means every default: lists and counts are public and anyone
+    may send a friend request.
+    """
+
+    class RequestsFrom(models.TextChoices):
+        EVERYONE = "everyone", "Everyone"
+        FRIENDS_OF_FRIENDS = "friends_of_friends", "Friends of friends"
+
+    account_id = models.UUIDField(primary_key=True)
+    friends_list_visibility = models.CharField(
+        max_length=12, choices=ListVisibility.choices, default=ListVisibility.PUBLIC
+    )
+    follow_lists_visibility = models.CharField(
+        max_length=12, choices=ListVisibility.choices, default=ListVisibility.PUBLIC
+    )
+    counts_visibility = models.CharField(
+        max_length=12, choices=ListVisibility.choices, default=ListVisibility.PUBLIC
+    )
+    friend_requests_from = models.CharField(
+        max_length=20, choices=RequestsFrom.choices, default=RequestsFrom.EVERYONE
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "relationship_settings"
+
+
+class PageRef(models.Model):
+    """Read model of pages (fed by ``page.created``/``page.updated``) for the
+    "Suggested pages" widget. Only newer events are applied."""
+
+    page_id = models.UUIDField(primary_key=True)
+    handle = models.CharField(max_length=64, blank=True, default="")
+    name = models.CharField(max_length=160, blank=True, default="")
+    category = models.CharField(max_length=80, blank=True, default="")
+    owner_id = models.UUIDField(null=True, blank=True)
+    avatar_media_id = models.UUIDField(null=True, blank=True)
+    status = models.CharField(max_length=16, blank=True, default="")
+    deleted = models.BooleanField(default=False)
+    source_occurred_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "page_ref"
+        indexes = [models.Index(fields=["status", "deleted"], name="page_ref_live_idx")]
+
+
+class _OwnedEdge(models.Model):
+    """A one-way, owner-private relation from ``account_id`` to ``target_id``."""
+
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    account_id = models.UUIDField()
+    target_id = models.UUIDField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        abstract = True
+
+
+class MuteRelation(_OwnedEdge):
+    """``account_id`` no longer sees ``target_id``'s posts in their feed. The
+    muted account is never told."""
+
+    class Meta:
+        db_table = "mute_relation"
+        constraints = [
+            models.UniqueConstraint(fields=["account_id", "target_id"], name="mute_uniq")
+        ]
+
+
+class RestrictRelation(_OwnedEdge):
+    """``target_id``'s comments on ``account_id``'s posts are visible only to
+    the two of them."""
+
+    class Meta:
+        db_table = "restrict_relation"
+        constraints = [
+            models.UniqueConstraint(fields=["account_id", "target_id"], name="restrict_uniq")
+        ]
+
+
+class FavoriteRelation(_OwnedEdge):
+    """``target_id``'s posts come first in ``account_id``'s feed."""
+
+    class Meta:
+        db_table = "favorite_relation"
+        constraints = [
+            models.UniqueConstraint(fields=["account_id", "target_id"], name="favorite_uniq")
+        ]
+
+
+class DismissedSuggestion(models.Model):
+    class TargetType(models.TextChoices):
+        USER = "user", "User"
+        PAGE = "page", "Page"
+
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    account_id = models.UUIDField()
+    target_id = models.UUIDField()
+    target_type = models.CharField(max_length=8, choices=TargetType.choices)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "dismissed_suggestion"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["account_id", "target_id", "target_type"], name="dismissed_uniq"
+            )
+        ]
 
 
 class Friendship(models.Model):

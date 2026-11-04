@@ -33,6 +33,8 @@ export default defineConfig({
           if (id.includes("lucide")) return "icons";
           // Calls only: fetched with the first call, never on page load.
           if (id.includes("livekit-client") || id.includes("@livekit")) return "livekit";
+          // Video playback only: fetched when a video first plays (VideoPlayer).
+          if (id.includes("/hls.js/")) return "hls";
           if (id.includes("/vue") || id.includes("pinia") || id.includes("@intlify") || id.includes("vue-i18n")) {
             return "vue";
           }

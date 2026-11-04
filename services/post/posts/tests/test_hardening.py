@@ -284,22 +284,78 @@ def test_a_friend_can_report_a_friends_only_post(client_for, monkeypatch):
 # ---- video gate and attachment checks (1.5) ------------------------------------------
 
 
-def test_video_posts_are_refused_until_the_video_pipeline(client_for):
+def test_a_video_post_needs_its_video(client_for):
     resp = _create(client_for(_acct()), body="watch", type="video")
     assert resp.status_code == 400
-    assert _error_code(resp) == "video_not_supported_yet"
+    assert _error_code(resp) == "video_required"
     assert Post.objects.count() == 0
     assert _outbox("post.created") == 0
 
 
-def test_a_video_media_is_refused_and_never_bound(client_for, media_stub):
+def _video(media_stub, owner, *, status="ready", purpose="post") -> str:
+    """A video as media's internal lookup reports it (5.2: ``purpose`` says it was transcoded)."""
+    from posts.media_client import MediaInfo
+
+    media_id = str(uuid.uuid4())
+    media_stub.assets[media_id] = MediaInfo(media_id, str(owner), "video", status, purpose)
+    return media_id
+
+
+def test_a_ready_transcoded_video_of_the_author_makes_a_video_post(client_for, media_stub):
     author = _acct()
-    clip = media_stub.add(author, kind="video")
-    resp = _create(client_for(author), body="clip", type="image", media_ids=[clip])
+    clip = _video(media_stub, author)
+    resp = _create(
+        client_for(author), body="clip", type="video", media_ids=[clip], audience="friends"
+    )
+    assert resp.status_code == 201, resp.content
+    post = Post.objects.get()
+    assert post.type == "video"
+    assert [str(m.media_id) for m in post.media.all()] == [clip]
+    # Bound and restricted like photos: media then asks post who may watch it.
+    assert media_stub.binds[-1]["ids"] == [clip] and media_stub.binds[-1]["restricted"] is True
+    assert _outbox("post.created") == 1
+
+
+@pytest.mark.parametrize(
+    ("status", "purpose", "post_type", "code"),
+    [
+        ("processing", "post", "video", "video_not_ready"),
+        ("uploaded", "post", "video", "video_not_ready"),
+        ("failed", "post", "video", "video_not_ready"),
+        # A chat video (served as uploaded, never transcoded) cannot be posted.
+        ("ready", "", "video", "media_kind_not_allowed"),
+        ("ready", "post", "image", "video_post_type"),
+    ],
+)
+def test_video_attachments_are_checked_and_never_bound(
+    client_for, media_stub, status, purpose, post_type, code
+):
+    author = _acct()
+    clip = _video(media_stub, author, status=status, purpose=purpose)
+    resp = _create(client_for(author), body="clip", type=post_type, media_ids=[clip])
     assert resp.status_code == 400
-    assert _error_code(resp) == "video_not_supported_yet"
+    assert _error_code(resp) == code
     assert media_stub.binds == []
     assert Post.objects.count() == 0
+
+
+def test_a_video_post_has_exactly_one_video_and_no_photos(client_for, media_stub):
+    author = _acct()
+    clips = [_video(media_stub, author), _video(media_stub, author)]
+    photo = media_stub.add(author)
+    for media_ids in (clips, [clips[0], photo], [photo]):
+        resp = _create(client_for(author), body="x", type="video", media_ids=media_ids)
+        assert resp.status_code == 400
+        assert _error_code(resp) == "video_post_single"
+    assert media_stub.binds == []
+
+
+def test_another_accounts_video_is_not_found(client_for, media_stub):
+    clip = _video(media_stub, _acct())
+    resp = _create(client_for(_acct()), body="mine?", type="video", media_ids=[clip])
+    assert resp.status_code == 400
+    assert _error_code(resp) == "media_not_owned"
+    assert media_stub.binds == []
 
 
 @pytest.mark.parametrize("owner", ["someone else", "nobody"])

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/relationship.restricted.v1.json",
+  "title": "relationship.restricted v1 payload",
+  "description": "The actor restricted the target: the target's comments on the actor's posts are visible only to the two of them. Behind GRAPH_EMIT_RESTRICT_EVENTS. Subject = the actor.",
+  "type": "object",
+  "properties": {
+    "actor_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "target_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "actor_id",
+    "target_id",
+    "occurred_at"
+  ],
+  "additionalProperties": false
+}

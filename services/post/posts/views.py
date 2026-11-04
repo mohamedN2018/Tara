@@ -15,16 +15,18 @@ from tara_common.pagination import CursorPagination
 from tara_common.responses import data_response
 from tara_resilience.idempotency import idempotent
 
-from . import services
-from .models import IdempotencyRecord
+from . import composer, services
+from .models import IdempotencyRecord, PostState
 from .serializers import (
     CommentCreateSerializer,
     CommentEditSerializer,
     CommentSerializer,
+    DraftEditSerializer,
     PostBatchSerializer,
     PostCreateSerializer,
     PostEditSerializer,
     PostSerializer,
+    PostSettingsSerializer,
     ReactionSerializer,
     ReactorSerializer,
     ReportSerializer,
@@ -48,6 +50,21 @@ def _one(viewer_id: str, post) -> dict:
 def _serialize(viewer_id: str, posts: list) -> list:
     context = {"viewer_state": services.viewer_state(viewer_id, posts)}
     return PostSerializer(posts, many=True, context=context).data
+
+
+def _edit_kwargs(v: dict) -> dict:
+    kwargs = {
+        "body": v.get("body"),
+        "audience": v.get("audience"),
+        "comment_policy": v.get("comment_policy"),
+        "location": v.get("location"),
+        "feeling": v.get("feeling"),
+    }
+    if "tagged_ids" in v:
+        kwargs["tagged_ids"] = [str(t) for t in v["tagged_ids"]]
+    if "publish_at" in v:
+        kwargs["publish_at"] = v["publish_at"]
+    return kwargs
 
 
 def _comments(viewer_id: str, comments: list) -> list:
@@ -90,6 +107,13 @@ class PostCreateView(APIView):
         serializer.is_valid(raise_exception=True)
         v = serializer.validated_data
 
+        if v.get("publish_at"):
+            state = PostState.SCHEDULED
+        elif v.get("draft"):
+            state = PostState.DRAFT
+        else:
+            state = PostState.PUBLISHED
+
         def handler() -> Response:
             post = services.create_post(
                 _me(request),
@@ -100,6 +124,11 @@ class PostCreateView(APIView):
                 poll=v.get("poll"),
                 comment_policy=v["comment_policy"],
                 group_id=v.get("group_id"),
+                tagged_ids=[str(t) for t in v["tagged_ids"]],
+                location=v["location"],
+                feeling=v["feeling"],
+                state=state,
+                publish_at=v.get("publish_at"),
             )
             return data_response(_one(_me(request), post), status=status.HTTP_201_CREATED)
 
@@ -137,18 +166,11 @@ class PostDetailView(APIView):
 
     @extend_schema(request=PostEditSerializer, responses={200: PostSerializer}, tags=["posts"])
     def patch(self, request: Request, post_id: str) -> Response:
-        """Edit the body, audience and/or comment policy. Removed or pending-review
-        posts return 404."""
+        """Edit the body, audience, comment policy, tags, location and/or feeling.
+        Removed or pending-review posts, drafts and scheduled posts return 404."""
         serializer = PostEditSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        v = serializer.validated_data
-        post = services.edit_post(
-            _me(request),
-            post_id,
-            v.get("body"),
-            audience=v.get("audience"),
-            comment_policy=v.get("comment_policy"),
-        )
+        post = services.edit_post(_me(request), post_id, **_edit_kwargs(serializer.validated_data))
         return data_response(_one(_me(request), post))
 
     @extend_schema(responses={204: None}, tags=["posts"])
@@ -385,3 +407,89 @@ class ReportView(APIView):
         serializer.is_valid(raise_exception=True)
         services.report_post(_me(request), post_id, serializer.validated_data["reason"])
         return data_response({"detail": "reported"}, status=status.HTTP_202_ACCEPTED)
+
+
+# ---- the composer (2C): drafts and scheduled posts, tag settings ----------------------
+
+
+class DraftsView(APIView):
+    """The signed-in author's drafts and scheduled posts (nobody else's, ever)."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: PostSerializer(many=True)}, tags=["drafts"])
+    def get(self, request: Request) -> Response:
+        """Last changed first; ``?state=draft`` or ``?state=scheduled`` keeps one kind."""
+        queryset = composer.drafts_queryset(_me(request), request.query_params.get("state"))
+        paginator = CursorPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        return paginator.get_paginated_response(_serialize(_me(request), list(page)))
+
+
+@method_decorator(transaction.non_atomic_requests, name="dispatch")  # tags may call graph
+class DraftDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: PostSerializer}, tags=["drafts"])
+    def get(self, request: Request, post_id: str) -> Response:
+        post = composer.get_draft(_me(request), post_id)
+        return data_response(_one(_me(request), post))
+
+    @extend_schema(request=DraftEditSerializer, responses={200: PostSerializer}, tags=["drafts"])
+    def patch(self, request: Request, post_id: str) -> Response:
+        """Edit a draft; ``publish_at`` schedules it (in the future, at most 75
+        days ahead) and ``null`` turns a scheduled post back into a draft."""
+        serializer = DraftEditSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        post = services.edit_post(
+            _me(request), post_id, draft=True, **_edit_kwargs(serializer.validated_data)
+        )
+        return data_response(_one(_me(request), post))
+
+    @extend_schema(responses={204: None}, tags=["drafts"])
+    def delete(self, request: Request, post_id: str) -> Response:
+        composer.delete_draft(_me(request), post_id)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class DraftPublishView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=None, responses={200: PostSerializer}, tags=["drafts"])
+    def post(self, request: Request, post_id: str) -> Response:
+        """Publish now. 404 once it is published (by the schedule, or twice)."""
+        post = composer.publish_draft(_me(request), post_id)
+        return data_response(_one(_me(request), post))
+
+
+class PostSettingsView(APIView):
+    """The account's post settings: ``who_can_tag`` (everyone, friends, nobody)."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: PostSettingsSerializer}, tags=["settings"])
+    def get(self, request: Request) -> Response:
+        return data_response(composer.get_settings(_me(request)))
+
+    @extend_schema(
+        request=PostSettingsSerializer, responses={200: PostSettingsSerializer}, tags=["settings"]
+    )
+    def patch(self, request: Request) -> Response:
+        serializer = PostSettingsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return data_response(
+            composer.update_settings(
+                _me(request), who_can_tag=serializer.validated_data["who_can_tag"]
+            )
+        )
+
+
+@method_decorator(transaction.non_atomic_requests, name="dispatch")  # visibility calls graph
+class MyTagView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={204: None}, tags=["posts"])
+    def delete(self, request: Request, post_id: str) -> Response:
+        """Remove my own tag from a post (even one I can no longer see)."""
+        composer.remove_my_tag(_me(request), post_id)
+        return Response(status=status.HTTP_204_NO_CONTENT)

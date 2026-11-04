@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 import type { RouteLocationRaw } from "vue-router";
 
 import {
+  type CreateItem,
   createItems,
   filterCreate,
   filterSections,
@@ -12,6 +13,7 @@ import {
 } from "@/components/layout/menuCatalog";
 import { handleMenuKey, menuItems, setRovingItem } from "@/components/layout/menuKeyboard";
 import { useAuthStore } from "@/stores/auth";
+import { useUiStore } from "@/stores/ui";
 
 /**
  * The main menu behind the top bar's grid button: every built service in the
@@ -38,6 +40,13 @@ const sections = computed(() =>
 );
 const creates = computed(() => filterCreate(createItems(auth.capabilities), query.value, t));
 const empty = computed(() => sections.value.length === 0 && creates.value.length === 0);
+
+// "Create > Post" opens the composer dialog (ComposerDialog, 2C) on the home feed.
+const ui = useUiStore();
+function onCreate(item: CreateItem) {
+  close(false);
+  if (item.id === "post") ui.requestCompose();
+}
 
 async function show() {
   open.value = true;
@@ -208,7 +217,7 @@ async function onSearch() {
                 tabindex="-1"
                 class="flex items-center gap-3 rounded-xl p-2 text-sm font-medium transition hover:bg-gray-100 focus:outline-none focus-visible:bg-gray-100 focus-visible:ring-2 focus-visible:ring-brand-400 dark:hover:bg-gray-800 dark:focus-visible:bg-gray-800"
                 :data-testid="`menu-create-${item.id}`"
-                @click="close(false)"
+                @click="onCreate(item)"
               >
                 <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-200/80 text-gray-800 dark:bg-gray-800 dark:text-gray-100">
                   <component :is="item.icon" class="h-5 w-5" aria-hidden="true" />

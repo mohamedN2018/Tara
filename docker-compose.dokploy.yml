@@ -155,6 +155,9 @@ x-graph-env: &graph-env
   GRAPH_DB_USER: ${GRAPH_DB_USER:-graph}
   GRAPH_DEBUG: ${GRAPH_DEBUG:-false}
   GRAPH_SECRET_KEY: ${GRAPH_SECRET_KEY:?}
+  # relationship.* events (plan 08 track 2D). Upgrading: deploy once with false, consumers first.
+  GRAPH_EMIT_MUTE_FAVORITE_EVENTS: ${GRAPH_EMIT_MUTE_FAVORITE_EVENTS:-true}
+  GRAPH_EMIT_RESTRICT_EVENTS: ${GRAPH_EMIT_RESTRICT_EVENTS:-true}
 
 x-media-env: &media-env
   <<: *common-env
@@ -175,6 +178,52 @@ x-media-env: &media-env
   S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-https://${DOMAIN:?}}
   AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-tara}}
   AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:?}}
+  # Video pipeline (5.2 / 5.3): upload caps and quota, playback tokens.
+  MEDIA_VIDEO_MAX_BYTES_POST: ${MEDIA_VIDEO_MAX_BYTES_POST:-209715200}
+  MEDIA_VIDEO_MAX_SECONDS_POST: ${MEDIA_VIDEO_MAX_SECONDS_POST:-600}
+  MEDIA_VIDEO_DAILY_UPLOADS: ${MEDIA_VIDEO_DAILY_UPLOADS:-20}
+  MEDIA_VIDEO_DAILY_BYTES: ${MEDIA_VIDEO_DAILY_BYTES:-2147483648}
+  MEDIA_PLAYBACK_SECRET: ${MEDIA_PLAYBACK_SECRET:-}
+  MEDIA_PLAYBACK_TOKEN_TTL: ${MEDIA_PLAYBACK_TOKEN_TTL:-3600}
+  MEDIA_HLS_URL_WINDOW_SECONDS: ${MEDIA_HLS_URL_WINDOW_SECONDS:-300}
+  MEDIA_PLAYBACK_ACCESS_CACHE_SECONDS: ${MEDIA_PLAYBACK_ACCESS_CACHE_SECONDS:-30}
+  # Declared by media and the transcoder alike: the queue arguments must match.
+  MEDIA_TRANSCODE_CONSUMER_TIMEOUT_MS: ${MEDIA_TRANSCODE_CONSUMER_TIMEOUT_MS:-7200000}
+
+# The video transcoder (5.2) runs untrusted files through ffmpeg, so it gets
+# only this: its database, the broker, a storage user limited to videos/ and
+# the video limits. Not common-env: no INTERNAL_JWT_SECRET, no JWKS, no Redis,
+# no MinIO root, no MEDIA_SECRET_KEY (settings make random per-process ones).
+x-media-transcoder-env: &media-transcoder-env
+  TARA_ENV: production
+  MEDIA_ROLE: transcoder
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  MEDIA_DB_NAME: ${MEDIA_DB_NAME:-media_db}
+  MEDIA_DB_PASSWORD: ${MEDIA_DB_PASSWORD:?}
+  MEDIA_DB_USER: ${MEDIA_DB_USER:-media}
+  RABBITMQ_URL: amqp://${RABBITMQ_USER:-tara}:${RABBITMQ_PASS:?}@rabbitmq:5672//
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: json
+  TZ: ${TZ:-UTC}
+  TARA_STORAGE_BACKEND: s3
+  S3_BUCKET: ${S3_BUCKET:-tara-media}
+  S3_REGION: ${S3_REGION:-us-east-1}
+  S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://minio:9000}
+  AWS_ACCESS_KEY_ID: ${MEDIA_TRANSCODER_S3_ACCESS_KEY:-tara-transcoder}
+  AWS_SECRET_ACCESS_KEY: ${MEDIA_TRANSCODER_S3_SECRET_KEY:?set MEDIA_TRANSCODER_S3_SECRET_KEY (scripts/gen-dokploy-env.sh)}
+  MEDIA_VIDEO_MAX_SECONDS_POST: ${MEDIA_VIDEO_MAX_SECONDS_POST:-600}
+  MEDIA_VIDEO_MAX_HEIGHT: ${MEDIA_VIDEO_MAX_HEIGHT:-720}
+  MEDIA_VIDEO_HDR_MODE: ${MEDIA_VIDEO_HDR_MODE:-tonemap}
+  MEDIA_VIDEO_MP4_FALLBACK: ${MEDIA_VIDEO_MP4_FALLBACK:-false}
+  MEDIA_KEEP_VIDEO_ORIGINALS: ${MEDIA_KEEP_VIDEO_ORIGINALS:-false}
+  MEDIA_TRANSCODE_STEP_TIMEOUT: ${MEDIA_TRANSCODE_STEP_TIMEOUT:-1200}
+  MEDIA_TRANSCODE_CONSUMER_TIMEOUT_MS: ${MEDIA_TRANSCODE_CONSUMER_TIMEOUT_MS:-7200000}
+  MEDIA_VIDEO_MAX_FPS: ${MEDIA_VIDEO_MAX_FPS:-30}
+  MEDIA_VIDEO_MAX_PIXELS: ${MEDIA_VIDEO_MAX_PIXELS:-8294400}
+  MEDIA_FFMPEG_THREADS: ${MEDIA_FFMPEG_THREADS:-2}
+  MEDIA_FFMPEG_MAX_MEMORY_MB: ${MEDIA_FFMPEG_MAX_MEMORY_MB:-1200}
+  MEDIA_TRANSCODE_SCRATCH_DIR: ${MEDIA_TRANSCODE_SCRATCH_DIR:-/tmp/tara-transcode}
 
 x-post-env: &post-env
   <<: *common-env
@@ -188,11 +237,15 @@ x-post-env: &post-env
   POST_SECRET_KEY: ${POST_SECRET_KEY:?}
   # Group post events (1.11). Upgrading: deploy once with false, consumers first.
   POST_EMIT_GROUP_EVENTS: ${POST_EMIT_GROUP_EVENTS:-true}
+  # post.tagged (plan 08 2C). Upgrading: deploy once with false, consumers first.
+  POST_EMIT_TAG_EVENTS: ${POST_EMIT_TAG_EVENTS:-true}
   POST_REPORT_RATE: ${POST_REPORT_RATE:-20/hour}
 
 x-feed-env: &feed-env
   <<: *common-env
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/5
+  # Ranking sessions (1.7): their own Redis; feed falls back to latest order without it.
+  REDIS_HOT_URL: ${REDIS_HOT_URL:-redis://:${REDIS_PASSWORD:?}@redis-hot:6379/0}
   FEED_ALLOWED_HOSTS: ${FEED_ALLOWED_HOSTS:-${DOMAIN:?},feed,localhost,127.0.0.1}
   FEED_CORS_ORIGINS: ${FEED_CORS_ORIGINS:-https://${DOMAIN:?}}
   FEED_DB_NAME: ${FEED_DB_NAME:-feed_db}
@@ -397,6 +450,20 @@ services:
       timeout: 5s
       retries: 12
 
+  # Feed ranking sessions (1.7). Rebuildable, so nothing is persisted; noeviction
+  # makes a full redis-hot refuse writes (feed then serves latest order).
+  redis-hot:
+    <<: *backing
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--requirepass", "${REDIS_PASSWORD:?}",
+              "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+    mem_limit: 160m
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?}", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
   rabbitmq:
     <<: *backing
     image: rabbitmq:3.13-management-alpine
@@ -480,6 +547,11 @@ services:
     build: {context: ., dockerfile: services/feed/Dockerfile}
     image: tara/feed
     environment: {<<: *feed-env, RUN_MIGRATIONS: "true"}
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      redis-hot: {condition: service_started}
+      rabbitmq: {condition: service_healthy}
     mem_limit: 384m
     healthcheck: *healthcheck
 
@@ -613,10 +685,42 @@ services:
   media-worker:
     <<: *app
     image: tara/media
-    command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
+    # Only media's own queue: video transcoding belongs to media-transcoder.
+    command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-Q", "media.tasks", "-l", "info", "--concurrency", "2"]
     environment: {<<: *media-env, RUN_MIGRATIONS: "false"}
     depends_on: {media: {condition: service_healthy}}
     mem_limit: 256m
+
+  # One-shot: the transcoder's MinIO user, limited to videos/ (roadmap §5.1).
+  minio-init:
+    image: cgr.dev/chainguard/minio-client@sha256:39768db4c3fa811bc8f2e2a3e0add8ea391648b1c980de179985e1c353dc1805
+    entrypoint: ["/bin/sh", "/init/init-transcoder-user.sh"]
+    restart: "no"
+    logging: *logging
+    networks: [tara]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-tara}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+      S3_BUCKET: ${S3_BUCKET:-tara-media}
+      MEDIA_TRANSCODER_S3_ACCESS_KEY: ${MEDIA_TRANSCODER_S3_ACCESS_KEY:-tara-transcoder}
+      MEDIA_TRANSCODER_S3_SECRET_KEY: ${MEDIA_TRANSCODER_S3_SECRET_KEY:?}
+    volumes:
+      - ./infra/minio:/init:ro
+    depends_on: {minio: {condition: service_healthy}}
+    mem_limit: 64m
+
+  # Video transcoder (5.2): ffmpeg (in the media image) on queue media.transcode,
+  # one job at a time, 2 CPUs and 1.5 GB at most, non-root, minimal environment.
+  media-transcoder:
+    <<: *app
+    image: tara/media
+    command: ["celery", "-A", "config", "worker", "-Q", "media.transcode", "--concurrency", "1", "--prefetch-multiplier", "1", "-O", "fair", "--max-tasks-per-child", "50", "-l", "info"]
+    environment: *media-transcoder-env
+    depends_on:
+      media: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+    mem_limit: 1536m
+    cpus: 2
 
   post-worker:
     <<: *app

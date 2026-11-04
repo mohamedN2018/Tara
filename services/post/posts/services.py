@@ -15,7 +15,7 @@ from django.utils import timezone
 from tara_common.exceptions import Conflict, TaraAPIError
 from tara_events.envelope import uuid7
 
-from . import events, linkpreview, media_client
+from . import composer, events, linkpreview, media_client
 from . import groups as group_rm
 from .clients import get_relationship, resolve_handles
 from .models import (
@@ -39,6 +39,7 @@ from .models import (
     PostReaction,
     PostReactionCount,
     PostReport,
+    PostState,
     SavedCollection,
     SavedItem,
     Share,
@@ -228,12 +229,23 @@ def _bad_request(message: str, code: str = "validation_error") -> TaraAPIError:
     return TaraAPIError(message, code=code, http_status_code=400)
 
 
-def _video_not_supported() -> TaraAPIError:
-    # Video posts come with the video pipeline (roadmap step 5, decision D1).
-    return _bad_request("Video posts are not supported yet.", "video_not_supported_yet")
+def _check_video(infos: list, post_type: str) -> None:
+    """A video post (roadmap 5.2, D1): exactly one video, the author's own,
+    transcoded by media's pipeline (``purpose=post``) and ready.
+
+    Media plays it only to viewers post's visibility endpoint lets see the
+    post, so the audience, blocks and moderator removal apply to it."""
+    if post_type != Post.Type.VIDEO:
+        raise _bad_request("A video needs the video post type.", "video_post_type")
+    if len(infos) != 1 or infos[0].kind != "video":
+        raise _bad_request("A video post has exactly one video.", "video_post_single")
+    if getattr(infos[0], "purpose", "") != "post":
+        raise _bad_request("This video cannot be posted.", "media_kind_not_allowed")
+    if infos[0].status != "ready":
+        raise _bad_request("The video is still processing.", "video_not_ready")
 
 
-def _check_attachments(author_id: str, media_ids: list[str]) -> None:
+def _check_attachments(author_id: str, media_ids: list[str], post_type: str = "") -> None:
     """Each id is the author's own image, uploaded, and on no other live post.
 
     A remote read, so callers run it before their write transaction.
@@ -247,9 +259,9 @@ def _check_attachments(author_id: str, media_ids: list[str]) -> None:
     # Someone else's media and unknown ids look the same, so neither leaks.
     if any(i is None or i.owner_id != str(author_id) for i in infos):
         raise _bad_request("Media not found.", "media_not_owned")
-    if any(i.kind == "video" for i in infos):
-        raise _video_not_supported()
-    if any(i.kind != "image" for i in infos):
+    if any(i.kind == "video" for i in infos) or post_type == Post.Type.VIDEO:
+        _check_video(infos, post_type)
+    elif any(i.kind != "image" for i in infos):
         raise _bad_request("Only images can be attached to a post.", "media_kind_not_allowed")
     if any(i.status not in _ATTACHABLE_STATUSES for i in infos):
         raise _bad_request("Media upload is not complete.", "media_not_ready")
@@ -279,6 +291,11 @@ def create_post(
     poll: dict | None = None,
     comment_policy: str = CommentPolicy.EVERYONE,
     group_id=None,
+    tagged_ids: list[str] | None = None,
+    location: str = "",
+    feeling: str = "",
+    state: str = PostState.PUBLISHED,
+    publish_at=None,
 ) -> Post:
     """Media are checked and bound to the post through media before the write
     transaction opens, so a media outage fails the request (503) instead of
@@ -287,7 +304,24 @@ def create_post(
     With ``group_id`` the author must be an active member (asked of profile);
     the audience is forced to ``group`` whatever the client sent, the media are
     restricted (they follow the group's visibility), and with post approval on a
-    plain member's post waits for the group's staff."""
+    plain member's post waits for the group's staff.
+
+    ``state`` ``draft`` or ``scheduled`` (with ``publish_at``) keeps the post
+    for its author only, emits nothing, and binds its media restricted; it is
+    published later through ``composer`` (2C). Tags are checked here, against
+    blocks and each person's "who can tag me" setting."""
+    if state not in PostState.values:
+        raise _bad_request("Invalid state.")
+    if state != PostState.PUBLISHED and group_id:
+        raise _bad_request(
+            "Drafts and scheduled posts are not available in groups.", "group_drafts_not_supported"
+        )
+    if state == PostState.SCHEDULED:
+        composer.check_publish_at(publish_at)
+    else:
+        publish_at = None
+    location = composer.clean_location(location)
+    feeling = composer.check_feeling(feeling)
     approval = ApprovalState.APPROVED
     if group_id:
         acc = require_group_member(str(author_id), group_id)
@@ -302,20 +336,21 @@ def create_post(
         raise TaraAPIError("Invalid audience.", code="validation_error", http_status_code=400)
     if comment_policy not in CommentPolicy.values:
         raise _bad_request("Invalid comment policy.")
-    if post_type == Post.Type.VIDEO:
-        raise _video_not_supported()
-    if not body and not media_ids and not shared_post_id:
+    if post_type == Post.Type.VIDEO and not media_ids:
+        raise _bad_request("A video post needs its video.", "video_required")
+    if not body and not media_ids and not shared_post_id and not feeling:
         raise TaraAPIError("Post must have content.", code="validation_error", http_status_code=400)
 
+    tagged = composer.check_tags(author_id, tagged_ids or [])
     media_ids = [str(m) for m in media_ids or []]
     post_id = uuid7()
     if media_ids:
-        _check_attachments(author_id, media_ids)
+        _check_attachments(author_id, media_ids, post_type)
         # Restricted before the post exists. If the post then fails to commit,
         # the media point at a post that is never visible: owner-only, safe.
-        result = media_client.bind(
-            author_id, str(post_id), media_ids, restricted=audience != Audience.PUBLIC
-        )
+        # A draft's media stay restricted until it is published.
+        restricted = audience != Audience.PUBLIC or state != PostState.PUBLISHED
+        result = media_client.bind(author_id, str(post_id), media_ids, restricted=restricted)
         _check_bound(result)
 
     with transaction.atomic():
@@ -330,37 +365,52 @@ def create_post(
             comment_policy=comment_policy,
             group_id=group_id or None,
             approval_state=approval,
+            state=state,
+            publish_at=publish_at,
+            location=location,
+            feeling=feeling,
         )
         if poll:
             _create_poll(post, poll)
         for i, media_id in enumerate(media_ids):
             PostMedia.objects.create(post=post, media_id=media_id, position=i)
-        tags, mentions = _attach_tags_and_mentions(post)
-        events.emit(
-            "post.created",
-            subject_id=str(post.id),
-            payload={
-                "post_id": str(post.id),
-                "author_id": str(author_id),
-                "author_type": author_type,
-                "type": post.type,
-                "audience": audience,
-                "excerpt": body[:280],
-                "media_ids": media_ids,
-                "hashtags": tags,
-                "mentions": mentions,
-                "shared_post_id": str(shared_post_id) if shared_post_id else None,
-                "created_at": post.created_at.isoformat(),
-                # Search and feed treat a post with a group as non-public (1.11).
-                "group_id": str(post.group_id) if post.group_id else None,
-                "approval_state": post.approval_state,
-            },
-            actor_id=str(author_id),
-            partition_key=f"author:{author_id}",
-        )
-        if post.group_id and approval == ApprovalState.APPROVED:
-            _emit_group_post_published(post)
+        composer.set_tags(post, tagged)
+        _attach_tags_and_mentions(post)
+        if state == PostState.PUBLISHED:
+            emit_created(post)
     return post
+
+
+def emit_created(post: Post) -> None:
+    """``post.created`` (and a group's ``group.post.published``) for a post that
+    is published now: on create, or when a draft or scheduled post goes out."""
+    author_id = str(post.author_id)
+    events.emit(
+        "post.created",
+        subject_id=str(post.id),
+        payload={
+            "post_id": str(post.id),
+            "author_id": author_id,
+            "author_type": post.author_type,
+            "type": post.type,
+            "audience": post.audience,
+            "excerpt": post.body[:280],
+            "media_ids": [str(m.media_id) for m in post.media.all()],  # ordered by position
+            "hashtags": sorted(post.hashtags.values_list("hashtag__tag", flat=True)),
+            "mentions": sorted(set(post.mentions.values_list("mentioned_handle", flat=True))),
+            "shared_post_id": str(post.shared_post_id) if post.shared_post_id else None,
+            "created_at": post.created_at.isoformat(),
+            # Search and feed treat a post with a group as non-public (1.11).
+            "group_id": str(post.group_id) if post.group_id else None,
+            "approval_state": post.approval_state,
+            # People tagged (2C, additive): post notifies them after this commit.
+            "tagged_ids": [str(a) for a in post.tags.values_list("account_id", flat=True)],
+        },
+        actor_id=author_id,
+        partition_key=f"author:{author_id}",
+    )
+    if post.group_id and post.approval_state == ApprovalState.APPROVED:
+        _emit_group_post_published(post)
 
 
 def _chunks(ids: list[str]) -> list[list[str]]:
@@ -408,19 +458,28 @@ def _emit_group_post_published(post: Post) -> None:
     )
 
 
-def _editable_post(author_id: str, post_id: str, *, lock: bool = False) -> Post:
+def _editable_post(
+    author_id: str, post_id: str, *, lock: bool = False, draft: bool = False
+) -> Post:
     """The author's own live post. Removed or pending-review posts are 404: an
-    edit must not change content a moderator is reviewing or has removed."""
+    edit must not change content a moderator is reviewing or has removed.
+    ``draft`` picks a draft or scheduled post instead of a published one."""
+    if draft:
+        return composer.get_draft(author_id, post_id, lock=lock)
     qs = Post.objects.filter(
         id=post_id,
         author_id=author_id,
         deleted_at__isnull=True,
         moderation_status=Post.ModerationStatus.OK,
+        state=PostState.PUBLISHED,
     )
     post = (qs.select_for_update() if lock else qs).first()
     if post is None:
         raise TaraAPIError("Post not found.", code="not_found", http_status_code=404)
     return post
+
+
+_UNSET = object()
 
 
 def edit_post(
@@ -430,21 +489,49 @@ def edit_post(
     *,
     audience: str | None = None,
     comment_policy: str | None = None,
+    tagged_ids: list[str] | None = None,
+    location: str | None = None,
+    feeling: str | None = None,
+    draft: bool = False,
+    publish_at=_UNSET,
 ) -> Post:
-    """Change the body, the audience, the comment policy, or any of them.
+    """Change the body, the audience, the comment policy, the tags, the
+    location, the feeling, or any of them. With ``draft`` the post is the
+    author's draft or scheduled post: ``publish_at`` schedules it (a date) or
+    turns it back into a draft (``None``), and nothing is emitted.
 
     Moving to a non-public audience restricts the post's media through media
     before the write transaction (503 if media is down, nothing changes).
     Widening needs no media change: restricted media follow the post's
     visibility, which already lets the wider audience in.
     """
-    if body is None and audience is None and comment_policy is None:
+    extras = (tagged_ids, location, feeling)
+    nothing = (
+        body is None
+        and audience is None
+        and comment_policy is None
+        and all(x is None for x in extras)
+        and publish_at is _UNSET
+    )
+    if nothing:
         raise _bad_request("Nothing to change.")
+    if publish_at is not _UNSET and not draft:
+        raise _bad_request("Only a draft can be scheduled.")
+    if publish_at not in (_UNSET, None):
+        composer.check_publish_at(publish_at)
     if audience is not None and audience not in Audience.values:
         raise _bad_request("Invalid audience.")
     if comment_policy is not None and comment_policy not in CommentPolicy.values:
         raise _bad_request("Invalid comment policy.")
-    post = _editable_post(author_id, post_id)
+    if location is not None:
+        location = composer.clean_location(location)
+    if feeling is not None:
+        feeling = composer.check_feeling(feeling)
+    post = _editable_post(author_id, post_id, draft=draft)
+    if tagged_ids is not None:
+        tagged_ids = composer.check_tags(
+            author_id, tagged_ids, already=post.tags.values_list("account_id", flat=True)
+        )
     if post.group_id:
         if audience is not None and audience != Audience.GROUP:
             raise _bad_request("A post in a group keeps the group's audience.", "group_audience")
@@ -452,13 +539,20 @@ def edit_post(
         require_group_member(str(author_id), post.group_id)  # removed or banned: refused
     elif audience == Audience.GROUP:
         raise _bad_request("Only a post in a group has the group audience.")
-    if body is None and audience is None and comment_policy is None:
+    if (
+        body is None
+        and audience is None
+        and comment_policy is None
+        and all(x is None for x in extras)
+        and publish_at is _UNSET
+    ):
         raise _bad_request("Nothing to change.")
     if audience is not None and audience != post.audience and post.shared_post_id:
         original = Post.objects.filter(id=post.shared_post_id).first()
         if original and AUDIENCE_RANK[audience] > AUDIENCE_RANK[original.audience]:
             raise _bad_request("A share cannot reach further than the original post.")
-    if audience is not None and audience != Audience.PUBLIC:
+    # A draft's media are restricted already, until it is published.
+    if audience is not None and audience != Audience.PUBLIC and not draft:
         # Even when unchanged: a concurrent edit may have widened the post
         # since this read, and binding is idempotent. Skipped ids are deleted,
         # or (posts from before ownership checks) not the author's. Media that
@@ -472,30 +566,49 @@ def edit_post(
                 )
 
     with transaction.atomic():
-        post = _editable_post(author_id, post_id, lock=True)  # removed meanwhile → 404
+        # Removed meanwhile, or (a draft) published by the beat task → 404.
+        post = _editable_post(author_id, post_id, lock=True, draft=draft)
         fields = ["updated_at"]
         new_mentions: list[str] = []
+        new_tags: list[str] = []
         if audience is not None:
             post.audience = audience
             fields.append("audience")
         if comment_policy is not None:
             post.comment_policy = comment_policy
             fields.append("comment_policy")
+        if location is not None:
+            post.location = location
+            fields.append("location")
+        if feeling is not None:
+            post.feeling = feeling
+            fields.append("feeling")
+        if publish_at is not _UNSET:
+            post.publish_at = publish_at
+            post.state = PostState.SCHEDULED if publish_at else PostState.DRAFT
+            fields += ["publish_at", "state"]
         if body is not None:
             mentioned_before = set(post.mentions.values_list("mentioned_handle", flat=True))
             post.body = body
             fields.append("body")
+        if draft and not (post.body or post.media.exists() or post.feeling):
+            raise _bad_request("Post must have content.")
         post.save(update_fields=fields)
         if body is not None:
             post.hashtags.all().delete()
             post.mentions.all().delete()
             _, mentions = _attach_tags_and_mentions(post)
             new_mentions = sorted(set(mentions) - mentioned_before)
-        _emit_updated(post, new_mentions=new_mentions)
-    return post
+        if tagged_ids is not None:
+            new_tags = composer.set_tags(post, tagged_ids)
+        if post.is_published:
+            _emit_updated(post, new_mentions=new_mentions, new_tagged_ids=new_tags)
+    return with_detail(Post.objects.filter(id=post.id)).get()
 
 
-def _emit_updated(post: Post, *, new_mentions: list[str]) -> None:
+def _emit_updated(
+    post: Post, *, new_mentions: list[str], new_tagged_ids: list[str] | None = None
+) -> None:
     """``post.updated`` with the full hashtag list: the excerpt is cut at 280
     characters, so search cannot re-derive the tags that come after it."""
     events.emit(
@@ -509,6 +622,8 @@ def _emit_updated(post: Post, *, new_mentions: list[str]) -> None:
             "excerpt": post.body[:280],
             "hashtags": sorted(post.hashtags.values_list("hashtag__tag", flat=True)),
             "new_mentions": new_mentions,
+            # People tagged by this edit (2C, additive): post notifies them.
+            "new_tagged_ids": new_tagged_ids or [],
             **search_fields(post),
         },
         actor_id=str(post.author_id),
@@ -531,7 +646,10 @@ def delete_post(author_id: str, post_id: str) -> None:
     """The author deletes their post; in a group, its moderators, admins and
     owners may delete any post too (asked of profile first)."""
     by = "author"
-    candidate = Post.objects.filter(id=post_id, deleted_at__isnull=True).first()
+    # Drafts and scheduled posts are deleted through ``composer.delete_draft``.
+    candidate = Post.objects.filter(
+        id=post_id, deleted_at__isnull=True, state=PostState.PUBLISHED
+    ).first()
     if candidate is not None and str(candidate.author_id) != str(author_id):
         if not candidate.group_id:
             raise TaraAPIError("Post not found.", code="not_found", http_status_code=404)
@@ -540,7 +658,9 @@ def delete_post(author_id: str, post_id: str) -> None:
     with transaction.atomic():
         # Locked: a concurrent delete waits, then finds nothing, so the
         # original's share_count goes down once.
-        qs = Post.objects.select_for_update().filter(id=post_id, deleted_at__isnull=True)
+        qs = Post.objects.select_for_update().filter(
+            id=post_id, deleted_at__isnull=True, state=PostState.PUBLISHED
+        )
         if by == "author":
             qs = qs.filter(author_id=author_id)
         post = qs.first()
@@ -586,7 +706,7 @@ def get_post(viewer_id: str, post_id: str) -> Post:
 def with_detail(queryset):
     """What the serializer needs per post, loaded once for the whole list."""
     return queryset.select_related("poll").prefetch_related(
-        "media", "poll__options", "reaction_counts"
+        "media", "poll__options", "reaction_counts", "tags"
     )
 
 
@@ -600,14 +720,23 @@ def author_posts_queryset(author_id: str | None):
         raise _bad_request("author_id must be a UUID.") from exc
     # Group posts stay in their group: never on the author's timeline (1.11).
     return with_detail(
-        Post.objects.filter(author_id=author_id, deleted_at__isnull=True, group_id__isnull=True)
+        Post.objects.filter(
+            author_id=author_id,
+            deleted_at__isnull=True,
+            group_id__isnull=True,
+            state=PostState.PUBLISHED,
+        )
     )
 
 
 def hashtag_posts_queryset(tag: str):
     """Posts carrying a hashtag; filter with ``only_visible``."""
     return with_detail(
-        Post.objects.filter(hashtags__hashtag__tag=tag.lstrip("#").lower(), deleted_at__isnull=True)
+        Post.objects.filter(
+            hashtags__hashtag__tag=tag.lstrip("#").lower(),
+            deleted_at__isnull=True,
+            state=PostState.PUBLISHED,
+        )
     )
 
 
@@ -630,7 +759,13 @@ def viewer_state(viewer_id: str, posts: list[Post]) -> dict:
     poll_ids = [p.poll.id for p in posts if p.type == Post.Type.POLL and hasattr(p, "poll")]
     shared_ids = {p.shared_post_id for p in posts if p.shared_post_id}
     originals = only_visible(viewer_id, with_detail(Post.objects.filter(id__in=shared_ids)))
+    blocked = blocked_ids(viewer_id)
+    top = composer.top_comments([p.id for p in posts if p.is_published], blocked)
+    top_list = [c for comments in top.values() for c in comments]
     return {
+        "blocked": blocked,
+        "top_comments": top,
+        "comment_reactions": comment_reactions_of(viewer_id, top_list) if top_list else {},
         "votes": dict(
             PollVote.objects.filter(poll_id__in=poll_ids, account_id=viewer_id).values_list(
                 "poll_id", "option_id"
@@ -1419,7 +1554,8 @@ def _staff_post(actor_id: str, post_id: str, *, pending: bool | None = None) -> 
 
 def approve_group_post(actor_id: str, post_id: str) -> Post:
     """A moderator, admin or owner publishes a waiting post. Members who opted in
-    hear about it then."""
+    hear about it then, and so do the people tagged in it (``post.approved``,
+    which post consumes itself: nobody is told of a tag while the post waits)."""
     _staff_post(actor_id, post_id, pending=True)
     with transaction.atomic():
         post = Post.objects.select_for_update().get(id=post_id)
@@ -1428,6 +1564,20 @@ def approve_group_post(actor_id: str, post_id: str) -> Post:
         post.approval_state = ApprovalState.APPROVED
         post.save(update_fields=["approval_state", "updated_at"])
         _emit_group_post_published(post)
+        if settings.POST_EMIT_GROUP_EVENTS:
+            events.emit(
+                "post.approved",
+                subject_id=str(post.id),
+                payload={
+                    "post_id": str(post.id),
+                    "group_id": str(post.group_id),
+                    "author_id": str(post.author_id),
+                    "approved_by": str(actor_id),
+                    "tagged_ids": composer.tagged_ids_of(post),
+                },
+                actor_id=str(actor_id),
+                partition_key=f"post:{post.id}",
+            )
     return with_detail(Post.objects.filter(id=post.id)).get()
 
 

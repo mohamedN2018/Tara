@@ -154,8 +154,10 @@ class BlockListView(APIView):
 
 # ---- public relationship lists ----------------------------------------------
 # Every list of another account goes through services.ensure_lists_visible: a
-# block in either direction returns 404 (never 403), and the rows themselves
-# never include an account that has a block toward the viewer or the owner.
+# block in either direction, or the owner's list-visibility setting (1.6), returns
+# 404 (never 403), and the rows themselves never include an account that has a
+# block toward the viewer or the owner. Friends and mutual friends follow
+# friends_list_visibility; followers and following follow follow_lists_visibility.
 
 
 class SocialFriendsView(APIView):
@@ -174,7 +176,7 @@ class SocialFollowersView(APIView):
     @extend_schema(responses={200: None, 404: None}, tags=["social"])
     def get(self, request: Request, user_id: str) -> Response:
         me = _me(request)
-        services.ensure_lists_visible(me, user_id)
+        services.ensure_lists_visible(me, user_id, "follows")
         return data_response({"followers": services.follower_ids(user_id, viewer_id=me)})
 
 

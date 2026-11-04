@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/media.failed.v1.json",
+  "title": "media.failed v1 payload",
+  "description": "Processing failed; the media is never served. retryable: true for an image the owner may upload again after an outage. For a transcoded video (5.2, additive): kind, purpose and code, the failure code (too_long, hdr_unsupported, dimensions_too_large, no_video_stream, unreadable, unsupported_type, timeout, transcode_failed, too_many_attempts, storage_unavailable, internal); its outputs and original are deleted.",
+  "type": "object",
+  "properties": {
+    "owner": {"type": "string", "format": "uuid"},
+    "retryable": {"type": "boolean"},
+    "kind": {"type": "string", "enum": ["image", "video", "audio", "voice", "file"]},
+    "purpose": {"type": "string", "enum": ["post"]},
+    "code": {"type": "string", "maxLength": 32}
+  },
+  "required": ["owner", "retryable"],
+  "additionalProperties": false
+}

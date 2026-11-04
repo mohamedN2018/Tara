@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/media.processed.v1.json",
+  "title": "media.processed v1 payload",
+  "description": "The media is ready to serve. Recorded once per media, in the same transaction that marks it ready (a replayed step records nothing). For a transcoded video (5.2, additive fields): purpose, the HLS renditions made (short side in px, never above the source), duration and the top rendition's size; variants then lists poster, hls and mp4 (when the MP4 fallback is on).",
+  "type": "object",
+  "properties": {
+    "owner": {"type": "string", "format": "uuid"},
+    "kind": {"type": "string", "enum": ["image", "video", "audio", "voice", "file"]},
+    "variants": {"type": "array", "items": {"type": "string", "enum": ["thumb", "transcode", "waveform", "preview", "hls", "poster", "mp4"]}},
+    "purpose": {"type": "string", "enum": ["post"]},
+    "renditions": {"type": "array", "items": {"type": "integer", "minimum": 2}},
+    "duration_ms": {"type": ["integer", "null"], "minimum": 0},
+    "width": {"type": ["integer", "null"], "minimum": 1},
+    "height": {"type": ["integer", "null"], "minimum": 1}
+  },
+  "required": ["owner", "kind", "variants"],
+  "additionalProperties": false
+}

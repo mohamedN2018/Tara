@@ -21,7 +21,11 @@ const emit = defineEmits<{
   reactions: [];
   shares: [];
 }>();
-const { t } = useI18n();
+const { t, locale } = useI18n();
+
+// 74.9K / "74.9 ألف" like the reference, with Latin digits as everywhere else.
+const compact = (n: number) =>
+  n < 1000 ? String(n) : new Intl.NumberFormat(`${locale.value}-u-nu-latn`, { notation: "compact", maximumFractionDigits: 1 }).format(n);
 
 const current = computed(() => reactionByKey(props.myReaction));
 // The post's most used reactions; the viewer's own while counts are unknown.
@@ -82,7 +86,8 @@ onBeforeUnmount(() => {
     <!-- counts row (hidden when everything is zero) -->
     <div
       v-if="reactionCount || commentCount || shareCount"
-      class="flex items-center justify-between px-1 py-1 text-xs text-gray-500 dark:text-gray-400"
+      class="flex items-center justify-between gap-2 px-1 py-1 text-xs text-gray-500 dark:text-gray-400"
+      data-testid="reaction-summary"
     >
       <button
         v-if="reactionCount"
@@ -98,7 +103,7 @@ onBeforeUnmount(() => {
             class="flex h-5 w-5 items-center justify-center rounded-full bg-brand-50 text-[11px] leading-none ring-2 ring-white dark:bg-brand-950 dark:ring-gray-900"
           >{{ emoji }}</span>
         </span>
-        <span class="tabular-nums" aria-hidden="true">{{ reactionCount }}</span>
+        <span class="tabular-nums" aria-hidden="true">{{ compact(reactionCount) }}</span>
       </button>
       <span v-else aria-hidden="true" />
       <span>

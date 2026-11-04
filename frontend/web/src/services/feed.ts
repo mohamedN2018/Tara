@@ -6,13 +6,25 @@ export interface FeedResponse {
   data: FeedItem[];
   sponsored: SponsoredSlot | null;
   page: { next_cursor: string | null; has_more: boolean };
+  /** The ranking mode the server applied (2A). Absent from a server without modes. */
+  mode?: string;
 }
+
+/** Feed ranking modes (plan 08, 2A): "For you", "Latest", "Favorites", "Following". */
+export const FEED_MODES = ["for_you", "recent", "favorites", "following"] as const;
+export type FeedMode = (typeof FEED_MODES)[number];
+
+/** Why the viewer hid a post (feed's fixed list, 2A). */
+export const HIDE_REASONS = ["not_interested", "spam", "sexual", "annoying", "dislike_creator", "other"] as const;
+export type HideReason = (typeof HIDE_REASONS)[number];
 
 export interface HydratedFeedPage {
   posts: Post[];
   sponsored: SponsoredSlot[];
   nextCursor: string | null;
   hasMore: boolean;
+  /** The server ranked by the requested mode (it echoes `mode`), so the switcher may show. */
+  modeApplied: boolean;
 }
 
 // Upper bound on fully-filtered pages followed in a row.
@@ -50,21 +62,41 @@ export async function hydrateFeed(items: FeedItem[]): Promise<Post[]> {
 
 export const feedService = {
   /** Home feed. `sponsored` is a sibling of `data` in the envelope (see docs). */
-  async home(cursor?: string): Promise<FeedResponse> {
-    const { data } = await api.get<FeedResponse>("/feed/", { params: { cursor } });
+  async home(cursor?: string, mode?: FeedMode): Promise<FeedResponse> {
+    const { data } = await api.get<FeedResponse>("/feed/", { params: mode ? { cursor, mode } : { cursor } });
     return data;
   },
 
   /** The next hydrated page, skipping pages whose posts have all disappeared. */
-  async page(cursor?: string): Promise<HydratedFeedPage> {
-    let resp = await this.home(cursor);
+  async page(cursor?: string, mode?: FeedMode): Promise<HydratedFeedPage> {
+    let resp = await this.home(cursor, mode);
+    const modeApplied = !!mode && resp.mode === mode;
     let posts = await hydrateFeed(resp.data);
     const sponsored = resp.sponsored ? [resp.sponsored] : [];
     for (let i = 0; i < MAX_EMPTY_PAGES; i++) {
       if (posts.length || !resp.page.has_more || !resp.page.next_cursor) break;
-      resp = await this.home(resp.page.next_cursor);
+      resp = await this.home(resp.page.next_cursor, mode);
       posts = await hydrateFeed(resp.data);
     }
-    return { posts, sponsored, nextCursor: resp.page.next_cursor, hasMore: resp.page.has_more };
+    return { posts, sponsored, nextCursor: resp.page.next_cursor, hasMore: resp.page.has_more, modeApplied };
+  },
+
+  /** Hide a post from this viewer's feed, with why (201). */
+  async hide(postId: string, reason: HideReason): Promise<void> {
+    await api.post("/feed/hide/", { post_id: postId, reason });
+  },
+
+  /** Undo a hide (204). */
+  async unhide(postId: string): Promise<void> {
+    await api.delete(`/feed/hide/${postId}/`);
+  },
+
+  /** Keep an author out of this viewer's feed for 30 days. */
+  async snooze(authorId: string): Promise<void> {
+    await api.post("/feed/snooze/", { author_id: authorId });
+  },
+
+  async unsnooze(authorId: string): Promise<void> {
+    await api.delete(`/feed/snooze/${authorId}/`);
   },
 };

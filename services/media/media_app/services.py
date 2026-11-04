@@ -8,35 +8,111 @@ from datetime import timedelta
 from urllib.parse import quote
 
 from django.conf import settings
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 
 from tara_common.exceptions import Conflict, TaraAPIError
 
-from . import events, post_client, storage, validation
+from . import events, playback, post_client, storage, validation
 from .models import MediaAsset, MediaVariant, UploadSession
 
 logger = logging.getLogger("tara.media.services")
 
 
-def sign_upload(owner_id: str, *, kind: str, mime: str, size: int, visibility: str) -> dict:
+def is_transcoded(asset: MediaAsset) -> bool:
+    """A video the transcoder turns into HLS (a ``purpose`` is set), as opposed
+    to one served as uploaded (chat)."""
+    return asset.kind == MediaAsset.Kind.VIDEO and bool(asset.purpose)
+
+
+def max_upload_bytes(asset: MediaAsset) -> int:
+    if is_transcoded(asset):
+        return int(settings.MEDIA_VIDEO_PURPOSES[asset.purpose]["max_bytes"])
+    return settings.MAX_UPLOAD_BYTES
+
+
+def _lock_video_quota(owner_id: str) -> None:
+    """Serialize video quota checks per account until the transaction ends.
+
+    Locking the account's existing rows is not enough under READ COMMITTED: a
+    waiter never sees the row the holder inserted, and with no rows nothing is
+    locked at all. An advisory lock on the account is the serialization point;
+    the count is then a separate statement, so it sees rows committed by
+    earlier holders. (A hash collision only serializes two accounts.)"""
+    if connection.vendor != "postgresql":
+        return
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s))", [f"media-video-quota:{owner_id}"]
+        )
+
+
+def _check_video_quota(owner_id: str, size: int) -> None:
+    """At most MEDIA_VIDEO_DAILY_UPLOADS transcoded videos, and
+    MEDIA_VIDEO_DAILY_BYTES declared bytes, per account in 24 hours.
+
+    Call inside the transaction that saves the new row: the account's lock is
+    held until it commits, so parallel requests cannot both take the last
+    slot. Completion refuses a video larger than declared, so the declared
+    bytes bound what is stored."""
+    _lock_video_quota(owner_id)
+    since = timezone.now() - timedelta(hours=24)
+    recent = list(
+        MediaAsset.objects.filter(
+            owner_id=owner_id, kind=MediaAsset.Kind.VIDEO, created_at__gte=since
+        )
+        .exclude(purpose="")
+        .values_list("bytes", flat=True)
+    )
+    if (
+        len(recent) >= settings.MEDIA_VIDEO_DAILY_UPLOADS
+        or sum(recent) + size > settings.MEDIA_VIDEO_DAILY_BYTES
+    ):
+        raise TaraAPIError(
+            "You reached today's video upload limit; try again tomorrow.",
+            code="video_quota_exceeded",
+            http_status_code=429,
+        )
+
+
+def sign_upload(
+    owner_id: str, *, kind: str, mime: str, size: int, visibility: str, purpose: str = ""
+) -> dict:
     if kind not in MediaAsset.Kind.values:
         raise TaraAPIError("Unsupported media kind.", code="validation_error", http_status_code=400)
-    if not validation.is_allowed(kind, mime):
+    if purpose and (kind != MediaAsset.Kind.VIDEO or purpose not in settings.MEDIA_VIDEO_PURPOSES):
+        raise TaraAPIError(
+            "Unsupported media purpose.", code="validation_error", http_status_code=400
+        )
+    if not validation.is_allowed(kind, mime, purpose):
         raise TaraAPIError(
             "This file type is not allowed.", code="validation_error", http_status_code=400
         )
     mime = validation.normalize_mime(mime)
-    if size > settings.MAX_UPLOAD_BYTES:
-        raise TaraAPIError(
-            "File exceeds the size limit.", code="validation_error", http_status_code=400
-        )
     if visibility not in MediaAsset.Visibility.values:
         visibility = MediaAsset.Visibility.PUBLIC
-
-    asset = MediaAsset(owner_id=owner_id, kind=kind, mime=mime, bytes=size, visibility=visibility)
-    asset.storage_key = f"{kind}/{owner_id}/{asset.id}"
-    asset.save()
+    asset = MediaAsset(
+        owner_id=owner_id,
+        kind=kind,
+        mime=mime,
+        bytes=size,
+        visibility=visibility,
+        purpose=purpose,
+    )
+    if size > max_upload_bytes(asset):
+        raise TaraAPIError(
+            "File exceeds the size limit.",
+            code="video_too_large" if purpose else "validation_error",
+            http_status_code=400,
+        )
+    # Transcoded videos live under their own prefix: the transcoder's storage
+    # user can reach ``videos/`` and nothing else (no photos, no chat files).
+    prefix = "videos" if is_transcoded(asset) else kind
+    asset.storage_key = f"{prefix}/{owner_id}/{asset.id}"
+    with transaction.atomic():
+        if is_transcoded(asset):
+            _check_video_quota(owner_id, size)
+        asset.save()
     # The browser writes to a staging key; only complete() writes the real key.
     session = UploadSession.objects.create(
         media=asset,
@@ -107,8 +183,11 @@ def _verify_and_store(asset: MediaAsset, source_key: str) -> tuple[int, str]:
         raise _reject(asset, source_key, "The upload changed while it was checked.") from None
     if stored is None:
         raise _reject(asset, source_key, "The upload was not found.")
-    if stored.size > settings.MAX_UPLOAD_BYTES:
+    if stored.size > max_upload_bytes(asset):
         raise _reject(asset, source_key, "File exceeds the size limit.")
+    if is_transcoded(asset) and stored.size > asset.bytes:
+        # The daily byte quota was charged the declared size at signing.
+        raise _reject(asset, source_key, "The upload is larger than its declared size.")
     if not validation.matches_signature(asset.mime, stored.head):
         raise _reject(asset, source_key, "The file content does not match its type.")
     if source_key == asset.storage_key:  # a session signed before staging keys
@@ -138,19 +217,27 @@ def complete_upload(owner_id: str, media_id: str) -> MediaAsset:
                 code="dependency_unavailable",
                 http_status_code=503,
             ) from exc
+    transcoded = is_transcoded(asset)
     with transaction.atomic():
-        asset.status = MediaAsset.Status.PROCESSING
+        # A transcoded video waits for the transcoder ("uploaded"); the rest is
+        # processed by the media worker.
+        asset.status = MediaAsset.Status.UPLOADED if transcoded else MediaAsset.Status.PROCESSING
         asset.bytes = size
         asset.etag = etag
         asset.save(update_fields=["status", "bytes", "etag", "updated_at"])
+        payload = {"owner": str(owner_id), "kind": asset.kind, "bytes": asset.bytes}
+        if asset.purpose:
+            payload["purpose"] = asset.purpose
         events.emit(
-            "media.uploaded",
-            subject_id=str(asset.id),
-            payload={"owner": str(owner_id), "kind": asset.kind, "bytes": asset.bytes},
-            actor_id=str(owner_id),
+            "media.uploaded", subject_id=str(asset.id), payload=payload, actor_id=str(owner_id)
         )
 
         def _enqueue() -> None:
+            if transcoded:
+                from .transcode import prepare
+
+                prepare.delay(str(asset.id))
+                return
             from .tasks import process_media
 
             process_media.delay(str(asset.id))
@@ -163,6 +250,8 @@ def complete_upload(owner_id: str, media_id: str) -> MediaAsset:
 
 
 def _can_view(viewer_id: str, asset: MediaAsset) -> bool:
+    if is_transcoded(asset):
+        return playback.can_watch(viewer_id, asset)
     if str(asset.owner_id) == str(viewer_id):
         return True
     if asset.restricted:
@@ -219,8 +308,13 @@ def attachment_disposition(filename: str) -> str:
     return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"
 
 
-def asset_url(asset: MediaAsset, *, filename: str = "") -> str:
-    """The presigned GET URL of the asset's original, with its verified type."""
+def asset_url(asset: MediaAsset, *, filename: str = "") -> str | None:
+    """The presigned GET URL of the asset's original, with its verified type.
+
+    None for a transcoded video: its original is never served (5.2); players
+    get the renditions through ``playback``."""
+    if is_transcoded(asset):
+        return None
     if asset.kind in INLINE_KINDS:
         return storage.presign_get(asset.storage_key, content_type=asset.mime)
     return storage.presign_get(
@@ -240,18 +334,29 @@ def asset_payload(asset: MediaAsset, *, with_urls: bool = True, filename: str = 
         "visibility": asset.visibility,
         "variants": [],
     }
+    if is_transcoded(asset):
+        data.update(
+            {
+                "purpose": asset.purpose,
+                "failure_code": asset.failure_code or None,
+                "duration_ms": asset.duration_ms,
+                "width": asset.width,
+                "height": asset.height,
+            }
+        )
     if with_urls:
         data["url"] = (
             asset_url(asset, filename=filename) if asset.status == MediaAsset.Status.READY else None
         )
         for v in asset.variants.all():
+            if v.kind == MediaVariant.Kind.HLS:
+                continue  # a segment prefix, played through the token-checked playlists
             data["variants"].append(
                 {
                     "kind": v.kind,
-                    # Variants are made here: thumbnails are JPEG.
+                    # Variants are made here: thumbnails and posters are JPEG.
                     "url": storage.presign_get(
-                        v.storage_key,
-                        content_type="image/jpeg" if v.kind == MediaVariant.Kind.THUMB else "",
+                        v.storage_key, content_type=_VARIANT_TYPES.get(v.kind, "")
                     ),
                     "width": v.width,
                     "height": v.height,
@@ -261,11 +366,21 @@ def asset_payload(asset: MediaAsset, *, with_urls: bool = True, filename: str = 
     return data
 
 
+_VARIANT_TYPES = {
+    MediaVariant.Kind.THUMB: "image/jpeg",
+    MediaVariant.Kind.POSTER: "image/jpeg",
+    MediaVariant.Kind.MP4: "video/mp4",
+}
+
+
 def download_url(viewer_id: str, media_id: str) -> str:
     asset = get_asset_for_viewer(viewer_id, media_id)
     if asset.status != MediaAsset.Status.READY:
         raise TaraAPIError("Media is not ready.", code="conflict", http_status_code=409)
-    return asset_url(asset)
+    url = asset_url(asset)
+    if url is None:  # a transcoded video: no original to download
+        raise TaraAPIError("Media not found.", code="not_found", http_status_code=404)
+    return url
 
 
 # ---- internal: post attachment ------------------------------------------------------
@@ -285,6 +400,10 @@ def internal_lookup(media_ids: list[str]) -> list[dict]:
             "visibility": a.visibility,
             "restricted": a.restricted,
             "post_id": str(a.post_id) if a.post_id else None,
+            # Video pipeline (5.2): "" for media served as uploaded.
+            "purpose": a.purpose,
+            "failure_code": a.failure_code or None,
+            "duration_ms": a.duration_ms,
         }
         for a in assets
     ]
@@ -295,10 +414,11 @@ def bind_to_post(owner_id: str, post_id: str, media_ids: list[str], *, restricte
 
     Post calls this before it commits the post, so the media are already
     restricted when the post becomes visible. A repeat call for the same post
-    can only tighten: it never lifts a restriction. Narrowing an audience then
-    always takes effect, and a late or reordered call for an older, wider
-    audience cannot reopen the media; post's visibility check already lets
-    the wider audience in.
+    tightens at once. It lifts a restriction (a draft published as public)
+    only when post says the post is public right now, and only for media no
+    other call touched since post was asked. So narrowing an audience always
+    takes effect, and a late or reordered call for an older, wider audience
+    cannot reopen the media.
 
     One media belongs to one post. Media already bound to another post move
     only when post says that post is not live (a post that failed after
@@ -318,13 +438,25 @@ def bind_to_post(owner_id: str, post_id: str, media_ids: list[str], *, restricte
     }
     # False only when post answered that the old post is not visible to its own author.
     released = {p for p in elsewhere if post_client.post_is_live(owner_id, p) is False}
+    # Lifting asks post first; a tightening saved after ``asked_at`` wins.
+    asked_at = timezone.now()
+    lift = (
+        not restricted
+        and MediaAsset.objects.filter(
+            id__in=media_ids, post_id=post_id, restricted=True, **live
+        ).exists()
+        and post_client.post_is_public(str(post_id)) is True
+    )
     attached_elsewhere: set[str] = set()
     with transaction.atomic():
         assets = list(MediaAsset.objects.select_for_update().filter(id__in=media_ids, **live))
         for asset in assets:
             current = str(asset.post_id) if asset.post_id else None
             if current == str(post_id):
-                asset.restricted = asset.restricted or restricted
+                if restricted:
+                    asset.restricted = True
+                elif asset.restricted and lift and asset.updated_at <= asked_at:
+                    asset.restricted = False
             elif current is None or current in released:
                 asset.post_id = post_id
                 asset.restricted = restricted

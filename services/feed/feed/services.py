@@ -28,13 +28,13 @@ from datetime import UTC, datetime
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from . import events
+from . import events, ranking, readmodels
 from .clients import GraphUnavailable, Relationship, fanout_audience, relationship
-from .models import FeedItem, PostState
+from .models import FeedItem, PostState, RelationshipFlag
 
 logger = logging.getLogger("tara.feed.services")
 
@@ -183,6 +183,7 @@ def fan_out_post(payload: dict) -> int:
         return 0
 
     snapshot = _snapshot(payload)
+    score = readmodels.score_for(post_id)  # engagement may be counted before the fan-out ran
     with transaction.atomic():
         FeedItem.objects.bulk_create(
             [
@@ -192,6 +193,7 @@ def fan_out_post(payload: dict) -> int:
                     author_id=author_id,
                     reason=reason,
                     snapshot=snapshot_for(snapshot, r, author_id),
+                    score=score,
                     post_created_at=created_at,
                 )
                 for r, reason in new
@@ -357,5 +359,24 @@ def relabel_friend_items_for(
     return changed
 
 
-def home_feed(recipient_id: str):
-    return FeedItem.objects.filter(recipient_id=recipient_id).order_by("-post_created_at")
+MODES = ("for_you", "recent", "favorites", "following")
+DEFAULT_MODE = "recent"  # what the web client asked for before modes existed
+
+
+def home_feed(recipient_id: str, mode: str = DEFAULT_MODE):
+    """The chronological modes (``for_you`` is ranked: see ``ranking``).
+
+    ``recent`` is the old order, ``favorites`` keeps authors the viewer favorites
+    in Graph, ``following`` keeps accounts and pages the viewer follows. Every
+    mode leaves out what the viewer hid, snoozed or muted.
+    """
+    items = ranking.visible_items(recipient_id)
+    if mode == "favorites":
+        items = items.filter(
+            author_id__in=readmodels.flagged_ids(recipient_id, RelationshipFlag.Kind.FAVORITE)
+        )
+    elif mode == "following":
+        items = items.filter(
+            Q(reason=Reason.FOLLOW) | Q(author_id__in=readmodels.followed_ids(recipient_id))
+        ).exclude(author_id=recipient_id)
+    return items.order_by("-post_created_at")

@@ -12,3 +12,7 @@ class SignUploadSerializer(serializers.Serializer):
     visibility = serializers.ChoiceField(
         choices=MediaAsset.Visibility.values, default=MediaAsset.Visibility.PUBLIC
     )
+    # A video for a post is transcoded to HLS (5.2); empty: served as uploaded (chat).
+    purpose = serializers.ChoiceField(
+        choices=MediaAsset.Purpose.values, default="", allow_blank=True, required=False
+    )

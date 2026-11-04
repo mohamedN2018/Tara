@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+from django.db import transaction
+
 from tara_events import on_event
 from tara_events.envelope import EventEnvelope
 
-from . import groups, services
+from . import composer, groups, services
 from .models import BlockedPair
 
 
 @on_event("user.blocked")
 def on_user_blocked(event: EventEnvelope) -> None:
+    """A block is respected both ways on tags too: neither keeps a tag of the
+    other on their posts (2C). Idempotent, one transaction."""
     p = event.payload
-    BlockedPair.objects.get_or_create(blocker_id=p["blocker_id"], blocked_id=p["blocked_id"])
+    with transaction.atomic():
+        BlockedPair.objects.get_or_create(blocker_id=p["blocker_id"], blocked_id=p["blocked_id"])
+        composer.drop_tags_between(p["blocker_id"], p["blocked_id"])
 
 
 @on_event("user.unblocked")
@@ -63,6 +69,32 @@ def on_post_updated_mentions(event: EventEnvelope) -> None:
     p = event.payload
     services.notify_mentions(
         actor_id=p["author_id"], post_id=p["post_id"], handles=p.get("new_mentions", [])
+    )
+
+
+@on_event("post.created")
+def on_post_created_tags(event: EventEnvelope) -> None:
+    """People tagged in a post hear about it once it is published (2C)."""
+    p = event.payload
+    composer.notify_tags(
+        actor_id=p["author_id"], post_id=p["post_id"], account_ids=p.get("tagged_ids") or []
+    )
+
+
+@on_event("post.approved")
+def on_post_approved_tags(event: EventEnvelope) -> None:
+    """A group post held for approval tells its tagged people when it goes out."""
+    p = event.payload
+    composer.notify_tags(
+        actor_id=p["author_id"], post_id=p["post_id"], account_ids=p.get("tagged_ids") or []
+    )
+
+
+@on_event("post.updated")
+def on_post_updated_tags(event: EventEnvelope) -> None:
+    p = event.payload
+    composer.notify_tags(
+        actor_id=p["author_id"], post_id=p["post_id"], account_ids=p.get("new_tagged_ids") or []
     )
 
 

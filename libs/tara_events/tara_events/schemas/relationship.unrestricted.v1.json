@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/relationship.unrestricted.v1.json",
+  "title": "relationship.unrestricted v1 payload",
+  "description": "The actor lifted a restriction on the target. Behind GRAPH_EMIT_RESTRICT_EVENTS. Subject = the actor.",
+  "type": "object",
+  "properties": {
+    "actor_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "target_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "actor_id",
+    "target_id",
+    "occurred_at"
+  ],
+  "additionalProperties": false
+}

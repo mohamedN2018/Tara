@@ -4,6 +4,7 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from .models import (
+    FEELINGS,
     REACTION_TYPES,
     Audience,
     Comment,
@@ -11,6 +12,7 @@ from .models import (
     Post,
     PostReaction,
     SavedItem,
+    TagPolicy,
 )
 
 
@@ -47,10 +49,24 @@ class PostCreateSerializer(serializers.Serializer):
     poll = PollCreateSerializer(required=False)
     # Posting into a group (1.11): the server forces the ``group`` audience.
     group_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+    # The composer (2C). The service checks each tag (blocks, "who can tag me"),
+    # cleans the location and caps it at 120 characters; these only bound the payload.
+    tagged_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, default=list, max_length=50
+    )
+    location = serializers.CharField(
+        required=False, allow_blank=True, default="", max_length=400, trim_whitespace=False
+    )
+    feeling = serializers.ChoiceField(choices=["", *FEELINGS], required=False, default="")
+    # A draft is kept for its author; ``publish_at`` schedules it instead.
+    draft = serializers.BooleanField(required=False, default=False)
+    publish_at = serializers.DateTimeField(required=False, allow_null=True, default=None)
 
     def validate(self, attrs):
         if attrs.get("poll") and not attrs.get("body", "").strip():
             raise serializers.ValidationError({"body": "A poll needs a question."})
+        if attrs.get("draft") and attrs.get("publish_at"):
+            raise serializers.ValidationError("Send draft or publish_at, not both.")
         return attrs
 
 
@@ -84,6 +100,8 @@ class PostSerializer(serializers.ModelSerializer):
     poll = serializers.SerializerMethodField()
     shared_post = serializers.SerializerMethodField()
     reaction_counts = serializers.SerializerMethodField()
+    tagged_ids = serializers.SerializerMethodField()
+    top_comments = serializers.SerializerMethodField()
 
     class Meta:
         model = Post
@@ -109,9 +127,31 @@ class PostSerializer(serializers.ModelSerializer):
             "group_id",
             "approval_state",
             "pinned_at",
+            "state",
+            "publish_at",
+            "location",
+            "feeling",
+            "tagged_ids",
+            "top_comments",
             "created_at",
             "updated_at",
         ]
+
+    def get_tagged_ids(self, obj: Post) -> list[str]:
+        """People tagged, without anyone blocked either way with the viewer."""
+        state = self.context.get("viewer_state") or {}
+        hidden = state.get("blocked") or set()
+        return [str(t.account_id) for t in obj.tags.all() if str(t.account_id) not in hidden]
+
+    def get_top_comments(self, obj: Post) -> list[dict]:
+        """Up to two thread roots to preview under the post (2C), most reacted
+        first; never by someone blocked either way with the viewer."""
+        state = self.context.get("viewer_state") or {}
+        comments = (state.get("top_comments") or {}).get(obj.id) or []
+        if not comments:
+            return []
+        context = {"my_reactions": state.get("comment_reactions") or {}}
+        return CommentSerializer(comments, many=True, context=context).data
 
     def get_media_ids(self, obj: Post) -> list[str]:
         return [str(m.media_id) for m in obj.media.all()]
@@ -163,15 +203,40 @@ class PostBatchSerializer(serializers.Serializer):
     ids = serializers.ListField(child=serializers.UUIDField(), max_length=50)
 
 
+_EDITABLE = {"body", "audience", "comment_policy", "tagged_ids", "location", "feeling"}
+
+
 class PostEditSerializer(serializers.Serializer):
     body = serializers.CharField(required=False, allow_blank=True, max_length=20000)
     audience = serializers.ChoiceField(choices=Audience.values, required=False)
     comment_policy = serializers.ChoiceField(choices=CommentPolicy.values, required=False)
+    tagged_ids = serializers.ListField(child=serializers.UUIDField(), required=False, max_length=50)
+    location = serializers.CharField(
+        required=False, allow_blank=True, max_length=400, trim_whitespace=False
+    )
+    feeling = serializers.ChoiceField(choices=["", *FEELINGS], required=False)
 
     def validate(self, attrs):
-        if not {"body", "audience", "comment_policy"} & set(attrs):
-            raise serializers.ValidationError("Send body, audience or comment_policy.")
+        if not _EDITABLE & set(attrs):
+            raise serializers.ValidationError(
+                "Send body, audience, comment_policy, tagged_ids, location or feeling."
+            )
         return attrs
+
+
+class DraftEditSerializer(PostEditSerializer):
+    """A draft or scheduled post: ``publish_at`` schedules it, ``null`` makes it a draft."""
+
+    publish_at = serializers.DateTimeField(required=False, allow_null=True)
+
+    def validate(self, attrs):
+        if not (_EDITABLE | {"publish_at"}) & set(attrs):
+            raise serializers.ValidationError("Nothing to change.")
+        return attrs
+
+
+class PostSettingsSerializer(serializers.Serializer):
+    who_can_tag = serializers.ChoiceField(choices=TagPolicy.values)
 
 
 class ReactionSerializer(serializers.Serializer):

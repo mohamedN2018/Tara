@@ -65,6 +65,30 @@ def post_liveness(monkeypatch):
     return stub
 
 
+@pytest.fixture(autouse=True)
+def post_publicity(monkeypatch):
+    """Stub post's "is this post public right now?" answer used to lift a
+    restriction: ``post_publicity.answers[post_id] = True | False | None``;
+    unknown posts are None (post could not answer)."""
+    from media_app import post_client
+
+    class _Publicity:
+        def __init__(self):
+            self.answers: dict[str, bool | None] = {}
+            self.calls: list[str] = []
+            self.on_call = None  # run while post is "answering" (a concurrent write)
+
+        def __call__(self, post_id):
+            self.calls.append(str(post_id))
+            if self.on_call:
+                self.on_call()
+            return self.answers.get(str(post_id))
+
+    stub = _Publicity()
+    monkeypatch.setattr(post_client, "post_is_public", stub)
+    return stub
+
+
 @pytest.fixture
 def memory_storage(settings):
     """A bucket in a dict: the real verify, copy and image-cleaning paths run."""

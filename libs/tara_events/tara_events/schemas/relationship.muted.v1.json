@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/relationship.muted.v1.json",
+  "title": "relationship.muted v1 payload",
+  "description": "The actor muted the target: the target's posts leave the actor's feed. The target is never told (no notification consumes this). Emitted by graph in the write transaction, behind GRAPH_EMIT_MUTE_FAVORITE_EVENTS. Subject = the actor.",
+  "type": "object",
+  "properties": {
+    "actor_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "target_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "actor_id",
+    "target_id",
+    "occurred_at"
+  ],
+  "additionalProperties": false
+}

@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
+import secrets
 from pathlib import Path
+
+from kombu import Queue
 
 from tara_common.rate_limits import api_throttling
 from tara_observability.logging import build_logging_config
@@ -19,7 +23,16 @@ def env_list(name: str, default: str = "") -> list[str]:
     return [x.strip() for x in os.getenv(name, default).split(",") if x.strip()]
 
 
-SECRET_KEY = os.getenv("MEDIA_SECRET_KEY", "dev-only-insecure-secret-change-me")
+# ``transcoder``: the media-transcoder container (roadmap 5.2). It runs untrusted
+# files through ffmpeg, so it gets a minimal environment: its database, the
+# broker and a storage user scoped to ``videos/``. Secrets it never needs are
+# random per process instead of shared defaults.
+MEDIA_ROLE = os.getenv("MEDIA_ROLE", "")
+_TRANSCODER = MEDIA_ROLE == "transcoder"
+
+SECRET_KEY = os.getenv("MEDIA_SECRET_KEY") or (
+    secrets.token_urlsafe(48) if _TRANSCODER else "dev-only-insecure-secret-change-me"
+)
 DEBUG = env_bool("MEDIA_DEBUG", False)
 ALLOWED_HOSTS = env_list("MEDIA_ALLOWED_HOSTS", "localhost,127.0.0.1")
 SERVICE_NAME = "media"
@@ -69,6 +82,8 @@ CACHES = {
         "LOCATION": os.getenv("REDIS_URL", "redis://127.0.0.1:6379/3"),
     }
 }
+if _TRANSCODER and not os.getenv("REDIS_URL"):
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
 
 REST_FRAMEWORK = {
     **api_throttling(),
@@ -92,7 +107,9 @@ TARA_JWKS_URL = os.getenv("TARA_JWKS_URL", "http://identity:8000/.well-known/jwk
 TARA_JWT_PUBLIC_KEY = os.getenv("TARA_JWT_PUBLIC_KEY", "")
 TARA_JWT_ISSUER = os.getenv("JWT_ISSUER", "tara-identity")
 TARA_JWT_AUDIENCE = os.getenv("JWT_AUDIENCE", "tara")
-TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-secret-change-me")
+TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET") or (
+    secrets.token_urlsafe(48) if _TRANSCODER else "dev-only-internal-secret-change-me"
+)
 
 # Object storage
 STORAGE_BACKEND = os.getenv("TARA_STORAGE_BACKEND", "s3")  # "s3" | "fake" (tests)
@@ -114,6 +131,45 @@ MEDIA_MAX_IMAGE_PIXELS = int(os.getenv("MEDIA_MAX_IMAGE_PIXELS", "50000000"))
 MEDIA_MAX_FRAMES = int(os.getenv("MEDIA_MAX_FRAMES", "1000"))
 MEDIA_MAX_ANIMATION_PIXELS = int(os.getenv("MEDIA_MAX_ANIMATION_PIXELS", "100000000"))
 
+# ---- Video pipeline (roadmap 5.2 / 5.3) ---------------------------------------
+# Per-purpose caps: the most a video of that purpose may weigh and last.
+MEDIA_VIDEO_PURPOSES = {
+    "post": {
+        "max_bytes": int(os.getenv("MEDIA_VIDEO_MAX_BYTES_POST", str(200 * 1024 * 1024))),
+        "max_seconds": int(os.getenv("MEDIA_VIDEO_MAX_SECONDS_POST", "600")),
+    },
+}
+# Per account, over the last 24 hours: transcoded videos signed, and their bytes.
+MEDIA_VIDEO_DAILY_UPLOADS = int(os.getenv("MEDIA_VIDEO_DAILY_UPLOADS", "20"))
+MEDIA_VIDEO_DAILY_BYTES = int(os.getenv("MEDIA_VIDEO_DAILY_BYTES", str(2 * 1024**3)))
+# The HLS ladder (short side, px) is cut at this height and never upscales.
+MEDIA_VIDEO_MAX_HEIGHT = int(os.getenv("MEDIA_VIDEO_MAX_HEIGHT", "720"))
+MEDIA_VIDEO_MAX_FPS = int(os.getenv("MEDIA_VIDEO_MAX_FPS", "30"))
+# Sources bigger than this many pixels per frame are refused (``dimensions_too_large``).
+MEDIA_VIDEO_MAX_PIXELS = int(os.getenv("MEDIA_VIDEO_MAX_PIXELS", str(3840 * 2160)))
+# HDR sources: ``tonemap`` to SDR (needs ffmpeg's zscale) or ``reject`` (``hdr_unsupported``).
+MEDIA_VIDEO_HDR_MODE = os.getenv("MEDIA_VIDEO_HDR_MODE", "tonemap")
+MEDIA_VIDEO_MP4_FALLBACK = env_bool("MEDIA_VIDEO_MP4_FALLBACK", False)
+MEDIA_KEEP_VIDEO_ORIGINALS = env_bool("MEDIA_KEEP_VIDEO_ORIGINALS", False)
+# Each ffmpeg run (one chain step) is killed after this many seconds (``timeout``).
+MEDIA_TRANSCODE_STEP_TIMEOUT = int(os.getenv("MEDIA_TRANSCODE_STEP_TIMEOUT", "1200"))
+# Address-space limit for ffmpeg, in MB (0: none; the container's mem_limit still applies).
+MEDIA_FFMPEG_MAX_MEMORY_MB = int(os.getenv("MEDIA_FFMPEG_MAX_MEMORY_MB", "1200"))
+MEDIA_FFMPEG_THREADS = int(os.getenv("MEDIA_FFMPEG_THREADS", "2"))
+# One private mkdtemp per step under this root, removed in ``finally``.
+MEDIA_TRANSCODE_SCRATCH_DIR = os.getenv("MEDIA_TRANSCODE_SCRATCH_DIR", "/tmp/tara-transcode")  # noqa: S108
+MEDIA_TRANSCODE_MAX_ATTEMPTS = 3
+# Playback (5.3): playlist tokens signed with a media-only secret, segment URLs
+# presigned per time bucket. A removed video stops within the window.
+# Optional: derived from MEDIA_SECRET_KEY when unset (the transcoder never has it).
+MEDIA_PLAYBACK_SECRET = (
+    os.getenv("MEDIA_PLAYBACK_SECRET")
+    or hashlib.sha256(f"tara-media-playback:{SECRET_KEY}".encode()).hexdigest()
+)
+MEDIA_PLAYBACK_TOKEN_TTL = int(os.getenv("MEDIA_PLAYBACK_TOKEN_TTL", "3600"))
+MEDIA_HLS_URL_WINDOW_SECONDS = int(os.getenv("MEDIA_HLS_URL_WINDOW_SECONDS", "300"))
+MEDIA_PLAYBACK_ACCESS_CACHE_SECONDS = int(os.getenv("MEDIA_PLAYBACK_ACCESS_CACHE_SECONDS", "30"))
+
 # Restricted (non-public post) media ask post who may see them; fails closed.
 POST_INTERNAL_URL = os.getenv("POST_INTERNAL_URL", "http://post:8000")
 POST_CALL_TIMEOUT = float(os.getenv("POST_CALL_TIMEOUT", "2.0"))
@@ -127,12 +183,28 @@ TARA_EVENT_QUEUE = "media.events"
 
 CELERY_BROKER_URL = RABBITMQ_URL or "memory://"
 CELERY_TASK_DEFAULT_QUEUE = f"{SERVICE_NAME}.tasks"
+# Transcoding runs on its own queue, consumed only by media-transcoder
+# (concurrency 1). Its steps ack late, so the per-queue consumer timeout is
+# raised above RabbitMQ's 30-minute default (each step is also time-limited).
+MEDIA_TRANSCODE_QUEUE = f"{SERVICE_NAME}.transcode"
+MEDIA_TRANSCODE_CONSUMER_TIMEOUT_MS = int(
+    os.getenv("MEDIA_TRANSCODE_CONSUMER_TIMEOUT_MS", str(2 * 3600 * 1000))
+)
+CELERY_TASK_QUEUES = (
+    Queue(CELERY_TASK_DEFAULT_QUEUE),
+    Queue(
+        MEDIA_TRANSCODE_QUEUE,
+        queue_arguments={"x-consumer-timeout": MEDIA_TRANSCODE_CONSUMER_TIMEOUT_MS},
+    ),
+)
+CELERY_TASK_ROUTES = {"media.video.*": {"queue": MEDIA_TRANSCODE_QUEUE}}
 CELERY_RESULT_BACKEND = None
 CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", not bool(RABBITMQ_URL))
 CELERY_BEAT_SCHEDULE = {
     "drain-outbox": {"task": "tara_events.publish_outbox", "schedule": 2.0},
     "purge-events": {"task": "tara_events.purge_events", "schedule": 3600.0},
     "expire-stale-uploads": {"task": "media.expire_stale_uploads", "schedule": 900.0},
+    "requeue-stalled-videos": {"task": "media.requeue_stalled_videos", "schedule": 900.0},
 }
 
 CORS_ALLOWED_ORIGINS = env_list("MEDIA_CORS_ORIGINS", "http://localhost:5173")

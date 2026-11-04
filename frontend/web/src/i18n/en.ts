@@ -1,6 +1,10 @@
+import composerEn from "./composer.en";
 import groupsEn from "./groups.en";
+import homeFeedEn from "./homeFeed.en";
 import registerEn from "./register.en";
 import shellEn from "./shell.en";
+import suggestionsEn from "./suggestions.en";
+import videoEn from "./video.en";
 
 export default {
   app: { name: "Tara", tagline: "Connect. Share. Belong.", promise: "More than a social network… a place to belong." },
@@ -604,6 +608,8 @@ export default {
     kinds: {
       post_share: "{name} shared your post",
       mention: "{name} mentioned you",
+      post_tag: "{name} tagged you in a post",
+      video_ready: "Your video is ready",
       post_reaction: "{name} reacted to your post",
       post_comment: "{name} commented on your post",
       comment_reply: "{name} replied to your comment",
@@ -1051,6 +1057,8 @@ export default {
     notif: {
       post_share: "Shares of my posts",
       mention: "Mentions",
+      post_tag: "Tags in posts",
+      video_ready: "My videos finished processing",
       post_reaction: "Reactions on my posts",
       post_comment: "Comments on my posts",
       comment_reply: "Replies to my comments",
@@ -1397,9 +1405,13 @@ export default {
       media_already_attached: "That image is already used somewhere else.",
     },
   },
+  composer: composerEn,
   groups: groupsEn,
+  homeFeed: homeFeedEn,
   register: registerEn,
   shell: shellEn,
+  suggestions: suggestionsEn,
+  video: videoEn,
   landing: {
     getStarted: "Get started",
     headline: "Your place among",

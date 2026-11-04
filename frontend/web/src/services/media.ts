@@ -55,13 +55,20 @@ export const mediaService = {
    * Presigned upload: sign → PUT bytes straight to object storage → complete.
    * Returns the asset (status will be "processing" until the worker finishes).
    */
-  async upload(file: File, kind = "image", visibility = "public"): Promise<MediaAsset> {
-    const mime = uploadMime(file);
+  async upload(
+    file: File,
+    kind = "image",
+    visibility = "public",
+    // `purpose: "post"` sends a video to the transcoder (HLS, see services/video.ts).
+    options: { purpose?: string; mime?: string } = {},
+  ): Promise<MediaAsset> {
+    const mime = options.mime || uploadMime(file);
     const { data: signed } = await api.post<{ data: SignResult }>("/media/uploads/sign/", {
       kind,
       mime,
       size: file.size,
       visibility,
+      ...(options.purpose ? { purpose: options.purpose } : {}),
     });
     const s = signed.data;
 

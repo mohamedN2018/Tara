@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/post.approved.v1.json",
+  "title": "post.approved v1 payload",
+  "description": "A group post that waited for approval was approved by the group's staff (wave 2C). tagged_ids: the people tagged in it at that moment; post consumes its own event to emit post.tagged for them (nobody is told of a tag while the post waits). Ids only. Behind POST_EMIT_GROUP_EVENTS.",
+  "type": "object",
+  "properties": {
+    "post_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "group_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "author_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "approved_by": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "tagged_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      },
+      "maxItems": 20
+    }
+  },
+  "required": [
+    "post_id",
+    "group_id",
+    "author_id",
+    "approved_by",
+    "tagged_ids"
+  ],
+  "additionalProperties": false
+}

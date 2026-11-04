@@ -28,6 +28,8 @@ class MediaInfo:
     owner_id: str
     kind: str
     status: str
+    # "post" for a video transcoded by media's pipeline (5.2); "" otherwise.
+    purpose: str = ""
 
 
 def _internal_token() -> str:
@@ -69,7 +71,13 @@ def lookup(media_ids: list[str]) -> dict[str, MediaInfo]:
     """``{media_id: MediaInfo}``; ids media does not know (or deleted) are absent."""
     rows = _post("media/batch/", {"ids": [str(m) for m in media_ids]})
     return {
-        r["id"]: MediaInfo(id=r["id"], owner_id=r["owner_id"], kind=r["kind"], status=r["status"])
+        r["id"]: MediaInfo(
+            id=r["id"],
+            owner_id=r["owner_id"],
+            kind=r["kind"],
+            status=r["status"],
+            purpose=r.get("purpose") or "",
+        )
         for r in rows
     }
 
@@ -90,8 +98,9 @@ class BindResult:
 def bind(owner_id: str, post_id: str, media_ids: list[str], *, restricted: bool) -> BindResult:
     """Attach media to the post, or (``restricted``) tighten them to its visibility.
 
-    Media never lifts a restriction: restricted media follow the post's
-    visibility, so they open up again with the post (an approved removal).
+    ``restricted=False`` for the same post lifts a restriction only when media,
+    asking post's visibility endpoint, finds the post public (a published
+    draft); otherwise restricted media keep following the post's visibility.
     """
     ids = [str(m) for m in media_ids]
     skipped: list[str] = []

@@ -101,6 +101,13 @@ TARA_EVENT_EXCHANGE = os.getenv("TARA_EVENT_EXCHANGE", "tara.events")
 TARA_OUTBOX_MODEL = "graph.OutboxEvent"
 TARA_EVENT_QUEUE = "graph.events"
 
+# Plan 08 track 2D. Two-release rule: on an upgrade deploy once with these off
+# so feed (and later post) bind the new event types first.
+GRAPH_EMIT_MUTE_FAVORITE_EVENTS = env_bool("GRAPH_EMIT_MUTE_FAVORITE_EVENTS", True)
+GRAPH_EMIT_RESTRICT_EVENTS = env_bool("GRAPH_EMIT_RESTRICT_EVENTS", True)
+# Profile's page export, for `manage.py backfill_page_refs`.
+PROFILE_INTERNAL_URL = os.getenv("PROFILE_INTERNAL_URL", "http://profile:8000")
+
 CELERY_BROKER_URL = RABBITMQ_URL or "memory://"
 CELERY_TASK_DEFAULT_QUEUE = f"{SERVICE_NAME}.tasks"
 CELERY_RESULT_BACKEND = None

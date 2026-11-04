@@ -102,9 +102,9 @@ Events are **never** published directly inside the business transaction. Instead
 ### Profile & Pages
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
-| `profile.updated` | account | changed_fields, public_snapshot (handle, display_name, visibility, avatar_media_id), city (additive, v1: only while the city's field privacy is public, else null; a city privacy change emits the event too) | Search, Feed/Post/Chat (refresh author cache) |
-| `page.created` | page | handle, name, owner; additive, v1: category, location, status, avatar_media_id, deleted (the same searchable state as `page.updated`) | Search |
-| `page.updated` | page | as `page.created`, plus changed[]. Emitted on every page edit (behind `PROFILE_EMIT_PAGE_UPDATED`); a draft or suspended status takes the page out of search. Schema `page.updated.v1.json` | Search |
+| `profile.updated` | account | changed_fields, public_snapshot (handle, display_name, visibility, avatar_media_id), city (additive, v1: only while the city's field privacy is public, else null; a city privacy change emits the event too). **Open (1.6):** profile adds `searchable` (bool); graph already copies it into `AccountRef` when present | Search, Feed/Post/Chat (refresh author cache), Graph (handle, searchable), Feed (`searchable` into `author_ref` when present, 2A) |
+| `page.created` | page | handle, name, owner; additive, v1: category, location, status, avatar_media_id, deleted (the same searchable state as `page.updated`) | Search, Graph (suggested pages) |
+| `page.updated` | page | as `page.created`, plus changed[]. Emitted on every page edit (behind `PROFILE_EMIT_PAGE_UPDATED`); a draft or suspended status takes the page out of search. Schema `page.updated.v1.json` | Search, Graph (suggested pages) |
 | `page.member.changed` | page | member, role, action | (none yet) |
 
 ### Social Graph
@@ -115,28 +115,38 @@ Events are **never** published directly inside the business transaction. Instead
 | `friendship.accepted` | friendship | a, b | Notification, Feed (edge), Search (mutuals) |
 | `friendship.removed` | friendship | a, b, reason (`unfriend` \| `block`) | Feed |
 | `user.followed` | follow | follower, target(type) | Notification, Feed (edge) |
-| `user.unfollowed` | follow | follower, target, target_type, reason (`unfollow` \| `block`) | Feed |
+| `user.unfollowed` | follow | follower, target, target_type, reason (`unfollow` \| `block`) | Feed (also ends the `following` mode edge, 2A) |
 | `user.blocked` | block | blocker, blocked | Post, Chat, Feed (hide/sever) |
 | `user.unblocked` | block | blocker, blocked | Post, Chat, Feed |
+| `relationship.muted` | account (the actor) | actor_id, target_id, occurred_at. The target's posts leave the actor's feed; the target is never notified. Emitted in the write transaction, behind `GRAPH_EMIT_MUTE_FAVORITE_EVENTS` (plan 08, 2D). Schema `relationship.muted.v1.json` | Feed |
+| `relationship.unmuted` | account (the actor) | actor_id, target_id, occurred_at. Only when a mute actually went away. Same flag | Feed |
+| `relationship.favorited` | account (the actor) | actor_id, target_id, occurred_at. The target's posts rank first in the actor's feed (at most 30 favorites). Same flag | Feed |
+| `relationship.unfavorited` | account (the actor) | actor_id, target_id, occurred_at. Also emitted when the actor mutes a favorite, and for both directions when either side blocks the other (after `user.blocked`). Same flag | Feed |
+| `relationship.restricted` | account (the actor) | actor_id, target_id, occurred_at. The target's comments on the actor's posts are visible only to the two of them. Behind `GRAPH_EMIT_RESTRICT_EVENTS` | (none yet: post, follow-up of 2D; until then post can read `restricted` from graph's `/internal/v1/preferences/<account_id>/`) |
+| `relationship.unrestricted` | account (the actor) | actor_id, target_id, occurred_at. Same flag | (none yet: post) |
 
-A block ends every edge between the two accounts in the same transaction: graph emits `user.blocked`, then `friendship.removed` (only if they were friends; a pending request is deleted silently) and one `user.unfollowed` per follow direction, all with `reason=block` and `actor_id` = the blocker. Consumers therefore react to a block exactly as to an unfriend or unfollow. `reason` is additive (v1); a re-block emits nothing.
+A block ends every edge between the two accounts in the same transaction: graph emits `user.blocked`, then `friendship.removed` (only if they were friends; a pending request is deleted silently) and one `user.unfollowed` per follow direction, all with `reason=block` and `actor_id` = the blocker. Consumers therefore react to a block exactly as to an unfriend or unfollow. `reason` is additive (v1); a re-block emits nothing. Since 2D the same transaction also emits `relationship.unfavorited` for each direction that had a favorite; mutes and restrictions stay stored (and hidden from the owner's lists while the block lasts).
+
+Mute and favorite exclude each other: favoriting a muted account emits `relationship.unmuted` before `relationship.favorited`, and muting a favorite emits `relationship.unfavorited` before `relationship.muted`. None of the six `relationship.*` events is consumed by notification, so nobody is told. Graph consumes `page.created`/`page.updated` (its `PageRef` read model for "Suggested pages", newer `occurred_at` only) and reads `searchable` from `profile.updated` when profile carries it.
 
 ### Posts
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
-| `post.created` | post | author, audience, media_ids, hashtags, mentions | Feed (fan-out), Search, Notification (mentions) |
-| `post.updated` | post | post_id, author_id, audience (may change on edit), comment_policy (additive, v1), excerpt, hashtags (the full list, additive, v1), new_mentions; type, author_type, media_ids, created_at (additive, v1, search v2: a post that becomes public is indexed with its photos and date). Also emitted, with no new_mentions, when an overturned appeal restores a removed post | Feed, Search |
+| `post.created` | post | author, audience, media_ids, hashtags, mentions; tagged_ids (additive, v1, 2C). Emitted when the post is **published**: at once, or for a draft or scheduled post only when it goes out (by its author or the `posts.publish_scheduled` beat task), with `created_at` = the publication time. Nothing is emitted for a draft | Feed (fan-out), Search, Notification (mentions), Post (tags) |
+| `post.updated` | post | post_id, author_id, audience (may change on edit), comment_policy (additive, v1), excerpt, hashtags (the full list, additive, v1), new_mentions; type, author_type, media_ids, created_at (additive, v1, search v2: a post that becomes public is indexed with its photos and date); new_tagged_ids (additive, v1, 2C). Never emitted for a draft or a scheduled post. Also emitted, with no new_mentions, when an overturned appeal restores a removed post | Feed, Search |
+| `post.tagged` | post | post_id, author_id, recipient. One per tagged person, emitted by post's consumer of its own `post.created` (`tagged_ids`), `post.updated` (`new_tagged_ids`) and `post.approved` (`tagged_ids`), only to someone who can open the post, is still tagged and is not blocked either way with the author; never while a group post waits for approval. Behind `POST_EMIT_TAG_EVENTS` (2C). Schema `post.tagged.v1.json` | Notification (`post.tag`) |
+| `post.approved` | post | post_id, group_id, author_id, approved_by, tagged_ids (the people tagged at that moment). Emitted when a group's staff approve a post that waited for approval, in the approval's transaction. Post consumes it itself to emit `post.tagged`. Behind `POST_EMIT_GROUP_EVENTS` (2C). Schema `post.approved.v1.json` | Post |
 | `post.deleted` | post | post_id. Also emitted when moderation removes a post. Feed and search keep a tombstone, so a retried older `post.created`/`post.updated` cannot bring it back. Post consumes its own event to restrict the post's media through media's bind (retried while media is down), so only the owner can fetch them | Feed, Search, Post |
-| `post.reacted` | post | reactor, reaction_type | Notification |
-| `post.unreacted` | post | post_id, reactor, reaction_type, author_id. Once per removed reaction | — (for later notification clean-up) |
+| `post.reacted` | post | reactor, reaction_type | Notification, Feed (ranking: engagement and the reactor's affinity to the author, 1.7) |
+| `post.unreacted` | post | post_id, reactor, reaction_type, author_id. Once per removed reaction | Feed (ranking, 1.7); later notification clean-up |
 | `post.commented` | comment | post_id, author | Notification, Feed (signal) |
-| `comment.replied` | comment | parent_id (the thread root: replies are flattened onto it since 1.3), reply_to_id, parent_author_id (the author of the comment answered, who gets the notification), root_author_id, post_author_id, author | Notification |
+| `comment.replied` | comment | parent_id (the thread root: replies are flattened onto it since 1.3), reply_to_id, parent_author_id (the author of the comment answered, who gets the notification), root_author_id, post_author_id, author | Notification, Feed (ranking, 1.7) |
 | `comment.edited` | comment | post_id, comment_id, author, new_mentions | Post (mention notifications) |
-| `comment.deleted` | comment | post_id, comment_id, author_id, post_author_id, parent_id, removed_ids (a root takes its thread), by (`author`, `post_author` or `moderation`) | — |
-| `comment.restored` | comment | post_id, comment_id, restored_ids (a moderation removal overturned) | — |
+| `comment.deleted` | comment | post_id, comment_id, author_id, post_author_id, parent_id, removed_ids (a root takes its thread), by (`author`, `post_author` or `moderation`) | Feed (ranking: each removed id stops counting in `PostStats.comments`, once, newest event per comment wins) |
+| `comment.restored` | comment | post_id, comment_id, restored_ids (a moderation removal overturned) | Feed (ranking: each restored id counts again, once) |
 | `comment.reacted` | comment | post_id, comment_id, reactor, reaction_type, author_id. Only a new reaction | — |
 | `comment.reported` | comment | comment_id, post_id, reporter, reason, owner_id (the comment author). Emitted once per reporter per comment, and only when the reporter can see the comment | Moderation (needs `comment.reported` in its intake map) |
-| `post.shared` | post | sharer, post_id, share_post_id, author_id | Notification |
+| `post.shared` | post | sharer, post_id, share_post_id, author_id | Notification, Feed (ranking, 1.7) |
 | `user.mentioned` | post | recipient, actor, post_id, comment_id (only readers who can open the post) | Notification |
 | `post.reported` | post | post_id, reporter, reason, owner_id (the post author; additive, v1). Emitted once per reporter per post, and only when the reporter can see the post | Moderation |
 
@@ -181,9 +191,11 @@ Profile consumes `moderation.actioned` with `target_type=group` (`remove` suspen
 ### Media
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
-| `media.uploaded` | media | owner, kind, bytes (the stored object's real size, not the declared one) | File Processing |
-| `media.processed` | media | variants, waveform?, duration? | Post, Chat, Marketplace |
-| `media.failed` | media | error, retryable | Post, Chat (show retry) |
+| `media.uploaded` | media | owner, kind, bytes (the stored object's real size, not the declared one), purpose (additive, 5.2: `post` for a video sent to the transcoder) | File Processing |
+| `media.processed` | media | owner, kind, variants; for a transcoded video (additive, 5.2): purpose, renditions[] (short side in px: 240/360/480/720, never above the source), duration_ms, width, height. Recorded once per media in the transaction that marks it ready, under a row lock, so a replayed transcoder step records nothing | Post, Chat, Marketplace, Notification (`video.ready` for a transcoded video's owner, once per video) |
+| `media.failed` | media | owner, retryable; for a transcoded video (additive, 5.2): kind, purpose, code (`too_long`, `hdr_unsupported`, `dimensions_too_large`, `no_video_stream`, `unreadable`, `unsupported_type`, `timeout`, `transcode_failed`, `too_many_attempts`, `storage_unavailable`, `internal`) | Post, Chat (show retry) |
+
+Video pipeline (roadmap 5.2 / 5.3). A video signed with `purpose=post` is stored under `videos/`, verified at completion like every upload (signature, real size, ETag), then sits in `uploaded` until the media-transcoder container (queue `media.transcode`, concurrency 1, a storage user limited to `videos/`) makes the poster and one HLS rendition per chain step, and `finalize` marks it `ready` and records `media.processed`. The original is then deleted unless `MEDIA_KEEP_VIDEO_ORIGINALS=true`; viewers only ever get renditions. Playback asks post's `/internal/v1/posts/<id>/visibility/` for every viewer, also for a public post (blocks, removal), and a video on no post is its owner's only. Schemas: `media.uploaded.v1.json`, `media.processed.v1.json`, `media.failed.v1.json`. No new event type: the fields are additive, and notification's new `media.processed` binding only adds a consumer.
 
 ### Chat
 | Event | Subject | Key payload | Consumers |

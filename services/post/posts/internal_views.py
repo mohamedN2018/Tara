@@ -22,7 +22,7 @@ from tara_common.auth import verify_internal_token
 from tara_common.exceptions import TaraAPIError
 from tara_common.responses import data_response
 
-from . import groups, services
+from . import composer, groups, services
 from .models import Post
 
 
@@ -61,7 +61,11 @@ class PostVisibilityView(APIView):
             ) from exc
         post = Post.objects.filter(id=post_id).first()
         if post is not None:
-            visible = services.visible_to_viewer(viewer_id, post)
+            # A draft or scheduled post is live for its author: media must not
+            # hand its photos to another post or a cover (they stay attached).
+            visible = composer.live_for_author(viewer_id, post) or services.visible_to_viewer(
+                viewer_id, post
+            )
         else:
             # An event's cover is bound to the event id the same way (no clash:
             # uuid7), so media asks this one endpoint for both.

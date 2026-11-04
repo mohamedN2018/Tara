@@ -87,7 +87,8 @@ test("campaign to feed: review, serve token, stats, and forged events are refuse
   const card = viewer.getByTestId("sponsored");
   await card.scrollIntoViewIfNeeded();
   await expect(card).toContainText(`إعلان ${tag}`);
-  await card.getByRole("button").click();
+  // The CTA: the card also has a "Hide ad" X since 2B.
+  await card.getByRole("button", { name: "اعرف المزيد" }).click();
 
   await expect
     .poll(async () => {

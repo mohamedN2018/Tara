@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import LinkPreviewCard from "@/components/post/LinkPreviewCard.vue";
+import VideoPlayer from "@/components/media/VideoPlayer.vue";
 import MediaGrid from "@/components/post/MediaGrid.vue";
 import MediaTheater from "@/components/post/MediaTheater.vue";
 import RichText from "@/components/post/RichText.vue";
@@ -31,7 +32,8 @@ const author = computed(() => (props.post ? directory.label(props.post.author_id
   <div class="mt-3 overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700" data-testid="shared-post">
     <p v-if="!post" class="p-3 text-sm text-gray-500 dark:text-gray-400">{{ t("post.sharedUnavailable") }}</p>
     <template v-else>
-      <MediaGrid v-if="mediaIds.length" compact class="!mt-0" :media-ids="mediaIds" :author-name="author" @open="viewer.open" />
+      <VideoPlayer v-if="post?.type === 'video' && mediaIds.length" class="!mt-0 !rounded-none" :media-id="mediaIds[0]" />
+      <MediaGrid v-else-if="mediaIds.length" compact class="!mt-0" :media-ids="mediaIds" :author-name="author" @open="viewer.open" />
       <MediaTheater
         v-if="viewer.index.value !== null"
         :media-ids="mediaIds"

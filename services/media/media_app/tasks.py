@@ -3,8 +3,10 @@
 Images are cleaned first: EXIF (including GPS), XMP and comments are removed
 and the EXIF orientation is applied, and the clean copy replaces the stored
 upload. Only then are thumbnails made and the asset marked ready, so nobody is
-ever served the original (no URL is issued before READY). Video transcoding
-and audio waveforms are not implemented. If processing fails, the original is
+ever served the original (no URL is issued before READY). Videos with a
+``purpose`` (post videos) never come here: the transcoder handles them
+(``transcode.py``). Other video (chat) is served as uploaded, and audio
+waveforms are not implemented. If processing fails, the original is
 kept but never served, and `media.failed` lets owners show a retry state
 (brief §8). A storage outage is retried (``RETRY_BACKOFF``) before that.
 """

@@ -19,7 +19,13 @@ from django.utils import timezone
 from tara_common.exceptions import Conflict, TaraAPIError
 
 from . import events
-from .models import BlockRelation, FollowRelation, Friendship
+from .models import (
+    BlockRelation,
+    FollowRelation,
+    Friendship,
+    ListVisibility,
+    RelationshipSettings,
+)
 
 
 def _order(a: str, b: str) -> tuple[str, str]:
@@ -67,16 +73,72 @@ def _with_other_id(qs: QuerySet[Friendship], account_id: str) -> QuerySet[Friend
     )
 
 
-def ensure_lists_visible(viewer_id: str, owner_id: str) -> None:
+#: Which setting guards each kind of list: friends and mutual friends follow
+#: ``friends_list_visibility``; followers and following follow
+#: ``follow_lists_visibility``; the three counts follow ``counts_visibility``.
+LIST_SETTING = {
+    "friends": "friends_list_visibility",
+    "follows": "follow_lists_visibility",
+    "counts": "counts_visibility",
+}
+
+
+def relationship_settings(account_id: str) -> RelationshipSettings:
+    """The account's settings; an unsaved row with every default when it has none."""
+    return RelationshipSettings.objects.filter(account_id=account_id).first() or (
+        RelationshipSettings(account_id=account_id)
+    )
+
+
+def update_relationship_settings(account_id: str, changes: dict) -> RelationshipSettings:
+    row, _ = RelationshipSettings.objects.get_or_create(account_id=account_id)
+    for field, value in changes.items():
+        setattr(row, field, value)
+    row.save()
+    return row
+
+
+def _level_allows(level: str, *, is_owner: bool, is_friend: bool) -> bool:
+    if is_owner or level == ListVisibility.PUBLIC:
+        return True
+    return level == ListVisibility.FRIENDS and is_friend
+
+
+def ensure_lists_visible(viewer_id: str, owner_id: str, kind: str = "friends") -> None:
     """The one visibility gate for another account's relationship lists
-    (friends, followers, mutual friends).
+    (friends, followers, following, mutual friends) and counts.
 
     A block in either direction hides every list with 404, never 403 (the same
-    answer as a hidden profile). Milestone 1.6 adds the owner's list-visibility
-    settings here, so every list keeps using this one resolver.
+    answer as a hidden profile), and so does the owner's setting for ``kind``
+    (``public``, ``friends`` or ``only_me``; see ``LIST_SETTING``).
     """
-    if str(viewer_id) != str(owner_id) and is_blocked(viewer_id, owner_id):
+    if str(viewer_id) == str(owner_id):
+        return
+    if is_blocked(viewer_id, owner_id):
         raise TaraAPIError("Resource not found.", code="not_found", http_status_code=404)
+    level = getattr(relationship_settings(owner_id), LIST_SETTING[kind])
+    if level == ListVisibility.PUBLIC:
+        return
+    if not _level_allows(level, is_owner=False, is_friend=are_friends(viewer_id, owner_id)):
+        raise TaraAPIError("Resource not found.", code="not_found", http_status_code=404)
+
+
+def relationship_counts(owner_id: str, *, viewer_id: str) -> dict:
+    """Friends, followers and following counts, counted exactly as the lists
+    are returned to ``viewer_id`` (accounts with a block toward either side
+    are left out). Callers gate this with ``ensure_lists_visible(..., "counts")``."""
+    owner_id = str(owner_id)
+    return {
+        "friends_count": _friends_qs(owner_id, viewer_id).count(),
+        "followers_count": FollowRelation.objects.filter(
+            target_id=owner_id, target_type=FollowRelation.TargetType.USER
+        )
+        .filter(_unblocked("follower_id", (owner_id, viewer_id)))
+        .count(),
+        "following_count": FollowRelation.objects.filter(follower_id=owner_id)
+        .filter(_unblocked("target_id", (owner_id, viewer_id)))
+        .count(),
+    }
 
 
 # ---- friends ----------------------------------------------------------------
@@ -92,6 +154,12 @@ def send_friend_request(actor_id: str, target_id: str) -> Friendship:
         if existing.status == Friendship.Status.ACCEPTED:
             raise Conflict("Already friends.", code="conflict")
         raise Conflict("A friend request is already pending.", code="conflict")
+    if not may_send_friend_request(actor_id, target_id):
+        raise TaraAPIError(
+            "This account only accepts friend requests from friends of friends.",
+            code="friend_requests_restricted",
+            http_status_code=403,
+        )
     with transaction.atomic():
         try:
             friendship = Friendship.objects.create(
@@ -106,6 +174,15 @@ def send_friend_request(actor_id: str, target_id: str) -> Friendship:
             actor_id=str(actor_id),
         )
     return friendship
+
+
+def may_send_friend_request(actor_id: str, target_id: str) -> bool:
+    """The target's ``friend_requests_from`` setting: ``everyone``, or only
+    accounts that share at least one friend with them."""
+    setting = relationship_settings(target_id).friend_requests_from
+    if setting != RelationshipSettings.RequestsFrom.FRIENDS_OF_FRIENDS:
+        return True
+    return bool(mutual_friends(actor_id, target_id))
 
 
 def _load_pending(friendship_id: str) -> Friendship:
@@ -217,19 +294,18 @@ def list_friend_ids(account_id: str, *, viewer_id: str | None = None) -> list[st
     """Accepted friends of ``account_id`` as returned to ``viewer_id`` (default:
     the owner). Accounts with a block, either way, with the owner or the viewer
     are left out, so a stale edge (a request racing a block) never surfaces."""
+    return [str(x) for x in _friends_qs(account_id, viewer_id).values_list("other_id", flat=True)]
+
+
+def _friends_qs(account_id: str, viewer_id: str | None) -> QuerySet[Friendship]:
     account_id = str(account_id)
-    qs = (
-        _with_other_id(
-            Friendship.objects.filter(
-                Q(account_low_id=account_id) | Q(account_high_id=account_id),
-                status=Friendship.Status.ACCEPTED,
-            ),
-            account_id,
-        )
-        .filter(_unblocked("other_id", (account_id, viewer_id)))
-        .values_list("other_id", flat=True)
-    )
-    return [str(x) for x in qs]
+    return _with_other_id(
+        Friendship.objects.filter(
+            Q(account_low_id=account_id) | Q(account_high_id=account_id),
+            status=Friendship.Status.ACCEPTED,
+        ),
+        account_id,
+    ).filter(_unblocked("other_id", (account_id, viewer_id)))
 
 
 def list_requests(account_id: str, *, outgoing: bool) -> list[Friendship]:
@@ -383,6 +459,9 @@ def block(actor_id: str, target_id: str) -> BlockRelation:
                 actor_id=actor_id,
                 reason="block",
             )
+        from .preferences import on_block
+
+        on_block(actor_id, target_id)
     return relation
 
 
@@ -432,17 +511,53 @@ def _uuids(values: Iterable[str]) -> list[str]:
     return out
 
 
-def lists_visible_to(viewer_id: str, owner_ids: Iterable[str]) -> set[str]:
-    """Bulk form of ``ensure_lists_visible``: the owners whose relationship lists
-    (and so mutual friends) ``viewer_id`` may see. Milestone 1.6 adds the owners'
-    list-visibility settings in both places."""
+def blocked_with(viewer_id: str, owner_ids: Iterable[str]) -> set[str]:
+    """The owners that have a block, in either direction, with ``viewer_id``."""
     owners = {str(o) for o in owner_ids}
-    blocked = BlockRelation.objects.filter(
+    rows = BlockRelation.objects.filter(
         Q(blocker_id=viewer_id, blocked_id__in=owners)
         | Q(blocked_id=viewer_id, blocker_id__in=owners)
     ).values_list("blocker_id", "blocked_id")
-    hidden = {str(x) for pair in blocked for x in pair} - {str(viewer_id)}
-    return {o for o in owners if o == str(viewer_id) or o not in hidden}
+    return ({str(x) for pair in rows for x in pair} - {str(viewer_id)}) & owners
+
+
+def _levels(owner_ids: Iterable[str], kind: str) -> dict[str, str]:
+    """Each owner's level for ``kind``; owners without a settings row are public."""
+    field = LIST_SETTING[kind]
+    rows = RelationshipSettings.objects.filter(account_id__in=list(owner_ids)).values_list(
+        "account_id", field
+    )
+    return {str(owner): level for owner, level in rows}
+
+
+def lists_visible_to(
+    viewer_id: str,
+    owner_ids: Iterable[str],
+    kind: str = "friends",
+    *,
+    viewer_friends: set[str] | None = None,
+) -> set[str]:
+    """Bulk form of ``ensure_lists_visible``: the owners whose ``kind`` lists
+    (for ``friends``, also the mutual friends) ``viewer_id`` may see.
+
+    ``viewer_friends`` saves a query when the caller already knows them."""
+    viewer = str(viewer_id)
+    owners = {str(o) for o in owner_ids}
+    hidden = blocked_with(viewer, owners)
+    levels = _levels(owners - hidden - {viewer}, kind)
+    if viewer_friends is None and ListVisibility.FRIENDS in levels.values():
+        viewer_friends = set(list_friend_ids(viewer))
+    visible = set()
+    for owner in owners:
+        if owner == viewer:
+            visible.add(owner)
+        elif owner not in hidden and _level_allows(
+            levels.get(owner, ListVisibility.PUBLIC),
+            is_owner=False,
+            is_friend=owner in (viewer_friends or set()),
+        ):
+            visible.add(owner)
+    return visible
 
 
 def relationships_for(viewer_id: str, user_ids: Iterable[str], page_ids: Iterable[str]) -> dict:
@@ -458,7 +573,8 @@ def relationships_for(viewer_id: str, user_ids: Iterable[str], page_ids: Iterabl
     pages = list(dict.fromkeys(_uuids(page_ids)))[:MAX_BATCH]
     out: dict[str, dict] = {}
     if users:
-        visible = lists_visible_to(viewer, users)
+        blocked_users = blocked_with(viewer, users)
+        levels = _levels(users, "friends")
         rows = Friendship.objects.filter(
             Q(account_low_id=viewer, account_high_id__in=users)
             | Q(account_high_id=viewer, account_low_id__in=users)
@@ -495,7 +611,7 @@ def relationships_for(viewer_id: str, user_ids: Iterable[str], page_ids: Iterabl
                 shared.get(blocker, set()).discard(blocked)
                 shared.get(blocked, set()).discard(blocker)
         for u in users:
-            if u not in visible:
+            if u in blocked_users:
                 continue  # a block either way: nothing about them
             fid, status, requested_by = edges.get(u, (None, None, None))
             if status == Friendship.Status.ACCEPTED:
@@ -504,11 +620,15 @@ def relationships_for(viewer_id: str, user_ids: Iterable[str], page_ids: Iterabl
                 state = "pending_out" if requested_by == viewer else "pending_in"
             else:
                 state = "none"
+            # The count discloses part of u's friend list: None while it is hidden.
+            lists_ok = _level_allows(
+                levels.get(u, ListVisibility.PUBLIC), is_owner=False, is_friend=state == "friends"
+            )
             out[u] = {
                 "state": state,
                 "request_id": fid if state.startswith("pending") else None,
                 "following": u in followed,
-                "mutual_count": len(shared[u]),
+                "mutual_count": len(shared[u]) if lists_ok else None,
             }
     if pages:
         followed_pages = {

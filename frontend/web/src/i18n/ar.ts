@@ -1,6 +1,10 @@
+import composerAr from "./composer.ar";
 import groupsAr from "./groups.ar";
+import homeFeedAr from "./homeFeed.ar";
 import registerAr from "./register.ar";
 import shellAr from "./shell.ar";
+import suggestionsAr from "./suggestions.ar";
+import videoAr from "./video.ar";
 
 export default {
   app: { name: "Tara", tagline: "تواصل. شارك. انتمِ.", promise: "أكثر من شبكة اجتماعية… مكان تنتمي إليه." },
@@ -604,6 +608,8 @@ export default {
     kinds: {
       post_share: "شارك {name} منشورك",
       mention: "أشار إليك {name}",
+      post_tag: "أشار إليك {name} في منشور",
+      video_ready: "أصبح الفيديو الذي رفعته جاهزًا",
       post_reaction: "تفاعل {name} مع منشورك",
       post_comment: "علّق {name} على منشورك",
       comment_reply: "ردّ {name} على تعليقك",
@@ -1061,6 +1067,8 @@ export default {
     notif: {
       post_share: "مشاركة منشوراتي",
       mention: "الإشارات إليّ",
+      post_tag: "الإشارة إليّ في المنشورات",
+      video_ready: "جاهزية الفيديوهات التي أرفعها",
       post_reaction: "التفاعلات على منشوراتي",
       post_comment: "التعليقات على منشوراتي",
       comment_reply: "الردود على تعليقاتي",
@@ -1411,9 +1419,13 @@ export default {
       media_already_attached: "هذه الصورة مستخدمة في مكان آخر.",
     },
   },
+  composer: composerAr,
   groups: groupsAr,
+  homeFeed: homeFeedAr,
   register: registerAr,
   shell: shellAr,
+  suggestions: suggestionsAr,
+  video: videoAr,
   landing: {
     getStarted: "ابدأ الآن",
     headline: "مكانك بين",

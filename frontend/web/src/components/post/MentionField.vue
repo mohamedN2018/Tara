@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, useId } from "vue";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import { mentionAtCaret } from "@/lib/richText";
@@ -33,6 +33,8 @@ let timer: number | undefined;
 let generation = 0;
 
 const open = computed(() => candidates.value.length > 0);
+// A textbox may not carry aria-expanded (axe aria-allowed-attr); it points at its list instead.
+const listId = useId();
 
 function close() {
   window.clearTimeout(timer);
@@ -109,7 +111,8 @@ defineExpose({ focus: () => field.value?.focus() });
       :class="fieldClass"
       :placeholder="placeholder"
       :aria-label="label || placeholder"
-      :aria-expanded="open"
+      aria-autocomplete="list"
+      :aria-controls="open ? listId : undefined"
       autocomplete="off"
       dir="auto"
       @input="onInput"
@@ -118,6 +121,7 @@ defineExpose({ focus: () => field.value?.focus() });
     />
     <ul
       v-if="open"
+      :id="listId"
       class="popover absolute inset-x-0 top-full z-50 mt-1 max-h-60 overflow-y-auto p-1"
       role="listbox"
       data-testid="mention-list"

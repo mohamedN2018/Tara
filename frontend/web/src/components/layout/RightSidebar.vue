@@ -15,7 +15,9 @@ import { useDirectoryStore } from "@/stores/directory";
 import { usePresenceStore } from "@/stores/presence";
 import { useToastStore } from "@/stores/toasts";
 
-import { railAd, railVisible, upcomingEvents } from "./rightRail";
+import RailPageSuggestions from "./RailPageSuggestions.vue";
+import RailPeopleSuggestions from "./RailPeopleSuggestions.vue";
+import { railAd, railHeading, railSection, railVisible, upcomingEvents } from "./rightRail";
 
 const MAX_REQUESTS = 3;
 const MAX_CONTACTS = 20;
@@ -87,8 +89,8 @@ const badge = (iso: string) => dateBadge(iso, locale.value);
 
 onMounted(load);
 
-const heading = "px-2 pb-2 text-[15px] font-semibold text-gray-500 dark:text-gray-400";
-const section = "border-t border-gray-200 pt-3 first:border-t-0 first:pt-0 dark:border-gray-800";
+const heading = railHeading;
+const section = railSection;
 </script>
 
 <template>
@@ -152,6 +154,10 @@ const section = "border-t border-gray-200 pt-3 first:border-t-0 first:pt-0 dark:
         </li>
       </ul>
     </section>
+
+    <!-- People you may know, then suggested pages (wave 2D); each hides itself when empty -->
+    <RailPeopleSuggestions />
+    <RailPageSuggestions />
 
     <!-- Your upcoming events -->
     <section v-if="events.length" :class="section" aria-labelledby="rs-events" data-testid="rail-events">

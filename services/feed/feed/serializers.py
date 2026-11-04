@@ -5,7 +5,7 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from . import services
-from .models import FeedItem
+from .models import AuthorSnooze, FeedItem, PostHide
 
 
 class FeedItemSerializer(serializers.ModelSerializer):
@@ -20,3 +20,24 @@ class FeedItemSerializer(serializers.ModelSerializer):
     @extend_schema_field(OpenApiTypes.OBJECT)
     def get_snapshot(self, item: FeedItem) -> dict:
         return services.snapshot_for(item.snapshot, item.recipient_id, item.author_id)
+
+
+class HideRequestSerializer(serializers.Serializer):
+    post_id = serializers.UUIDField()
+    reason = serializers.ChoiceField(choices=PostHide.Reason.choices)
+
+
+class PostHideSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PostHide
+        fields = ["post_id", "reason", "hidden_at"]
+
+
+class SnoozeRequestSerializer(serializers.Serializer):
+    author_id = serializers.UUIDField()
+
+
+class AuthorSnoozeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AuthorSnooze
+        fields = ["author_id", "until", "snoozed_at"]

@@ -6,6 +6,7 @@ import { useI18n } from "vue-i18n";
 import LocaleToggle from "@/components/common/LocaleToggle.vue";
 import NotificationPreferences from "@/components/notifications/NotificationPreferences.vue";
 import SecuritySettings from "@/components/settings/SecuritySettings.vue";
+import TagPrivacySetting from "@/components/settings/TagPrivacySetting.vue";
 import ThemeToggle from "@/components/common/ThemeToggle.vue";
 import AppShell from "@/components/layout/AppShell.vue";
 import { errorMessage } from "@/lib/errors";
@@ -122,6 +123,9 @@ onMounted(() => {
 
       <!-- Security: password, email, linked accounts, phone -->
       <SecuritySettings />
+
+      <!-- Who can tag me in posts (post service, 2C) -->
+      <TagPrivacySetting />
 
       <!-- Notification preferences -->
       <section id="notifications" class="card mb-4 scroll-mt-20 p-4">

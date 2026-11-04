@@ -64,3 +64,13 @@ def post_is_live(owner_id: str, post_id: str) -> bool | None:
     when post could not answer, which callers treat as live.
     """
     return _visible(owner_id, post_id)
+
+
+# No account has this id, so post answers as it would for any stranger.
+_STRANGER = "00000000-0000-0000-0000-000000000000"
+
+
+def post_is_public(post_id: str) -> bool | None:
+    """Whether anyone at all may see the post right now (a published, public
+    post). None when post could not answer; callers then keep the restriction."""
+    return _visible(_STRANGER, post_id)

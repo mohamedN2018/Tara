@@ -39,7 +39,8 @@ const props = withDefaults(
   }>(),
   { policy: "everyone", knownNames: () => ({}), focusId: null, focusRootId: null, canModerate: false },
 );
-const emit = defineEmits<{ added: []; total: [count: number] }>();
+// `edited` / `removed` keep the card's inline preview in step with this list.
+const emit = defineEmits<{ added: []; total: [count: number]; edited: [comment: Comment]; removed: [comment: Comment] }>();
 
 const { t } = useI18n();
 const auth = useAuthStore();
@@ -205,11 +206,9 @@ async function submitReply(body: string) {
 async function edit(c: Comment, body: string) {
   busyId.value = c.id;
   try {
-    const updated = await postService.editComment(c.id, body);
-    ({ roots: roots.value, threads: threads.value } = replaceComment(roots.value, threads.value, {
-      ...c,
-      ...updated,
-    }));
+    const updated = { ...c, ...(await postService.editComment(c.id, body)) };
+    ({ roots: roots.value, threads: threads.value } = replaceComment(roots.value, threads.value, updated));
+    emit("edited", updated);
   } catch (e) {
     toasts.error(e);
   } finally {
@@ -224,6 +223,7 @@ async function remove(c: Comment) {
     ({ roots: roots.value, threads: threads.value } = removeComment(roots.value, threads.value, c));
     if (replyTarget.value && threadRootId(replyTarget.value) === threadRootId(c)) replyTarget.value = null;
     emit("total", comment_count);
+    emit("removed", c);
   } catch (e) {
     toasts.error(e);
   } finally {

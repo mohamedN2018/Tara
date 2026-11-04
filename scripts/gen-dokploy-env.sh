@@ -145,6 +145,7 @@ ADS_DB_PASSWORD=$(pw)
 
 # ---- Redis, RabbitMQ, MinIO --------------------------------------------------
 REDIS_PASSWORD=$(pw)
+# REDIS_HOT_URL (feed ranking sessions, redis-hot) is derived from REDIS_PASSWORD in the compose file.
 RABBITMQ_USER=tara
 RABBITMQ_PASS=$(pw)
 # MinIO root: held only by the minio container and the media service.
@@ -152,6 +153,34 @@ MINIO_ROOT_USER=tara
 MINIO_ROOT_PASSWORD=$(pw)
 S3_BUCKET=tara-media
 S3_REGION=us-east-1
+# Video transcoder (5.2): a MinIO user limited to videos/, created by minio-init.
+# On S3/R2 put a token scoped to videos/ here instead.
+MEDIA_TRANSCODER_S3_ACCESS_KEY=tara-transcoder
+MEDIA_TRANSCODER_S3_SECRET_KEY=$(pw)
+
+# ---- Video pipeline (5.2 / 5.3) -----------------------------------------------
+# Per-post caps; nginx's /tara-media/ body limit (200m) caps uploads anyway.
+MEDIA_VIDEO_MAX_BYTES_POST=209715200
+MEDIA_VIDEO_MAX_SECONDS_POST=600
+# Per account per 24 hours.
+MEDIA_VIDEO_DAILY_UPLOADS=20
+MEDIA_VIDEO_DAILY_BYTES=2147483648
+MEDIA_VIDEO_MAX_HEIGHT=720
+MEDIA_VIDEO_HDR_MODE=tonemap
+MEDIA_VIDEO_MP4_FALLBACK=false
+MEDIA_KEEP_VIDEO_ORIGINALS=false
+MEDIA_TRANSCODE_STEP_TIMEOUT=1200
+MEDIA_VIDEO_MAX_FPS=30
+MEDIA_VIDEO_MAX_PIXELS=8294400
+MEDIA_FFMPEG_THREADS=2
+MEDIA_FFMPEG_MAX_MEMORY_MB=1200
+MEDIA_TRANSCODE_SCRATCH_DIR=/tmp/tara-transcode
+MEDIA_TRANSCODE_CONSUMER_TIMEOUT_MS=7200000
+# Signs the HLS playlist tokens; media only (never the transcoder).
+MEDIA_PLAYBACK_SECRET=$(secret)
+MEDIA_PLAYBACK_TOKEN_TTL=3600
+MEDIA_HLS_URL_WINDOW_SECONDS=300
+MEDIA_PLAYBACK_ACCESS_CACHE_SECONDS=30
 
 # ---- Django secret keys (one per service) -----------------------------------
 IDENTITY_SECRET_KEY=$(secret)
@@ -237,6 +266,9 @@ IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS=true
 PROFILE_EMIT_PAGE_UPDATED=true
 PROFILE_EMIT_GROUP_EVENTS=true
 POST_EMIT_GROUP_EVENTS=true
+POST_EMIT_TAG_EVENTS=true
+GRAPH_EMIT_MUTE_FAVORITE_EVENTS=true
+GRAPH_EMIT_RESTRICT_EVENTS=true
 
 # ---- Registration (track 1D) -----------------------------------------------------
 LEGAL_TERMS_VERSION=2026-11-04-draft

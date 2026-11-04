@@ -10,7 +10,9 @@ from __future__ import annotations
 from tara_events import on_event
 from tara_events.envelope import EventEnvelope
 
-from . import services
+# tag_handlers (post.tagged, 2C) and video_handlers (media.processed, 5.2) register
+# their @on_event consumers on import.
+from . import services, tag_handlers, video_handlers  # noqa: F401
 from .services import notify
 
 

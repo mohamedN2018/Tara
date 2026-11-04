@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/media.uploaded.v1.json",
+  "title": "media.uploaded v1 payload",
+  "description": "An upload was verified (signature, real size, ETag) and stored. bytes is the stored object's real size. purpose (additive, 5.2) is set for a video sent to the transcoder; absent for media served as uploaded.",
+  "type": "object",
+  "properties": {
+    "owner": {"type": "string", "format": "uuid"},
+    "kind": {"type": "string", "enum": ["image", "video", "audio", "voice", "file"]},
+    "bytes": {"type": "integer", "minimum": 0},
+    "purpose": {"type": "string", "enum": ["post"]}
+  },
+  "required": ["owner", "kind", "bytes"],
+  "additionalProperties": false
+}

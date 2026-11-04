@@ -67,8 +67,19 @@ CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
         "LOCATION": os.getenv("REDIS_URL", "redis://127.0.0.1:6379/5"),
-    }
+    },
+    # Ranking sessions (1.7) live in their own Redis with its own maxmemory and
+    # noeviction: when it is full or down, "for you" falls back to latest order.
+    "hot": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": os.getenv("REDIS_HOT_URL", "redis://127.0.0.1:6379/6"),
+        "KEY_PREFIX": "feed",
+        "OPTIONS": {"socket_connect_timeout": 0.5, "socket_timeout": 0.5},
+    },
 }
+FEED_HOT_CACHE = "hot"
+FEED_RANK_WINDOW = 500  # newest rows ranked per session; older ones follow in latest order
+FEED_RANK_SESSION_TTL = 1800  # seconds
 
 REST_FRAMEWORK = {
     **api_throttling(),

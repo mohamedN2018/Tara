@@ -17,7 +17,7 @@ from tara_common.auth import verify_internal_token
 from tara_common.exceptions import TaraAPIError
 from tara_common.responses import data_response
 
-from . import services
+from . import preferences, services
 
 
 def _require_internal(request: Request) -> None:
@@ -100,3 +100,21 @@ class RelationshipBatchView(APIView):
                 "users and pages must be lists.", code="validation_error", http_status_code=400
             )
         return data_response({"results": services.relationships_for(viewer, users, pages)})
+
+
+class PreferencesView(APIView):
+    """One owner's mute, favorite and restrict lists (plan 08, track 2D).
+
+    Feed can rebuild its read model from this after missing events; post reads
+    ``restricted`` to show a restricted account's comments on the owner's posts
+    only to the two of them, until it consumes ``relationship.restricted``.
+    Accounts with a block either way are left out.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+    throttle_classes: list = []  # internal: no per-IP throttle (roadmap 3.3)
+
+    def get(self, request: Request, account_id: str) -> Response:
+        _require_internal(request)
+        return data_response(preferences.snapshot(str(account_id)))

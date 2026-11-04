@@ -84,6 +84,7 @@ def _public_posts():
         moderation_status=Post.ModerationStatus.OK,
         audience=Audience.PUBLIC,
         group_id__isnull=True,
+        state="published",  # never a draft or a scheduled post (2C)
     ).prefetch_related("hashtags__hashtag", "media")
 
 

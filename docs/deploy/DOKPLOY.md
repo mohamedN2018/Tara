@@ -88,6 +88,10 @@ separate migrate job to run.
 Named volumes, prefixed with `$P`: `pgdata`, `redisdata`, `rabbitmqdata`,
 `miniodata` and `identity-keys`. Only Postgres, MinIO and the JWT keys need
 backups. Redis is a cache, and RabbitMQ is refilled from each service's outbox.
+`redis-hot` (feed ranking sessions, 1.7) has no volume at all: it keeps nothing
+on disk, runs with `maxmemory 128mb` and `noeviction`, and when it is full or
+down the "for you" feed falls back to latest order. `REDIS_HOT_URL` is derived
+from `REDIS_PASSWORD`; set it only to point feed at another Redis.
 With `.env_prod` the JWT keys come from the environment, so `identity-keys`
 stays empty.
 
@@ -564,6 +568,112 @@ it does not conflict.
   do not add a new pair, because that signs everyone out. Leave them unset (the
   `identity-keys` volume keeps signing), or copy the volume's two PEM files
   into them as one line with literal `\n`.
+
+### Upgrading: relationship privacy, mute, favorites, suggestions (1.6, plan 08 2D)
+
+- **Migration (graph, additive, runs at boot):** `0002_relationship_privacy_preferences`
+  (new tables, and `account_ref.searchable` with a database default of `true`,
+  so the old code can keep inserting rows). No other service migrates.
+- **New variables, all optional:** on graph `GRAPH_EMIT_MUTE_FAVORITE_EVENTS`
+  and `GRAPH_EMIT_RESTRICT_EVENTS` (default `true`). Graph now also reads
+  `PROFILE_INTERNAL_URL`, which every service already gets.
+- **Order (new event types):** on an existing install deploy once with both
+  flags `false`, so `feed-consumer` binds `relationship.muted`/`unmuted`/
+  `favorited`/`unfavorited` first (and `graph-consumer` binds `page.created`/
+  `page.updated`); then set them to `true` and redeploy graph. Nothing consumes
+  `relationship.restricted` yet, so its flag can go on with the other one.
+- **One-off command, after graph runs the new code:**
+
+  ```bash
+  docker exec tara-graph-1 python manage.py backfill_page_refs
+  ```
+
+  It copies existing published pages into graph for "Suggested pages", and is
+  safe to re-run.
+- **Edge:** every new endpoint is under `/api/v1/social/`, which the edge
+  already routes to graph. No new containers.
+
+### Upgrading: the composer, drafts, scheduling and tags (plan 08 2C)
+
+- **Migrations (post, additive, run at boot):** `0009_composer_tags_drafts_schedule`
+  (new tables `post_tag` and `post_account_settings`; new `post` columns
+  `state` with a constant default of `published`, nullable `publish_at`, and
+  `location` and `feeling` with an empty default), then `0010_post_composer_idx`
+  (the scheduled-post and drafts indexes, built `CONCURRENTLY`, outside a
+  transaction).
+- **New variable, optional:** on post `POST_EMIT_TAG_EVENTS` (default `true`).
+- **Order (new event type):** on an existing install deploy once with
+  `POST_EMIT_TAG_EVENTS=false`, so `notification-consumer` binds `post.tagged`
+  first; then set it to `true` and redeploy post. With the flag off, tags are
+  still saved and shown; nobody is notified.
+- **Scheduled posts:** the post worker's beat runs `posts.publish_scheduled`
+  every 60 s, and every post worker publishes what came due on start. Rows are
+  taken with `SKIP LOCKED`, so several workers never publish a post twice.
+- **Edge:** every new endpoint is under `/api/v1/posts/` (`drafts/`,
+  `settings/`, `<id>/tags/me/`), which the edge already routes to post. No new
+  containers, no one-off commands.
+
+### Upgrading: the video pipeline (roadmap 5.2 / 5.3)
+
+- **New containers:** `minio-init` (one-shot: creates the transcoder's MinIO
+  user `MEDIA_TRANSCODER_S3_ACCESS_KEY`, limited by policy to the bucket's
+  `videos/` prefix; idempotent, safe on every deploy) and `media-transcoder`
+  (the media image, `MEDIA_ROLE=transcoder`, Celery on queue `media.transcode`,
+  concurrency 1, `mem_limit 1536m`, `cpus 2`, non-root). The transcoder has a
+  minimal environment on purpose: its database, the broker, the scoped storage
+  user and the video limits. No `INTERNAL_JWT_SECRET`, no JWKS, no Redis, no
+  MinIO root, no `MEDIA_SECRET_KEY`.
+- **ffmpeg** is in the media image (`apt-get install ffmpeg`, Debian trixie,
+  ffmpeg 7.1 with `zscale` for HDR tone-mapping). The image grows from about
+  490 MB to 1.1 GB on disk (280 MB compressed).
+- **Migration (media, additive, run at boot):** `0003_video_pipeline` (new
+  nullable or defaulted columns on `media_asset` and `media_variant`; the new
+  status `uploaded` and the variant kinds `hls`, `poster`, `mp4` are choices only).
+- **New variables:** `MEDIA_TRANSCODER_S3_SECRET_KEY` (**required**, generated
+  by `scripts/gen-dokploy-env.sh`; on an existing install add it to the
+  environment by hand, any 36+ random characters) and, optional with defaults,
+  `MEDIA_TRANSCODER_S3_ACCESS_KEY`, `MEDIA_VIDEO_MAX_BYTES_POST`,
+  `MEDIA_VIDEO_MAX_SECONDS_POST`, `MEDIA_VIDEO_DAILY_UPLOADS`,
+  `MEDIA_VIDEO_DAILY_BYTES`, `MEDIA_VIDEO_MAX_HEIGHT`, `MEDIA_VIDEO_HDR_MODE`,
+  `MEDIA_VIDEO_MP4_FALLBACK`, `MEDIA_KEEP_VIDEO_ORIGINALS`,
+  `MEDIA_TRANSCODE_STEP_TIMEOUT`, `MEDIA_PLAYBACK_SECRET` (empty: derived from
+  `MEDIA_SECRET_KEY`), `MEDIA_PLAYBACK_TOKEN_TTL`,
+  `MEDIA_HLS_URL_WINDOW_SECONDS`, `MEDIA_PLAYBACK_ACCESS_CACHE_SECONDS`.
+  See `.env_prod.example`.
+- **S3 or Cloudflare R2 instead of MinIO:** set `MEDIA_TRANSCODER_S3_ACCESS_KEY`
+  and `MEDIA_TRANSCODER_S3_SECRET_KEY` to a token limited to `videos/*` of the
+  bucket (read, write, delete, list with that prefix). `minio-init` then only
+  creates an unused user in the bundled MinIO.
+- **Order:** no new event type. `notification-consumer` gains a binding for
+  `media.processed` (the "your video is ready" row, kind `video.ready`), which
+  only adds a consumer. `media-worker` now consumes only `media.tasks`: deploy
+  media, `media-worker` and `media-transcoder` together, or transcode jobs wait
+  in `media.transcode` until the transcoder is up (nothing is lost; the beat
+  task `media.requeue_stalled_videos` also re-sends videos stuck in `uploaded`).
+- **RabbitMQ:** the `media.transcode` queue is declared with
+  `x-consumer-timeout` = 2 h (`MEDIA_TRANSCODE_CONSUMER_TIMEOUT_MS`); every step
+  is also killed after `MEDIA_TRANSCODE_STEP_TIMEOUT` (20 min).
+- **Edge:** `frontend/web/nginx.conf` adds `worker-src 'self' blob:` to the CSP
+  (hls.js runs its transmuxer in a blob worker) and turns the access log off for
+  `/api/v1/media/<id>/hls/` (the playlist URL carries the viewer's playback
+  token). Uploads still go through `/tara-media/` with its 200 MB body limit,
+  which is also the default post video cap.
+- **Server capacity:** budget the transcoder's full 2 vCPU and 1.5 GB on top of
+  the current stack. Measured here (2 CPUs of an i5-14600K): the 240p to 720p
+  ladder of 60 s of 1080p30 test pattern took 24 s, and ffmpeg peaked at about
+  200 MB RSS; real camera footage costs about 2 to 3 times as much, and cloud
+  vCPUs are slower, so plan for roughly 1 to 2 minutes of processing per minute
+  of video, one video at a time. With the stack's 4.6 GB idle and its limits,
+  use **16 GB RAM and at least 4 vCPU** (6 to 8 is better: the transcoder can
+  keep 2 cores busy for minutes). A backlog is likely at launch; watch the
+  `media.transcode` queue depth. Storage: originals are deleted after a
+  successful transcode, so a video costs about 0.6 to 1 times its upload size.
+- **Behaviour:** a video post needs one ready video (`type=video`, one media id
+  of the author's, `purpose=post`); post refuses it with `video_not_ready`
+  before that. Playback asks post's visibility endpoint for every viewer (a
+  block, a removal or a narrowed audience applies within
+  `MEDIA_PLAYBACK_ACCESS_CACHE_SECONDS`, and handed-out segment URLs expire
+  within `MEDIA_HLS_URL_WINDOW_SECONDS`).
 
 ### Backups
 

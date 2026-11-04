@@ -6,8 +6,10 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
+# ffmpeg/ffprobe: the video transcoder (media-transcoder container, roadmap 5.2).
+# One image runs the web, worker and transcoder roles, so tests and Dokploy have it.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -33,5 +35,7 @@ USER appuser
 
 EXPOSE 8000
 ENTRYPOINT ["/app/entrypoint.sh"]
+# The access log skips the HLS playlist path: its URLs carry playback tokens (5.3).
 CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", \
-     "--timeout", "60", "--access-logfile", "-"]
+     "--timeout", "60", "--access-logfile", "-", \
+     "--logger-class", "config.gunicorn_logger.Logger"]
