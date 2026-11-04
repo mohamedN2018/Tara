@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
 
 import AuthLayout from "@/components/brand/AuthLayout.vue";
+import { markProfileToComplete } from "@/lib/completeProfile";
 import { identityService } from "@/services/identity";
 
 const { t } = useI18n();
@@ -18,7 +19,8 @@ onMounted(async () => {
     return;
   }
   try {
-    await identityService.verifyEmail(token.value);
+    // The next sign-in of this account offers a profile photo on /home.
+    markProfileToComplete(await identityService.verifyEmail(token.value));
     state.value = "ok";
   } catch {
     state.value = "fail";
@@ -36,6 +38,7 @@ onMounted(async () => {
       <div v-else-if="state === 'ok'" class="flex flex-col items-center gap-2 py-4">
         <CheckCircle2 class="h-10 w-10 text-green-500" />
         <p class="text-sm text-green-700 dark:text-green-300" role="status">{{ t("auth.verifySuccess") }}</p>
+        <p class="text-sm text-gray-500 dark:text-gray-400">{{ t("register.complete.afterVerify") }}</p>
       </div>
       <div v-else class="flex flex-col items-center gap-2 py-4">
         <XCircle class="h-10 w-10 text-red-500" />

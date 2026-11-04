@@ -10,7 +10,163 @@ Files involved (already in the repo):
 - `docker-compose.dokploy.yml` — the production stack.
 - `frontend/web/Dockerfile` + `frontend/web/nginx.conf` — the single-origin edge
   (serves the SPA and reverse-proxies `/api/v1/*` and `/ws/*`).
-- `scripts/gen-dokploy-env.sh` — generates strong secrets.
+- `scripts/gen-dokploy-env.sh` — generates `.env_prod` with strong secrets.
+- `.env_prod.example` — every production variable, one comment each.
+
+---
+
+## First deploy from zero
+
+The short path from an empty server to a running site. The numbered sections
+after this one explain each part in more detail.
+
+**Container names.** Dokploy runs Compose under its own project name (the app
+name it shows, for example `tara-web-8kx2qz`), so containers are called
+`<prefix>-identity-1`, not `tara-identity-1`. The commands below use `$P`:
+
+```bash
+P=$(docker ps --format '{{.Names}}' | sed -n 's/-identity-1$//p' | head -1); echo "$P"
+```
+
+### 1. Create the Dokploy compose app
+
+1. Dokploy → **Projects → Create Project** (`tara`) → **Create Service → Compose**.
+2. **Provider:** GitHub, repository `mohamedN2018/Tara`, branch
+   `feat/web-social-platform` (switch to `main` once it is merged).
+3. **Compose type:** Docker Compose. **Compose path:** `./docker-compose.dokploy.yml`.
+4. Leave **Isolated deployment** off: the compose file already joins
+   `dokploy-network`, which Traefik routes through.
+
+### 2. Paste the environment
+
+1. Generate the file once, on any machine with bash and openssl (Git Bash works):
+
+   ```bash
+   ./scripts/gen-dokploy-env.sh tara.yourdomain.com   # writes .env_prod; --force overwrites
+   ```
+
+   It refuses to overwrite an existing `.env_prod`. The file is git-ignored.
+2. Fill the `# === OWNER MUST FILL ===` block at its top: `DOMAIN`,
+   `EMAIL_HOST`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `DEFAULT_FROM_EMAIL`
+   (empty means `no-reply@DOMAIN`), `LIVEKIT_NODE_IP` and `LIVEKIT_TURN_DOMAIN`.
+   S3/R2, Google and Telegram are optional. The stack refuses to start while
+   `DOMAIN` or `EMAIL_HOST` is empty.
+3. Dokploy → the compose service → **Environment** → paste the whole file → **Save**.
+4. Keep a copy in a password manager. Do not regenerate it after the first
+   deploy: new database passwords never reach an existing volume, and a new
+   JWT key signs everyone out.
+
+Everything else is already production-safe: `DEBUG=false` everywhere, the
+production rate limits, ads serving off, moderation on, and allowed hosts and
+CORS pinned to `DOMAIN`. Identity sets secure cookies and HSTS when DEBUG is
+off, and the nginx edge sends HSTS and the CSP for every response.
+
+### 3. Domains and Cloudflare DNS
+
+- **A `*.deplois.net` subdomain:** set `DOMAIN=tara.deplois.net` (or similar)
+  and make sure its DNS points at this server. Nothing else to do.
+- **Your own domain behind Cloudflare:**
+  1. Add an `A` record `tara` → server IP as **DNS only** (grey cloud) and
+     deploy, so Let's Encrypt can issue the certificate.
+  2. Then switch it to **Proxied** (orange cloud) and set SSL/TLS to
+     **Full (strict)**. WebSockets (`/ws/`, `/rtc`) work through the proxy.
+  3. Cloudflare cannot proxy UDP. Add a second record such as `turn` → server
+     IP as **DNS only**, and set `LIVEKIT_TURN_DOMAIN=turn.yourdomain.com` and
+     `LIVEKIT_NODE_IP=<server public IP>`. Otherwise calls connect but carry no media.
+  4. The free plan caps request bodies at 100 MB, so larger video uploads fail
+     through the proxy.
+- Leave Dokploy's **Domains** tab empty. The `web` service already carries the
+  Traefik labels for `Host(${DOMAIN})` with the `letsencrypt` resolver.
+
+Then press **Deploy**. Every web container waits for Postgres, runs
+`manage.py check --deploy --fail-level ERROR`, and applies its migrations
+(`RUN_MIGRATIONS=true`). Workers and consumers never migrate. There is no
+separate migrate job to run.
+
+### 4. Volumes and backups
+
+Named volumes, prefixed with `$P`: `pgdata`, `redisdata`, `rabbitmqdata`,
+`miniodata` and `identity-keys`. Only Postgres, MinIO and the JWT keys need
+backups. Redis is a cache, and RabbitMQ is refilled from each service's outbox.
+With `.env_prod` the JWT keys come from the environment, so `identity-keys`
+stays empty.
+
+Schedule a daily backup (Dokploy **Schedules** or cron on the host). Dokploy
+clones the repo under `/etc/dokploy/compose/<app>/code`:
+
+```bash
+COMPOSE_PROJECT=$P BACKUP_DIR=/var/backups/tara /etc/dokploy/compose/<app>/code/scripts/backup.sh
+```
+
+Copy `/var/backups/tara` off the server, and keep `.env_prod` with it: the
+dump has no way to log in without those passwords. To restore, see
+[Backups](#backups).
+
+### 5. LiveKit UDP ports and TURN
+
+Calls start because `.env_prod` sets `COMPOSE_PROFILES=calls` and generates the
+LiveKit key and secret. Open these on the host firewall or cloud security group:
+
+```bash
+ufw allow 7881/tcp && ufw allow 50000/udp && ufw allow 3478/udp
+```
+
+Set `LIVEKIT_NODE_IP` to the server's public IPv4 (required behind Cloudflare,
+recommended everywhere). To deploy without calls, remove `calls` from
+`COMPOSE_PROFILES` and empty `LIVEKIT_API_KEY`. Details: [Calls (LiveKit)](#7-calls-livekit).
+
+### 6. Create the first admin
+
+Register on the site, open the verification email, then:
+
+```bash
+docker exec $P-identity-1 python manage.py create_admin you@example.com
+```
+
+Sign out and back in: the admin role arrives with the next token.
+
+### 7. Post-deploy checks
+
+```bash
+curl -fsS https://$DOMAIN/healthz.txt                      # "ok" from the edge
+curl -fsS https://$DOMAIN/.well-known/jwks.json             # identity's public key
+docker ps --filter "name=$P-" --format '{{.Names}} {{.Status}}' | grep -v healthy   # only workers/consumers (no healthcheck)
+docker exec $P-feed-consumer-1 python -m tara_events.topology migrate  # once: sets the tara-dlq-* policies
+docker exec $P-feed-consumer-1 python -m tara_events.topology status   # then exit 0
+docker exec $P-identity-1 python manage.py check --deploy             # warnings only, no errors
+```
+
+Then in a browser: register and receive the email, post a photo, send a chat
+message (WebSocket), and open **Admin → Health**: every service `ready`.
+
+On a fresh install the only one-off command is that single `topology migrate`.
+Queue arguments already route dead letters, but `topology status` reports
+`policy ... not applied` (exit 1) until the policies exist. `backfill_search`,
+`backfill_message_seq` and the wave A commands only convert data from older
+releases. Running them on a fresh install is harmless.
+
+### 8. Upgrading and rolling back
+
+**Upgrade.**
+1. Read the [upgrade notes](#upgrading-an-existing-deployment) for every release
+   since yours, and add any new variables to the Environment tab first.
+2. Run `scripts/backup.sh`.
+3. Push or merge to the deployed branch and press **Deploy** (or turn on
+   Dokploy's auto-deploy webhook). Migrations apply at boot.
+4. Run that release's one-off commands, each safe to re-run:
+
+| Release | Command |
+|---|---|
+| 1.0c DLQ topology | `docker exec $P-feed-consumer-1 python -m tara_events.topology migrate --dry-run`, then without `--dry-run` ([details](#upgrading-dlq-topology)) |
+| Search v2 (1.15) | `docker exec $P-search-consumer-1 python manage.py backfill_search` |
+| Wave B messenger | `docker exec $P-chat-1 python manage.py backfill_message_seq` |
+| Any | `docker exec $P-identity-1 python manage.py create_admin <email>` |
+
+**Roll back.** Point the service at the previous commit (a tag, or revert on
+the branch) and redeploy. Migrations are additive, so the previous image runs
+on the newer schema. Do not migrate backwards. If data really has to go back,
+restore the backup taken in step 2. The DLQ change has its own
+`python -m tara_events.topology rollback`.
 
 ---
 
@@ -29,21 +185,24 @@ From a checkout of this repo:
 ./scripts/gen-dokploy-env.sh tara.example.com
 ```
 
-This writes `.env.dokploy` with a unique strong secret for every service, database,
-Redis, RabbitMQ and MinIO. Keep it safe and never commit it. Run it once: new
-passwords do not reach an existing database.
+This writes `.env_prod` (git-ignored) with a unique strong secret for every
+service, database, Redis, RabbitMQ, MinIO, the JWT RS256 pair, VAPID and
+LiveKit. It refuses to overwrite an existing file unless you pass `--force`.
+Keep it safe and never commit it. Run it once: new passwords do not reach an
+existing database. Deployments generated before 2026-11-04 have a
+`.env.dokploy` instead, which keeps working.
 
-**Then fill in the SMTP values** (`EMAIL_HOST`, `EMAIL_HOST_USER`,
-`EMAIL_HOST_PASSWORD`). The stack refuses to start without `EMAIL_HOST`, because
-new accounts must verify their email before they can sign in. Your provider must
-allow sending from `DEFAULT_FROM_EMAIL`.
+**Then fill in the `OWNER MUST FILL` block** (domain, SMTP, LiveKit IP). The
+stack refuses to start without `EMAIL_HOST`, because new accounts must verify
+their email before they can sign in. Your provider must allow sending from
+`DEFAULT_FROM_EMAIL`.
 
 ## 2. Create the Dokploy service
 
 1. Dokploy → **Create Project** → inside it **Create Service → Compose**.
 2. **Provider:** point it at this Git repository (and branch).
 3. **Compose Path:** `docker-compose.dokploy.yml`.
-4. **Environment:** paste the entire generated `.env.dokploy` into the Environment panel.
+4. **Environment:** paste the entire generated `.env_prod` into the Environment panel.
    Confirm `DOMAIN=tara.example.com` is set there.
 5. **Domain:** the compose already carries Traefik labels for `Host(${DOMAIN})`
    on Dokploy's `dokploy-network` with `certresolver=letsencrypt`, so TLS is
@@ -73,8 +232,11 @@ the bucket is private.
 The first admin is an account you have registered and verified:
 
 ```bash
-docker exec tara-identity-1 python manage.py create_admin you@example.com
+docker exec $P-identity-1 python manage.py create_admin you@example.com   # $P: see "Container names"
 ```
+
+The `tara-…-1` names in the notes below assume project `tara`. On Dokploy,
+replace `tara` with `$P`.
 
 ## 5. Operations
 
@@ -221,8 +383,9 @@ container. It uses `RABBITMQ_URL` and the management API at
 `http://rabbitmq:15672` (set `RABBITMQ_MANAGEMENT_URL` to override it).
 Every command is safe to re-run.
 
-A fresh install needs none of this. Running it there is harmless: the policies
-repeat what the queue arguments already say.
+A fresh install routes correctly without it, but run `migrate` once anyway: the
+policies repeat what the queue arguments already say, and without them
+`topology status` reports `policy ... not applied` and exits 1.
 
 1. **Deploy the release.** All consumers restart as usual. Nothing changes in
    routing yet, because the old `#` bindings are still there. `--replay-dlq`
@@ -370,6 +533,37 @@ it does not conflict.
 - **Edge:** `/api/v1/groups` is routed to profile in `frontend/web/nginx.conf`
   and in the Traefik labels; redeploy `web` with the new SPA.
 - **No new containers, no one-off commands** (there are no groups to backfill).
+
+### Upgrading: Dokploy env and compose parity (7.13)
+
+- **No new containers, no migrations, no one-off commands.** An existing
+  `.env.dokploy` keeps working unchanged.
+- **Now wired (they were generated but never reached the containers):**
+  `PROFILE_EMIT_GROUP_EVENTS`, `POST_EMIT_GROUP_EVENTS`, `GROUP_REPORT_RATE`
+  and `POST_REPORT_RATE`. The groups two-step upgrade only takes effect from
+  this release.
+- **New optional variables, production defaults:** the auth throttles
+  (`AUTH_REGISTER_RATE`, `AUTH_LOGIN_RATE`, `AUTH_PASSWORD_RATE`),
+  `TARA_READ_RATE`/`TARA_WRITE_RATE`, `MODERATION_REPORT_RATE`, the admin,
+  calls, marketplace, search and presence knobs listed in `.env_prod.example`,
+  and `LEGAL_TERMS_VERSION`, `LEGAL_PRIVACY_VERSION`, `REGISTRATION_MIN_AGE`,
+  `PROFILE_HANDLE_CHECK_RATE` and `PROFILE_CALL_TIMEOUT` for registration
+  (track 1D). Bump the legal versions together with `frontend/web/src/lib/legal.ts`.
+- **Defaults derived from `DOMAIN`:** each `<SERVICE>_ALLOWED_HOSTS`, each
+  `<SERVICE>_CORS_ORIGINS`, `LIVEKIT_URL`, `VAPID_SUBJECT` and
+  `DEFAULT_FROM_EMAIL`. Values already in the Environment tab still win.
+- **Admin health:** the stack sets `ADMIN_BFF_READY_URL` empty, so the console
+  stops polling the dev-only BFF and stops reporting `degraded` because of it.
+- **Postgres** gets the database settings through `environment` instead of
+  `env_file: .env`. The init script only runs on an empty volume, so an
+  existing database is not touched.
+- **S3/R2** now works as documented: `S3_ENDPOINT_URL`, `S3_ACCESS_KEY_ID` and
+  `S3_SECRET_ACCESS_KEY` override the bundled MinIO.
+- **JWT keys from the environment:** `.env_prod` carries
+  `IDENTITY_JWT_PRIVATE_KEY`/`IDENTITY_JWT_PUBLIC_KEY`. On an existing install,
+  do not add a new pair, because that signs everyone out. Leave them unset (the
+  `identity-keys` volume keeps signing), or copy the volume's two PEM files
+  into them as one line with literal `\n`.
 
 ### Backups
 

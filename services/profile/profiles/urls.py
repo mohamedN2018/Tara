@@ -18,6 +18,12 @@ urlpatterns = [
     ),
     path("profile/me/work/", views.WorkView.as_view(), name="work"),
     path("profile/me/work/<int:pk>/", views.WorkDetailView.as_view(), name="work-detail"),
+    # Sign-up's live check (public, rate limited).
+    path(
+        "profile/handles/available/",
+        views.HandleAvailabilityView.as_view(),
+        name="handle-available",
+    ),
     # Public profile
     path("users/lookup/", views.ProfileLookupView.as_view(), name="profile-lookup"),
     path(

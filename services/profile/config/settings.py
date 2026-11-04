@@ -73,6 +73,8 @@ CACHES = {
 
 # Group reports: each can open a moderation case.
 GROUP_REPORT_RATE = os.getenv("GROUP_REPORT_RATE", "20/hour")
+# The sign-up form's public handle check, per client address.
+PROFILE_HANDLE_CHECK_RATE = os.getenv("PROFILE_HANDLE_CHECK_RATE") or "30/min"
 # group.* events (1.11). Two-release rollout (roadmap 3.3): deploy the consumers
 # with this off, then turn it on. Off, post answers group checks from profile.
 PROFILE_EMIT_GROUP_EVENTS = env_bool("PROFILE_EMIT_GROUP_EVENTS", True)

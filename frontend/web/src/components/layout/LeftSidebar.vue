@@ -1,22 +1,51 @@
 <script setup lang="ts">
-import { Megaphone, PenSquare, Shield } from "lucide-vue-next";
+import { ChevronDown, ChevronUp } from "lucide-vue-next";
+import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter } from "vue-router";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
+import { legalPath } from "@/lib/legal";
 import { useAuthStore } from "@/stores/auth";
 import { useChatUnreadStore } from "@/stores/chatUnread";
 import { useNotificationStore } from "@/stores/notifications";
-import { useUiStore } from "@/stores/ui";
 
-import { navItems } from "./navItems";
+import {
+  loadSidebarExpanded,
+  navItems,
+  saveSidebarExpanded,
+  SIDEBAR_COLLAPSED_COUNT,
+  visibleNavItems,
+} from "./navItems";
+import { cachedShortcuts, type Shortcut } from "./shortcuts";
 
 const { t } = useI18n();
-const router = useRouter();
 const auth = useAuthStore();
-const ui = useUiStore();
 const notifications = useNotificationStore();
 const chatUnread = useChatUnreadStore();
+
+const items = computed(() => visibleNavItems(navItems, auth));
+const expanded = ref(loadSidebarExpanded());
+const shown = computed(() => (expanded.value ? items.value : items.value.slice(0, SIDEBAR_COLLAPSED_COUNT)));
+const canCollapse = computed(() => items.value.length > SIDEBAR_COLLAPSED_COUNT);
+
+function toggleExpanded() {
+  expanded.value = !expanded.value;
+  saveSidebarExpanded(expanded.value);
+}
+
+const shortcuts = ref<Shortcut[]>([]);
+async function loadShortcutList() {
+  const owner = auth.account?.id;
+  if (!owner) return;
+  shortcuts.value = await cachedShortcuts(owner);
+}
+onMounted(loadShortcutList);
+watch(() => auth.account?.id, loadShortcutList);
+
+const profileTo = computed(() =>
+  auth.profile?.handle ? `/u/${auth.profile.handle}` : { name: "profile-by-id", params: { id: auth.account?.id ?? "" } },
+);
+const year = new Date().getFullYear();
 
 function badgeFor(kind?: "notifications" | "messages") {
   if (kind === "notifications") return notifications.unread;
@@ -24,62 +53,70 @@ function badgeFor(kind?: "notifications" | "messages") {
   return 0;
 }
 
-function createPost() {
-  ui.requestCompose();
-  router.push("/home");
-}
+const row =
+  "group flex items-center gap-3 rounded-xl px-2 py-2 text-[15px] font-semibold text-gray-800 transition hover:bg-gray-200/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 dark:text-gray-100 dark:hover:bg-gray-800/70";
+const active = "bg-brand-50 text-brand-700 dark:bg-brand-950/60 dark:text-brand-200";
 </script>
 
 <template>
-  <nav class="flex h-full flex-col gap-1 p-3" :aria-label="t('nav.home')">
+  <nav class="flex h-full flex-col p-2" :aria-label="t('nav.menu')" data-testid="left-sidebar">
     <!-- Profile shortcut -->
-    <RouterLink
-      v-if="auth.profile"
-      :to="`/u/${auth.profile.handle}`"
-      class="mb-2 flex items-center gap-3 rounded-2xl border border-gray-200/70 bg-white p-2.5 transition hover:border-brand-200 dark:border-gray-800 dark:bg-gray-900 dark:hover:border-brand-900"
-    >
-      <span class="avatar-ring shrink-0">
-        <span class="block rounded-full bg-white p-[2px] dark:bg-gray-900">
-          <UserAvatar :name="auth.profile.display_name" :media-id="auth.profile.avatar_media_id" :size="38" />
-        </span>
-      </span>
-      <span class="min-w-0">
-        <span class="block truncate text-sm font-bold" dir="auto">{{ auth.profile.display_name }}</span>
-        <span class="block truncate text-xs text-gray-500 dark:text-gray-400" dir="ltr">@{{ auth.profile.handle }}</span>
-      </span>
+    <RouterLink v-if="auth.profile" :to="profileTo" :class="row" data-testid="sidebar-profile">
+      <UserAvatar :name="auth.profile.display_name" :media-id="auth.profile.avatar_media_id" :size="36" />
+      <span class="min-w-0 flex-1 truncate" dir="auto">{{ auth.profile.display_name }}</span>
     </RouterLink>
 
-    <RouterLink
-      v-for="item in navItems"
-      :key="item.name"
-      :to="item.route"
-      class="nav-item group"
-      active-class="nav-item-active"
-    >
-      <component :is="item.icon" class="h-5 w-5 shrink-0" />
-      <span class="flex-1">{{ t(item.labelKey) }}</span>
-      <span v-if="badgeFor(item.badge) > 0" class="badge">
-        {{ badgeFor(item.badge) > 99 ? "99+" : badgeFor(item.badge) }}
-      </span>
-    </RouterLink>
+    <ul class="mt-1 space-y-0.5" data-testid="sidebar-items">
+      <li v-for="item in shown" :key="item.name">
+        <RouterLink :to="item.route" :class="row" :exact-active-class="active" :data-testid="`sidebar-${item.name}`">
+          <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full" :class="item.tone">
+            <component :is="item.icon" class="h-5 w-5" aria-hidden="true" />
+          </span>
+          <span class="min-w-0 flex-1 truncate">{{ t(item.labelKey) }}</span>
+          <span v-if="badgeFor(item.badge) > 0" class="badge">
+            {{ badgeFor(item.badge) > 99 ? "99+" : badgeFor(item.badge) }}
+          </span>
+        </RouterLink>
+      </li>
+      <li v-if="canCollapse">
+        <button
+          type="button"
+          :class="[row, 'w-full text-start']"
+          :aria-expanded="expanded"
+          data-testid="sidebar-see-more"
+          @click="toggleExpanded"
+        >
+          <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-200 text-gray-800 dark:bg-gray-800 dark:text-gray-100">
+            <component :is="expanded ? ChevronUp : ChevronDown" class="h-5 w-5" aria-hidden="true" />
+          </span>
+          <span class="flex-1">{{ expanded ? t("shell.seeLess") : t("shell.seeMore") }}</span>
+        </button>
+      </li>
+    </ul>
 
-    <RouterLink to="/ads" class="nav-item" active-class="nav-item-active">
-      <Megaphone class="h-5 w-5 shrink-0" />
-      <span class="flex-1">{{ t("nav.ads") }}</span>
-    </RouterLink>
+    <!-- Your shortcuts: pages you manage and groups you belong to -->
+    <section v-if="shortcuts.length" class="mt-2 border-t border-gray-200 pt-3 dark:border-gray-800" aria-labelledby="ls-shortcuts">
+      <h2 id="ls-shortcuts" class="px-2 pb-1 text-[15px] font-semibold text-gray-500 dark:text-gray-400">
+        {{ t("shell.shortcuts") }}
+      </h2>
+      <ul class="space-y-0.5" data-testid="sidebar-shortcuts">
+        <li v-for="s in shortcuts" :key="`${s.kind}-${s.id}`">
+          <RouterLink :to="s.to" :class="row" :title="s.kind === 'page' ? t('shell.shortcutPage') : t('shell.shortcutGroup')">
+            <UserAvatar :name="s.name" :media-id="s.mediaId" :size="36" />
+            <span class="min-w-0 flex-1 truncate" dir="auto">{{ s.name }}</span>
+          </RouterLink>
+        </li>
+      </ul>
+    </section>
 
-    <RouterLink v-if="auth.isStaff" to="/admin" class="nav-item" active-class="nav-item-active">
-      <Shield class="h-5 w-5 shrink-0" />
-      <span class="flex-1">{{ t("nav.admin") }}</span>
-    </RouterLink>
-
-    <button type="button" class="btn-gradient mt-3 w-full py-3" @click="createPost">
-      <PenSquare class="h-4 w-4" />
-      {{ t("nav.createPost") }}
-    </button>
-
-    <p class="mt-auto px-3 pt-6 text-xs text-gray-400 dark:text-gray-500">
-      <span class="font-semibold text-gray-500 dark:text-gray-400">{{ t("app.name") }}</span> · {{ t("app.tagline") }} · © 2026
-    </p>
+    <footer class="mt-auto px-2 pb-2 pt-5 text-xs leading-relaxed text-gray-500 dark:text-gray-400" data-testid="sidebar-footer">
+      <RouterLink :to="legalPath('privacy')" class="hover:underline">{{ t("shell.footer.privacy") }}</RouterLink>
+      <span aria-hidden="true"> · </span>
+      <RouterLink :to="legalPath('terms')" class="hover:underline">{{ t("shell.footer.terms") }}</RouterLink>
+      <span aria-hidden="true"> · </span>
+      <RouterLink to="/ads" class="hover:underline">{{ t("nav.ads") }}</RouterLink>
+      <span aria-hidden="true"> · </span>
+      <span>{{ t("shell.footer.copyright", { name: t("app.name"), year }) }}</span>
+    </footer>
   </nav>
 </template>

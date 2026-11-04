@@ -7,7 +7,9 @@ export default { name: "HomeView" };
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
+import CompleteProfileCard from "@/components/auth/CompleteProfileCard.vue";
 import AppShell from "@/components/layout/AppShell.vue";
+import { railVisible, setRailAd } from "@/components/layout/rightRail";
 import CreatePostCard from "@/components/post/CreatePostCard.vue";
 import PostCard from "@/components/post/PostCard.vue";
 import SponsoredCard from "@/components/post/SponsoredCard.vue";
@@ -44,7 +46,11 @@ async function load(initial = false) {
     const known = new Set(initial ? [] : posts.value.map((p) => p.id));
     const fresh = page.posts.filter((p) => !known.has(p.id));
     posts.value = initial ? fresh : [...posts.value, ...fresh];
-    if (initial) sponsored.value = page.sponsored;
+    if (initial) {
+      sponsored.value = page.sponsored;
+      // On wide screens the first slot shows in the right column instead of the feed.
+      setRailAd(page.sponsored[0]);
+    }
     cursor.value = page.nextCursor;
     hasMore.value = page.hasMore;
   } catch (e) {
@@ -130,6 +136,7 @@ onUnmounted(() => {
 <template>
   <AppShell>
     <div class="mx-auto w-full max-w-[600px] space-y-4">
+      <CompleteProfileCard />
       <CreatePostCard @created="onCreated" />
 
       <div v-if="pending.length" class="sticky top-16 z-10 flex justify-center">
@@ -149,7 +156,7 @@ onUnmounted(() => {
         <template v-for="(post, i) in posts" :key="post.id">
           <PostCard :post="post" @removed="onRemoved" @shared="onCreated" />
           <SponsoredCard
-            v-if="i % 5 === 4 && sponsored[Math.floor(i / 5)]"
+            v-if="i % 5 === 4 && sponsored[Math.floor(i / 5)] && !(i === 4 && railVisible)"
             :ad="sponsored[Math.floor(i / 5)]"
           />
         </template>

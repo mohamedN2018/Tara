@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { Bell, Home, Menu, MessageCircle, Search, Store, Users, UsersRound } from "lucide-vue-next";
+import { Bell, CalendarDays, Home, Menu, MessageCircle, Search, Store, Users, UsersRound } from "lucide-vue-next";
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import MessagesPanel from "@/components/chat/MessagesPanel.vue";
-import AppsMenu from "@/components/layout/AppsMenu.vue";
-import CreateMenu from "@/components/layout/CreateMenu.vue";
+import MainMenu from "@/components/layout/MainMenu.vue";
 import ProfileMenu from "@/components/layout/ProfileMenu.vue";
 import TaraLogo from "@/components/brand/TaraLogo.vue";
 import NotificationPanel from "@/components/notifications/NotificationPanel.vue";
@@ -26,55 +25,76 @@ const showMessages = ref(false);
 useEscapeKey(showNotifs, () => (showNotifs.value = false));
 useEscapeKey(showMessages, () => (showMessages.value = false));
 
+// Centre tabs. No video or gaming tab: neither module exists (owner decision 5.5).
 const navIcons = [
   { name: "home", to: "/home", icon: Home, label: "nav.home" },
   { name: "friends", to: "/friends", icon: Users, label: "nav.friends" },
   { name: "marketplace", to: "/marketplace", icon: Store, label: "nav.marketplace" },
   { name: "groups", to: "/groups", icon: UsersRound, label: "nav.groups" },
+  { name: "events", to: "/events", icon: CalendarDays, label: "nav.events" },
 ];
 </script>
 
 <template>
+  <!-- Three columns keep the tabs centred whatever the two sides hold -->
   <header
-    class="fixed inset-x-0 top-0 z-40 flex h-16 items-center gap-3 border-b border-gray-200/70 bg-white/80 px-3 backdrop-blur-xl dark:border-gray-800/70 dark:bg-gray-950/80 sm:px-4"
+    class="fixed inset-x-0 top-0 z-40 grid h-16 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-b border-gray-200/70 bg-white/80 px-3 backdrop-blur-xl dark:border-gray-800/70 dark:bg-gray-950/80 sm:px-4"
+    data-testid="top-bar"
   >
-    <!-- Start: mobile menu + logo -->
-    <div class="flex min-w-0 items-center gap-1.5 lg:w-60 xl:w-64">
-      <button class="icon-btn h-9 w-9 bg-transparent dark:bg-transparent lg:hidden" :aria-label="t('nav.menu')" @click="ui.sidebarOpen = !ui.sidebarOpen">
+    <!-- Start: mobile menu, logo and search -->
+    <div class="col-start-1 flex min-w-0 items-center gap-1.5">
+      <button class="icon-btn h-9 w-9 shrink-0 bg-transparent dark:bg-transparent lg:hidden" :aria-label="t('menu.sidebar')" :aria-expanded="ui.sidebarOpen" @click="ui.sidebarOpen = !ui.sidebarOpen">
         <Menu class="h-5 w-5" />
       </button>
-      <RouterLink to="/home" class="rounded-xl px-1 py-1">
+      <RouterLink to="/home" class="shrink-0 rounded-xl px-1 py-1">
         <TaraLogo :size="30" :label="t('app.name')" />
       </RouterLink>
+      <!-- Search: recent, trending and live suggestions (components/search/GlobalSearch.vue) -->
+      <GlobalSearch class="hidden min-w-0 flex-1 sm:block lg:max-w-xs xl:max-w-sm" />
     </div>
 
-    <!-- Search: recent, trending and live suggestions (components/search/GlobalSearch.vue) -->
-    <GlobalSearch class="hidden min-w-0 flex-1 sm:block md:max-w-md lg:max-w-xl" />
-
-    <!-- Primary nav on tablets; from lg the sidebar takes over -->
-    <nav class="hidden h-full items-center gap-1 md:flex lg:hidden" :aria-label="t('nav.home')">
+    <!-- Centre: icon tabs from md up, each with a tooltip and an underline when active -->
+    <nav class="col-start-2 hidden h-full items-stretch md:flex" :aria-label="t('menu.primaryNav')" data-testid="top-tabs">
       <RouterLink
         v-for="n in navIcons"
         :key="n.name"
+        v-slot="{ isActive }"
         :to="n.to"
-        class="relative flex h-11 w-14 items-center justify-center rounded-xl text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-900 dark:hover:text-white"
-        active-class="!text-brand-600 dark:!text-brand-300 after:absolute after:inset-x-3 after:-bottom-[10px] after:h-[3px] after:rounded-full after:bg-tara-gradient"
+        class="group relative flex h-full w-12 items-center justify-center text-gray-500 hover:text-gray-900 focus:outline-none dark:text-gray-400 dark:hover:text-white lg:w-[4.5rem] xl:w-24 2xl:w-28"
+        active-class="!text-brand-600 dark:!text-brand-300"
         :aria-label="t(n.label)"
-        :title="t(n.label)"
+        :data-testid="`top-tab-${n.name}`"
       >
-        <component :is="n.icon" class="h-6 w-6" />
+        <span
+          class="flex h-12 w-full items-center justify-center rounded-xl transition group-focus-visible:ring-2 group-focus-visible:ring-brand-400"
+          :class="isActive ? '' : 'group-hover:bg-gray-100 dark:group-hover:bg-gray-900'"
+        >
+          <component :is="n.icon" class="h-6 w-6" :stroke-width="isActive ? 2.4 : 2" aria-hidden="true" />
+        </span>
+        <span
+          v-if="isActive"
+          class="absolute inset-x-1 bottom-0 h-[3px] rounded-t-full bg-brand-600 dark:bg-brand-400"
+          aria-hidden="true"
+          data-testid="top-tab-underline"
+        />
+        <!-- Tooltip: the link is named by aria-label, so this stays out of the a11y tree -->
+        <span
+          class="pointer-events-none absolute top-full z-50 mt-1 whitespace-nowrap rounded-lg bg-gray-900/90 px-2.5 py-1 text-xs font-medium text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-hover:delay-300 group-focus-visible:opacity-100 dark:bg-gray-700"
+          aria-hidden="true"
+          data-testid="top-tab-tooltip"
+        >{{ t(n.label) }}</span>
       </RouterLink>
     </nav>
 
-    <!-- End: create, messages, notifications, apps, profile -->
-    <div class="ms-auto flex items-center gap-1.5">
+    <!-- End: main menu, messages, notifications, profile -->
+    <div class="col-start-3 flex items-center justify-end gap-1.5">
       <!-- Phones: the field does not fit the bar, so search opens its own page -->
       <RouterLink to="/search" class="icon-btn sm:hidden" :aria-label="t('search.openSearch')" :title="t('search.openSearch')">
         <Search class="h-5 w-5" />
       </RouterLink>
-      <div class="hidden sm:block">
-        <CreateMenu />
-      </div>
+
+      <!-- Main menu: every service by category, plus the Create column -->
+      <MainMenu />
 
       <!-- Messages dropdown (mobile uses the bottom bar instead) -->
       <div class="relative hidden sm:block">
@@ -82,12 +102,13 @@ const navIcons = [
           class="icon-btn relative"
           :class="showMessages ? '!bg-brand-50 !text-brand-700 dark:!bg-brand-950/70 dark:!text-brand-300' : ''"
           :aria-label="chatUnread.conversations > 0 ? t('messages.unreadBadge', chatUnread.conversations) : t('nav.messages')"
+          :title="t('nav.messages')"
           aria-haspopup="menu"
           :aria-expanded="showMessages"
           @click="showMessages = !showMessages"
         >
           <MessageCircle class="h-5 w-5" />
-          <span v-if="chatUnread.conversations > 0" class="badge absolute -end-1 -top-1 ring-2 ring-white dark:ring-gray-950" data-testid="messages-badge">
+          <span v-if="chatUnread.conversations > 0" class="badge absolute -end-1 -top-1 !bg-accent-700 ring-2 ring-white dark:ring-gray-950" data-testid="messages-badge">
             {{ badgeText(chatUnread.conversations) }}
           </span>
         </button>
@@ -111,11 +132,12 @@ const navIcons = [
           class="icon-btn relative"
           :class="showNotifs ? '!bg-brand-50 !text-brand-700 dark:!bg-brand-950/70 dark:!text-brand-300' : ''"
           :aria-label="notifications.unread > 0 ? t('nav.notificationsUnread', notifications.unread) : t('nav.notifications')"
+          :title="t('nav.notifications')"
           :aria-expanded="showNotifs"
           @click="showNotifs = !showNotifs"
         >
           <Bell class="h-5 w-5" />
-          <span v-if="notifications.unread > 0" class="badge absolute -end-1 -top-1 ring-2 ring-white dark:ring-gray-950">
+          <span v-if="notifications.unread > 0" class="badge absolute -end-1 -top-1 !bg-accent-700 ring-2 ring-white dark:ring-gray-950">
             {{ notifications.unread > 99 ? "99+" : notifications.unread }}
           </span>
         </button>
@@ -133,9 +155,6 @@ const navIcons = [
           </div>
         </template>
       </div>
-
-      <!-- Apps grid: shortcuts to every section (available at all sizes) -->
-      <AppsMenu />
 
       <ProfileMenu />
     </div>

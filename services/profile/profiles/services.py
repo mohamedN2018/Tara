@@ -37,6 +37,24 @@ def _handle_taken(handle: str) -> bool:
     return handle in RESERVED_HANDLES or UserProfile.objects.filter(handle=handle).exists()
 
 
+HANDLE_RE = re.compile(r"^[a-z0-9_]{3,30}$")
+
+
+def handle_availability(raw: str) -> dict:
+    """The sign-up form's live check (plan 08 §1.1, track 1D).
+
+    One answer for every handle that is held, whoever holds it: an active
+    profile, a hidden or deleted one, a suspended account or a reserved word
+    all read ``unavailable``. Nothing about the holder is returned.
+    """
+    handle = (raw or "").strip().lower()
+    if not HANDLE_RE.fullmatch(handle):
+        return {"handle": handle[:30], "available": False, "reason": "invalid"}
+    if _handle_taken(handle):
+        return {"handle": handle, "available": False, "reason": "unavailable"}
+    return {"handle": handle, "available": True, "reason": None}
+
+
 def generate_handle(seed: str) -> str:
     """``seed`` as a free handle, or with digits after it.
 

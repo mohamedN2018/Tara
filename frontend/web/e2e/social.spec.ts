@@ -153,8 +153,8 @@ test("pages can be created, found, edited, and their team managed", async ({ bro
   const other = await pageAs(browser, b);
   await other.goto("/pages");
   await other.getByRole("button", { name: "صفحاتي" }).click();
-  await expect(other.getByText(`مقهى ${tag}`)).toBeVisible();
-  await other.getByText(`مقهى ${tag}`).click();
+  await expect(other.getByRole("main").getByText(`مقهى ${tag}`)).toBeVisible();
+  await other.getByRole("main").getByText(`مقهى ${tag}`).click();
   await expect(other.getByTestId("page-members")).toContainText("محلل");
   await expect(other.getByRole("textbox", { name: "@المعرّف" })).toHaveCount(0);
 

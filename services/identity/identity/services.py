@@ -8,9 +8,10 @@ stay thin and call into here.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import secrets
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, timedelta
 
 from django.conf import settings
 from django.contrib.auth.hashers import make_password
@@ -22,6 +23,7 @@ from django.utils import timezone
 
 from tara_common.exceptions import Conflict, TaraAPIError
 
+from . import login_identifier
 from . import tokens as token_engine
 from .emails import send_password_reset_email, send_verification_email
 from .events import emit_domain_event, emit_security_event
@@ -30,6 +32,7 @@ from .models import (
     Device,
     EmailChangeRequest,
     EmailVerification,
+    LegalConsent,
     PasswordReset,
     UserSession,
 )
@@ -100,14 +103,33 @@ def _create_session_and_tokens(
 # ---- Use cases --------------------------------------------------------------
 
 
+def consent_ip_hash(ip: str) -> str:
+    """Keyed HMAC of a client address for consent records; "" without one.
+
+    Keyed so the hash can't be reversed by hashing every IPv4 address. The key
+    is derived from SECRET_KEY, so rotating it starts a new series.
+    """
+    if not ip:
+        return ""
+    key = hmac.new(settings.SECRET_KEY.encode(), b"tara-legal-consent-ip", hashlib.sha256)
+    return hmac.new(key.digest(), ip.encode(), hashlib.sha256).hexdigest()
+
+
 def register(
     *,
     email: str,
     password: str,
+    first_name: str,
+    last_name: str,
+    date_of_birth: date,
+    terms_version: str,
+    privacy_version: str,
+    gender: str = "",
+    gender_custom: str = "",
     language: str = "en",
     theme: str = "system",
-    display_name: str = "",
     handle: str = "",
+    client_ip: str = "",
     ip_region: str = "",
     user_agent: str = "",
     correlation_id: str | None = None,
@@ -117,6 +139,8 @@ def register(
         # Do not reveal which step failed beyond "already registered".
         raise Conflict("An account with this email already exists.", code="conflict")
     _validate_password(password)
+    # Profile's display name is at most 80 characters.
+    display_name = f"{first_name} {last_name}".strip()[:80]
 
     with transaction.atomic():
         account = Account.objects.create_user(
@@ -125,6 +149,15 @@ def register(
             language=language,
             theme=theme,
             status=Account.Status.PENDING,
+            date_of_birth=date_of_birth,
+            gender=gender,
+            gender_custom=gender_custom,
+        )
+        LegalConsent.objects.create(
+            account=account,
+            terms_version=terms_version,
+            privacy_version=privacy_version,
+            ip_hash=consent_ip_hash(client_ip),
         )
         raw_token = secrets.token_urlsafe(32)
         EmailVerification.objects.create(
@@ -138,10 +171,13 @@ def register(
             "account.registered",
             subject_id=str(account.id),
             # No email on the bus: no consumer needs it (docs/.../04-event-contracts.md).
+            # No date of birth or gender either: age leaves only as token claims.
             payload={
                 "email_verified": False,
                 "language": language,
                 "display_name": display_name,
+                "first_name": first_name,
+                "last_name": last_name,
                 "handle": handle,
             },
             actor_id=str(account.id),
@@ -169,21 +205,23 @@ def resend_verification(email: str) -> None:
 
 def login(
     *,
-    email: str,
+    email: str = "",
     password: str,
+    identifier: str = "",
     ip_region: str = "",
     user_agent: str = "",
     correlation_id: str | None = None,
 ) -> IssuedTokens:
-    email = email.strip().lower()
-    lock_key = "login-failures:" + hashlib.sha256(email.encode()).hexdigest()
+    # ``identifier`` is an email or a username (5.6); ``email`` is the older name.
+    identifier = login_identifier.normalise(identifier or email)
+    lock_key = "login-failures:" + hashlib.sha256(identifier.encode()).hexdigest()
     if (cache.get(lock_key) or 0) >= LOGIN_MAX_FAILURES:
         raise TaraAPIError(
             "Too many failed attempts. Try again later.",
             code="throttled",
             http_status_code=429,
         )
-    account = Account.objects.filter(email=email).first()
+    account = login_identifier.find_account(identifier)
     # Same work whether or not the account exists (mitigate enumeration).
     if account is None:
         make_password(password)

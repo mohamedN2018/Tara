@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 
 import { api, apiError, isAuthFailure } from "@/lib/api";
 import { releasePush, resumePush } from "@/lib/pwa";
+import { browserSessionEnded, forgetSignIn, rememberSignIn } from "@/lib/rememberMe";
 import { capabilitiesFromClaims, opensConsole } from "@/lib/capabilities";
 import { jwtClaims, tokenStore } from "@/lib/tokens";
 import { realtime } from "@/lib/ws";
@@ -17,6 +18,23 @@ interface RegisterResult {
   account_id: string;
   email: string;
   status: string;
+}
+
+/** POST /auth/register/ (plan 08, track 1D). The server checks every rule again. */
+export interface RegisterPayload {
+  first_name: string;
+  last_name: string;
+  handle: string;
+  email: string;
+  password: string;
+  password_confirm: string;
+  date_of_birth: string; // YYYY-MM-DD
+  gender: "" | "female" | "male" | "custom" | "prefer_not_to_say";
+  gender_custom: string;
+  accept_terms: boolean;
+  terms_version: string;
+  privacy_version: string;
+  language: string;
 }
 
 const MAX_PROFILE_RETRIES = 5;
@@ -76,9 +94,12 @@ export const useAuthStore = defineStore("auth", () => {
   }
 
   // login returns the tokens directly (flat). The account is fetched from /me/.
-  async function login(email: string, password: string) {
-    const { data } = await api.post<{ data: Tokens }>("/auth/login/", { email, password });
+  // `identifier` is an email or a username (5.6). Unticked `remember`: the
+  // session ends when the browser closes (lib/rememberMe.ts).
+  async function login(identifier: string, password: string, remember = true) {
+    const { data } = await api.post<{ data: Tokens }>("/auth/login/", { identifier, password, remember });
     applyTokens(data.data);
+    rememberSignIn(remember);
     await loadAccount();
     await loadProfile();
     realtime.connect();
@@ -88,6 +109,7 @@ export const useAuthStore = defineStore("auth", () => {
   async function loginWithGoogle(credential: string, language: string): Promise<boolean> {
     const result = await identityService.googleSignIn(credential, language);
     applyTokens(result);
+    rememberSignIn(true);
     await loadAccount();
     await loadProfile();
     realtime.connect();
@@ -104,13 +126,7 @@ export const useAuthStore = defineStore("auth", () => {
 
   /** Register a new account. Returns it in "pending" state — the caller should
    *  prompt for email verification, then sign in (no auto-login). */
-  async function register(payload: {
-    email: string;
-    password: string;
-    handle: string;
-    display_name: string;
-    language: string;
-  }): Promise<RegisterResult> {
+  async function register(payload: RegisterPayload): Promise<RegisterResult> {
     const { data } = await api.post<{ data: RegisterResult }>("/auth/register/", payload);
     return data.data;
   }
@@ -137,6 +153,14 @@ export const useAuthStore = defineStore("auth", () => {
   /** Restore a session on app boot from a persisted refresh token. */
   async function bootstrap() {
     sessionUnavailable.value = false;
+    if (browserSessionEnded()) {
+      // Signed in without "Remember me", and the browser has been closed since.
+      const refresh = tokenStore.refresh;
+      tokenStore.clear();
+      forgetSignIn();
+      clearAccountData();
+      if (refresh) void api.post("/auth/logout/", { refresh_token: refresh }).catch(() => {});
+    }
     if (tokenStore.access || tokenStore.refresh) {
       try {
         await loadAccount();
@@ -180,6 +204,7 @@ export const useAuthStore = defineStore("auth", () => {
       }
     }
     tokenStore.clear();
+    forgetSignIn();
     realtime.close();
     clearAccountData();
     window.location.assign("/login");

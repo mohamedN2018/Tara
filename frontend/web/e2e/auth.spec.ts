@@ -1,6 +1,6 @@
 import { expect, request, test } from "@playwright/test";
 
-import { BASE_URL, pageAs, PASSWORD, sharedAccounts, unique, verificationToken } from "./helpers";
+import { BASE_URL, fillRegisterForm, pageAs, PASSWORD, sharedAccounts, unique, verificationToken } from "./helpers";
 
 test("register, verify through the mailed link, log in", async ({ page }) => {
   const tag = unique();
@@ -10,15 +10,13 @@ test("register, verify through the mailed link, log in", async ({ page }) => {
   await page.goto("/register");
   await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
 
-  await page.getByLabel("الاسم الظاهر").fill(name);
-  await page.getByLabel("اسم المستخدم").fill(`sara_${tag}`);
-  await page.getByLabel("البريد الإلكتروني").fill(email);
-  await page.getByLabel("كلمة المرور").fill(PASSWORD);
+  await fillRegisterForm(page, { first: "سارة", last: tag, handle: `sara_${tag}`, email });
 
   const sent = page.waitForRequest("**/auth/register/");
-  await page.getByRole("button", { name: "تسجيل" }).click();
+  await page.getByRole("button", { name: "تسجيل", exact: true }).click();
   expect((await sent).postDataJSON()).toMatchObject({
-    display_name: name,
+    first_name: "سارة",
+    last_name: tag,
     handle: `sara_${tag}`,
     language: "ar",
   });
@@ -55,13 +53,10 @@ test("registering shows the error on the field it belongs to", async ({ page }) 
     }),
   );
   await page.goto("/register");
-  await page.getByLabel("الاسم الظاهر").fill("سارة");
-  await page.getByLabel("اسم المستخدم").fill("sara_taken");
-  await page.getByLabel("البريد الإلكتروني").fill("x@example.com");
-  await page.getByLabel("كلمة المرور").fill(PASSWORD);
-  await page.getByRole("button", { name: "تسجيل" }).click();
+  await fillRegisterForm(page, { first: "سارة", last: "علي", handle: "sara_x_field", email: "x@example.com" });
+  await page.getByRole("button", { name: "تسجيل", exact: true }).click();
   await expect(page.getByText("كلمة المرور هذه سهلة التخمين")).toBeVisible();
-  await expect(page.getByLabel("كلمة المرور")).toHaveAttribute("aria-invalid", "true");
+  await expect(page.getByLabel("كلمة المرور", { exact: true })).toHaveAttribute("aria-invalid", "true");
 });
 
 test("a wrong password stays on the login page with a translated error", async ({ page }) => {
@@ -70,7 +65,7 @@ test("a wrong password stays on the login page with a translated error", async (
   await page.getByLabel("البريد الإلكتروني").fill(a.email);
   await page.getByLabel("كلمة المرور").fill("definitely-wrong-password");
   await page.getByRole("button", { name: "دخول" }).click();
-  await expect(page.getByRole("alert")).toHaveText("البريد الإلكتروني أو كلمة المرور غير صحيحة.");
+  await expect(page.getByRole("alert")).toHaveText("البريد الإلكتروني أو اسم المستخدم أو كلمة المرور غير صحيحة.");
 });
 
 test("the redirect param can't leave the site", async ({ browser }) => {

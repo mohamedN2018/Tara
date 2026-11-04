@@ -17,6 +17,20 @@ from tara_resilience.idempotency import AbstractIdempotencyRecord
 from .managers import AccountManager
 
 
+class PersonalVisibility(models.TextChoices):
+    """Who sees a personal detail kept in identity (birthday, gender)."""
+
+    FRIENDS = "friends", "Friends"
+    ONLY_ME = "only_me", "Only me"
+
+
+class Gender(models.TextChoices):
+    FEMALE = "female", "Female"
+    MALE = "male", "Male"
+    CUSTOM = "custom", "Custom"  # the words are in Account.gender_custom
+    UNDISCLOSED = "prefer_not_to_say", "Prefer not to say"
+
+
 class Account(AbstractBaseUser, PermissionsMixin):
     """The single central identity for a human user."""
 
@@ -48,6 +62,22 @@ class Account(AbstractBaseUser, PermissionsMixin):
     # Set only together with phone_verified_at (see telegram.py).
     phone = models.CharField(max_length=32, blank=True, default="")
     phone_verified_at = models.DateTimeField(null=True, blank=True)
+
+    # Self-declared at signup (roadmap 2.12). Age leaves identity only as the
+    # `is_minor` / `age_band` token claims: never on the bus, never to ads.
+    # Null for accounts created before 2.12 (and Google sign-ups), whose
+    # `age_band` is `unknown`.
+    date_of_birth = models.DateField(null=True, blank=True)
+    # Decision 5.3: a birthday shows day and month only, to friends by default.
+    birthday_visibility = models.CharField(
+        max_length=16, choices=PersonalVisibility.choices, default=PersonalVisibility.FRIENDS
+    )
+    # Decision 5.8: optional, "only me" by default, never used for ads.
+    gender = models.CharField(max_length=24, choices=Gender.choices, blank=True, default="")
+    gender_custom = models.CharField(max_length=40, blank=True, default="")
+    gender_visibility = models.CharField(
+        max_length=16, choices=PersonalVisibility.choices, default=PersonalVisibility.ONLY_ME
+    )
 
     objects = AccountManager()
 
@@ -154,6 +184,31 @@ class AccountSuspension(models.Model):
     @property
     def is_active(self) -> bool:
         return self.lifted_at is None
+
+
+class LegalConsent(models.Model):
+    """One acceptance of the terms and the privacy policy (decision 5.14).
+
+    The versions are the ones the person was shown and the server accepted
+    (``LEGAL_TERMS_VERSION`` / ``LEGAL_PRIVACY_VERSION``). ``ip_hash`` is a
+    keyed HMAC of the client address, never the address itself: enough to tell
+    two consents came from one place, not to say where that is.
+    """
+
+    class Source(models.TextChoices):
+        REGISTER = "register", "Registration"
+
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name="legal_consents")
+    terms_version = models.CharField(max_length=40)
+    privacy_version = models.CharField(max_length=40)
+    source = models.CharField(max_length=16, choices=Source.choices, default=Source.REGISTER)
+    ip_hash = models.CharField(max_length=64, blank=True, default="")
+    accepted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "legal_consent"
+        indexes = [models.Index(fields=["account", "-accepted_at"], name="consent_account_idx")]
 
 
 class RoleCapability(models.Model):

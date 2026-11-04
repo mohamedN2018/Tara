@@ -4,7 +4,17 @@ import { readFileSync } from "node:fs";
 import AxeBuilder from "@axe-core/playwright";
 import { type Page, expect, request, test } from "@playwright/test";
 
-import { type Account, API, PASSWORD, apiAs, pageAs, sharedAccounts, unique, verificationToken } from "./helpers";
+import {
+  type Account,
+  API,
+  PASSWORD,
+  apiAs,
+  pageAs,
+  sharedAccounts,
+  signupData,
+  unique,
+  verificationToken,
+} from "./helpers";
 
 const promote = (email: string) =>
   execSync(`docker exec tara-identity-1 python manage.py create_admin ${email}`, { stdio: "pipe" });
@@ -282,9 +292,7 @@ async function throwawayAccount(): Promise<Account> {
     const handle = `e2e_s_${tag}`;
     const email = `${handle}@example.com`;
     const name = `موقوف ${tag}`;
-    const res = await api.post(`${API}/auth/register/`, {
-      data: { email, password: PASSWORD, handle, display_name: name, language: "ar" },
-    });
+    const res = await api.post(`${API}/auth/register/`, { data: signupData(email, handle, "موقوف", tag) });
     expect(res.status(), await res.text()).toBe(201);
     const token = await verificationToken(api, email);
     expect((await api.post(`${API}/auth/verify-email/`, { data: { token } })).ok()).toBe(true);

@@ -8,6 +8,12 @@ export interface UserCard {
   avatar_media_id: string | null;
 }
 
+export interface HandleAvailability {
+  handle: string;
+  available: boolean;
+  reason: "invalid" | "unavailable" | null;
+}
+
 export interface FieldPrivacy {
   field_key: string;
   visibility: string;
@@ -33,6 +39,15 @@ export const profileService = {
 
   async me(): Promise<Profile> {
     const { data } = await api.get<{ data: Profile }>("/profile/me/");
+    return data.data;
+  },
+
+  /** Sign-up's live check: whoever holds a handle, the answer is just "unavailable". */
+  async handleAvailable(handle: string, signal?: AbortSignal): Promise<HandleAvailability> {
+    const { data } = await api.get<{ data: HandleAvailability }>("/profile/handles/available/", {
+      params: { handle },
+      signal,
+    });
     return data.data;
   },
 

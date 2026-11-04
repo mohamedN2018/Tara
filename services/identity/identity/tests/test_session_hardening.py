@@ -20,6 +20,7 @@ from identity.models import (
     SecurityEvent,
     UserSession,
 )
+from identity.tests.signup import signup_data
 
 pytestmark = pytest.mark.django_db
 
@@ -241,7 +242,7 @@ def test_idempotency_key_released_mid_race_is_a_conflict_not_500(api_client, mon
     monkeypatch.setattr(IdempotencyRecord.objects, "create", lost_race)
     resp = api_client.post(
         reverse("identity:register"),
-        {"email": "race@tara.local", "password": PASSWORD},
+        signup_data("race@tara.local", PASSWORD),
         format="json",
         HTTP_IDEMPOTENCY_KEY="k-1",
     )
@@ -254,7 +255,7 @@ def test_idempotency_key_released_mid_race_is_a_conflict_not_500(api_client, mon
 def test_registration_security_event_does_not_keep_the_email(api_client):
     resp = api_client.post(
         reverse("identity:register"),
-        {"email": "private@tara.local", "password": PASSWORD},
+        signup_data("private@tara.local", PASSWORD),
         format="json",
     )
     assert resp.status_code == 201
@@ -299,7 +300,7 @@ def test_session_list_leaves_out_sessions_that_can_no_longer_refresh(active_acco
 def test_register_rejects_a_handle_profile_reserves(api_client, handle):
     resp = api_client.post(
         reverse("identity:register"),
-        {"email": "h@tara.local", "password": PASSWORD, "handle": handle},
+        signup_data("h@tara.local", PASSWORD, handle=handle),
         format="json",
     )
     assert resp.status_code == 400
@@ -313,7 +314,7 @@ def test_account_events_carry_no_email_address(api_client, django_capture_on_com
     with django_capture_on_commit_callbacks(execute=True):
         api_client.post(
             reverse("identity:register"),
-            {"email": "bus@tara.local", "password": PASSWORD, "handle": "bus_rider"},
+            signup_data("bus@tara.local", PASSWORD, handle="bus_rider"),
             format="json",
         )
     verified = api_client.post(
@@ -350,7 +351,7 @@ def _claim_left_by_a_crash(data: dict, key: str, *, age_seconds: int) -> None:
 
 
 def test_retry_takes_over_a_claim_left_by_a_crashed_request(api_client):
-    data = {"email": "crash@tara.local", "password": PASSWORD}
+    data = signup_data("crash@tara.local", PASSWORD)
     _claim_left_by_a_crash(data, "k-crash", age_seconds=120)
     resp = api_client.post(
         reverse("identity:register"), data, format="json", HTTP_IDEMPOTENCY_KEY="k-crash"
@@ -368,7 +369,7 @@ def test_retry_takes_over_a_claim_left_by_a_crashed_request(api_client):
 
 def test_a_recent_claim_is_still_in_progress(api_client, settings):
     settings.TARA_IDEMPOTENCY_STALE_SECONDS = 300
-    data = {"email": "slow@tara.local", "password": PASSWORD}
+    data = signup_data("slow@tara.local", PASSWORD)
     _claim_left_by_a_crash(data, "k-slow", age_seconds=120)
     resp = api_client.post(
         reverse("identity:register"), data, format="json", HTTP_IDEMPOTENCY_KEY="k-slow"
@@ -393,7 +394,7 @@ def test_outbox_relay_counts_published_events(api_client):
     before = REGISTRY.get_sample_value("tara_events_published_total", labels) or 0
     api_client.post(
         reverse("identity:register"),
-        {"email": "metric@tara.local", "password": PASSWORD},
+        signup_data("metric@tara.local", PASSWORD),
         format="json",
     )
     assert OutboxEvent.objects.filter(event_type="account.registered").exists()

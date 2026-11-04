@@ -35,7 +35,7 @@ function open() {
 
 <template>
   <article ref="card" class="card border-brand-200 p-4 dark:border-brand-900" data-testid="sponsored">
-    <span class="text-[10px] font-semibold uppercase tracking-wide text-brand-500">
+    <span class="text-[10px] font-semibold uppercase tracking-wide text-brand-700 dark:text-brand-300">
       {{ t("feed.sponsored") }}
     </span>
     <h3 class="mt-1 text-sm font-bold" dir="auto">{{ ad.headline }}</h3>

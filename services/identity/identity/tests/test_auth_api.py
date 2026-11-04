@@ -11,6 +11,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from identity.models import Account, EmailVerification, OutboxEvent, UserSession
+from identity.tests.signup import signup_data
 
 pytestmark = pytest.mark.django_db
 
@@ -25,7 +26,7 @@ def _hash(raw: str) -> str:
 def test_register_creates_pending_account_and_outbox_event(api_client):
     resp = api_client.post(
         reverse("identity:register"),
-        {"email": "new@tara.local", "password": "DevPassw0rd!"},
+        signup_data("new@tara.local", "DevPassw0rd!"),
         format="json",
     )
     assert resp.status_code == 201
@@ -42,7 +43,7 @@ def test_register_creates_pending_account_and_outbox_event(api_client):
 def test_register_rejects_weak_password_with_uniform_error(api_client):
     resp = api_client.post(
         reverse("identity:register"),
-        {"email": "weak@tara.local", "password": "123"},
+        signup_data("weak@tara.local", "123"),
         format="json",
     )
     assert resp.status_code == 400
@@ -52,7 +53,7 @@ def test_register_rejects_weak_password_with_uniform_error(api_client):
 
 
 def test_register_duplicate_email_conflicts(api_client):
-    payload = {"email": "dupe@tara.local", "password": "DevPassw0rd!"}
+    payload = signup_data("dupe@tara.local", "DevPassw0rd!")
     assert api_client.post(reverse("identity:register"), payload, format="json").status_code == 201
     resp = api_client.post(reverse("identity:register"), payload, format="json")
     assert resp.status_code == 409
@@ -65,7 +66,7 @@ def test_register_duplicate_email_conflicts(api_client):
 def test_login_blocked_until_account_active(api_client):
     api_client.post(
         reverse("identity:register"),
-        {"email": "pending@tara.local", "password": "DevPassw0rd!"},
+        signup_data("pending@tara.local", "DevPassw0rd!"),
         format="json",
     )
     resp = api_client.post(
@@ -123,7 +124,8 @@ def test_access_token_authenticates_me(api_client, active_account):
 # ---- refresh rotation + reuse detection -------------------------------------
 
 
-def test_refresh_rotates_and_detects_reuse(api_client, active_account):
+def test_refresh_rotates_and_detects_reuse(api_client, active_account, settings):
+    settings.REFRESH_REUSE_GRACE_SECONDS = 0  # the grace window has its own tests
     login = api_client.post(
         reverse("identity:login"),
         {"email": active_account.email, "password": "DevPassw0rd!"},

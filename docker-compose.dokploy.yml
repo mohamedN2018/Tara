@@ -11,7 +11,12 @@
 # presigned URLs; the bucket itself is private.
 #
 # Each service receives only the variables it needs. Generate them with
-# scripts/gen-dokploy-env.sh; see docs/deploy/DOKPLOY.md.
+# scripts/gen-dokploy-env.sh (writes .env_prod); see docs/deploy/DOKPLOY.md.
+#
+# Same containers as infra/compose (--profile core), minus the dev-only ones
+# (mailpit, traefik, bff). Names differ: each dev `<svc>-relay` and
+# `identity-beat` is a `<svc>-worker` here (Celery worker with embedded beat),
+# and dev `search-indexer` is `search-consumer`.
 # =============================================================================
 name: tara
 
@@ -36,6 +41,18 @@ x-common-env: &common-env
   TZ: ${TZ:-UTC}
   WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
   TARA_NUM_PROXIES: "1"
+  TARA_EVENT_EXCHANGE: ${TARA_EVENT_EXCHANGE:-tara.events}
+  # Per-user API limits in every service (production defaults; dev raises them).
+  TARA_READ_RATE: ${TARA_READ_RATE:-600/min}
+  TARA_WRITE_RATE: ${TARA_WRITE_RATE:-120/min}
+  OTEL_ENABLED: ${OTEL_ENABLED:-false}
+  # Service-to-service base URLs (internal network only, never routed by the edge).
+  IDENTITY_INTERNAL_URL: http://identity:8000
+  PROFILE_INTERNAL_URL: http://profile:8000
+  MEDIA_INTERNAL_URL: http://media:8000
+  POST_INTERNAL_URL: http://post:8000
+  CHAT_INTERNAL_URL: http://chat:8000
+  MARKETPLACE_INTERNAL_URL: http://marketplace:8000
 
 x-backing: &backing
   restart: unless-stopped
@@ -61,14 +78,31 @@ x-healthcheck: &healthcheck
 x-identity-env: &identity-env
   <<: *common-env
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/0
-  ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-}
-  IDENTITY_ALLOWED_HOSTS: ${IDENTITY_ALLOWED_HOSTS:-}
-  IDENTITY_CORS_ORIGINS: ${IDENTITY_CORS_ORIGINS:-}
-  IDENTITY_DB_NAME: ${IDENTITY_DB_NAME:-}
+  ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-900}
+  # Allowed hosts: the public domain, the service name (internal calls) and
+  # localhost (container healthcheck). Same pattern for every service below.
+  IDENTITY_ALLOWED_HOSTS: ${IDENTITY_ALLOWED_HOSTS:-${DOMAIN:?},identity,localhost,127.0.0.1}
+  IDENTITY_CORS_ORIGINS: ${IDENTITY_CORS_ORIGINS:-https://${DOMAIN:?}}
+  # RS256 signing pair as one-line PEMs with literal \n. Empty: identity
+  # generates a pair once into the identity-keys volume (back it up).
+  IDENTITY_JWT_PRIVATE_KEY: ${IDENTITY_JWT_PRIVATE_KEY:-}
+  IDENTITY_JWT_PUBLIC_KEY: ${IDENTITY_JWT_PUBLIC_KEY:-}
+  # Auth throttles (production defaults; .env.example raises them for e2e).
+  AUTH_REGISTER_RATE: ${AUTH_REGISTER_RATE:-10/hour}
+  AUTH_LOGIN_RATE: ${AUTH_LOGIN_RATE:-20/min}
+  AUTH_PASSWORD_RATE: ${AUTH_PASSWORD_RATE:-5/hour}
+  IDENTITY_SUSPENSION_EXPIRY_SECONDS: ${IDENTITY_SUSPENSION_EXPIRY_SECONDS:-60}
+  # Registration consent (track 1D): the versions the sign-up form records.
+  LEGAL_TERMS_VERSION: ${LEGAL_TERMS_VERSION:-2026-11-04-draft}
+  LEGAL_PRIVACY_VERSION: ${LEGAL_PRIVACY_VERSION:-2026-11-04-draft}
+  REGISTRATION_MIN_AGE: ${REGISTRATION_MIN_AGE:-13}
+  # Sign-in by username asks profile for the handle (internal API).
+  PROFILE_CALL_TIMEOUT: ${PROFILE_CALL_TIMEOUT:-2}
+  IDENTITY_DB_NAME: ${IDENTITY_DB_NAME:-identity_db}
   IDENTITY_DB_PASSWORD: ${IDENTITY_DB_PASSWORD:?}
-  IDENTITY_DB_USER: ${IDENTITY_DB_USER:-}
-  IDENTITY_DEBUG: ${IDENTITY_DEBUG:-}
-  IDENTITY_JWT_KEY_ID: ${IDENTITY_JWT_KEY_ID:-}
+  IDENTITY_DB_USER: ${IDENTITY_DB_USER:-identity}
+  IDENTITY_DEBUG: ${IDENTITY_DEBUG:-false}
+  IDENTITY_JWT_KEY_ID: ${IDENTITY_JWT_KEY_ID:-prod-key-1}
   IDENTITY_SECRET_KEY: ${IDENTITY_SECRET_KEY:?}
   # Identity and admin only: identity's role API refuses INTERNAL_JWT_SECRET (1.0d).
   ADMIN_IDENTITY_SECRET: ${ADMIN_IDENTITY_SECRET:?}
@@ -76,17 +110,19 @@ x-identity-env: &identity-env
   IDENTITY_EMIT_AUDIT_EVENTS: ${IDENTITY_EMIT_AUDIT_EVENTS:-true}
   # account.suspended/unsuspended, account.signed_out, account.verification.resent (8.4, 8.6).
   IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS: ${IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS:-true}
-  REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-}
-  EMAIL_HOST: ${EMAIL_HOST:?set your SMTP host}
+  REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-2592000}
+  REFRESH_REUSE_GRACE_SECONDS: ${REFRESH_REUSE_GRACE_SECONDS:-20}
+  EMAIL_HOST: ${EMAIL_HOST:?set EMAIL_HOST in the OWNER MUST FILL block}
   EMAIL_PORT: ${EMAIL_PORT:-587}
   EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
   EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
   EMAIL_USE_TLS: ${EMAIL_USE_TLS:-true}
-  DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:?}
+  # Empty: no-reply@DOMAIN. Your SMTP provider must allow sending from it.
+  DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-no-reply@${DOMAIN:?}}
   FRONTEND_BASE_URL: https://${DOMAIN:?}
   IDENTITY_JWT_KEY_DIR: /app/.keys
   # Optional sign-in and phone verification: each is off while empty.
-  AUTH_LOGIN_TARGET_RATE: ${AUTH_LOGIN_TARGET_RATE:-}
+  AUTH_LOGIN_TARGET_RATE: ${AUTH_LOGIN_TARGET_RATE:-10/min}
   GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
   TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
   TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
@@ -95,144 +131,187 @@ x-identity-env: &identity-env
 x-profile-env: &profile-env
   <<: *common-env
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/1
-  PROFILE_ALLOWED_HOSTS: ${PROFILE_ALLOWED_HOSTS:-}
-  PROFILE_DB_NAME: ${PROFILE_DB_NAME:-}
+  PROFILE_ALLOWED_HOSTS: ${PROFILE_ALLOWED_HOSTS:-${DOMAIN:?},profile,localhost,127.0.0.1}
+  PROFILE_CORS_ORIGINS: ${PROFILE_CORS_ORIGINS:-https://${DOMAIN:?}}
+  PROFILE_DB_NAME: ${PROFILE_DB_NAME:-profile_db}
   PROFILE_DB_PASSWORD: ${PROFILE_DB_PASSWORD:?}
-  PROFILE_DB_USER: ${PROFILE_DB_USER:-}
-  PROFILE_DEBUG: ${PROFILE_DEBUG:-}
+  PROFILE_DB_USER: ${PROFILE_DB_USER:-profile}
+  PROFILE_DEBUG: ${PROFILE_DEBUG:-false}
   PROFILE_SECRET_KEY: ${PROFILE_SECRET_KEY:?}
   PROFILE_EMIT_PAGE_UPDATED: ${PROFILE_EMIT_PAGE_UPDATED:-true}
+  # group.* events (1.11). Upgrading: deploy once with false, consumers first.
+  PROFILE_EMIT_GROUP_EVENTS: ${PROFILE_EMIT_GROUP_EVENTS:-true}
+  GROUP_REPORT_RATE: ${GROUP_REPORT_RATE:-20/hour}
+  # Sign-up's public handle check, per client address (track 1D).
+  PROFILE_HANDLE_CHECK_RATE: ${PROFILE_HANDLE_CHECK_RATE:-30/min}
 
 x-graph-env: &graph-env
   <<: *common-env
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/2
-  GRAPH_ALLOWED_HOSTS: ${GRAPH_ALLOWED_HOSTS:-}
-  GRAPH_DB_NAME: ${GRAPH_DB_NAME:-}
+  GRAPH_ALLOWED_HOSTS: ${GRAPH_ALLOWED_HOSTS:-${DOMAIN:?},graph,localhost,127.0.0.1}
+  GRAPH_CORS_ORIGINS: ${GRAPH_CORS_ORIGINS:-https://${DOMAIN:?}}
+  GRAPH_DB_NAME: ${GRAPH_DB_NAME:-graph_db}
   GRAPH_DB_PASSWORD: ${GRAPH_DB_PASSWORD:?}
-  GRAPH_DB_USER: ${GRAPH_DB_USER:-}
-  GRAPH_DEBUG: ${GRAPH_DEBUG:-}
+  GRAPH_DB_USER: ${GRAPH_DB_USER:-graph}
+  GRAPH_DEBUG: ${GRAPH_DEBUG:-false}
   GRAPH_SECRET_KEY: ${GRAPH_SECRET_KEY:?}
 
 x-media-env: &media-env
   <<: *common-env
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/3
-  MEDIA_ALLOWED_HOSTS: ${MEDIA_ALLOWED_HOSTS:-}
-  MEDIA_DB_NAME: ${MEDIA_DB_NAME:-}
+  MEDIA_ALLOWED_HOSTS: ${MEDIA_ALLOWED_HOSTS:-${DOMAIN:?},media,localhost,127.0.0.1}
+  MEDIA_CORS_ORIGINS: ${MEDIA_CORS_ORIGINS:-https://${DOMAIN:?}}
+  MEDIA_DB_NAME: ${MEDIA_DB_NAME:-media_db}
   MEDIA_DB_PASSWORD: ${MEDIA_DB_PASSWORD:?}
-  MEDIA_DB_USER: ${MEDIA_DB_USER:-}
-  MEDIA_DEBUG: ${MEDIA_DEBUG:-}
+  MEDIA_DB_USER: ${MEDIA_DB_USER:-media}
+  MEDIA_DEBUG: ${MEDIA_DEBUG:-false}
   MEDIA_SECRET_KEY: ${MEDIA_SECRET_KEY:?}
-  S3_BUCKET: ${S3_BUCKET:-}
-  S3_REGION: ${S3_REGION:-}
+  S3_BUCKET: ${S3_BUCKET:-tara-media}
+  S3_REGION: ${S3_REGION:-us-east-1}
   TARA_STORAGE_BACKEND: s3
-  S3_ENDPOINT_URL: http://minio:9000
+  # Bundled MinIO by default. For S3 or Cloudflare R2 set S3_ENDPOINT_URL,
+  # S3_PUBLIC_ENDPOINT_URL, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY.
+  S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://minio:9000}
   S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-https://${DOMAIN:?}}
-  AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-tara}
-  AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?}
+  AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-${MINIO_ROOT_USER:-tara}}
+  AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD:?}}
 
 x-post-env: &post-env
   <<: *common-env
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/4
-  POST_ALLOWED_HOSTS: ${POST_ALLOWED_HOSTS:-}
-  POST_DB_NAME: ${POST_DB_NAME:-}
+  POST_ALLOWED_HOSTS: ${POST_ALLOWED_HOSTS:-${DOMAIN:?},post,localhost,127.0.0.1}
+  POST_CORS_ORIGINS: ${POST_CORS_ORIGINS:-https://${DOMAIN:?}}
+  POST_DB_NAME: ${POST_DB_NAME:-post_db}
   POST_DB_PASSWORD: ${POST_DB_PASSWORD:?}
-  POST_DB_USER: ${POST_DB_USER:-}
-  POST_DEBUG: ${POST_DEBUG:-}
+  POST_DB_USER: ${POST_DB_USER:-post}
+  POST_DEBUG: ${POST_DEBUG:-false}
   POST_SECRET_KEY: ${POST_SECRET_KEY:?}
+  # Group post events (1.11). Upgrading: deploy once with false, consumers first.
+  POST_EMIT_GROUP_EVENTS: ${POST_EMIT_GROUP_EVENTS:-true}
+  POST_REPORT_RATE: ${POST_REPORT_RATE:-20/hour}
 
 x-feed-env: &feed-env
   <<: *common-env
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/5
-  FEED_ALLOWED_HOSTS: ${FEED_ALLOWED_HOSTS:-}
-  FEED_DB_NAME: ${FEED_DB_NAME:-}
+  FEED_ALLOWED_HOSTS: ${FEED_ALLOWED_HOSTS:-${DOMAIN:?},feed,localhost,127.0.0.1}
+  FEED_CORS_ORIGINS: ${FEED_CORS_ORIGINS:-https://${DOMAIN:?}}
+  FEED_DB_NAME: ${FEED_DB_NAME:-feed_db}
   FEED_DB_PASSWORD: ${FEED_DB_PASSWORD:?}
-  FEED_DB_USER: ${FEED_DB_USER:-}
-  FEED_DEBUG: ${FEED_DEBUG:-}
+  FEED_DB_USER: ${FEED_DB_USER:-feed}
+  FEED_DEBUG: ${FEED_DEBUG:-false}
   FEED_SECRET_KEY: ${FEED_SECRET_KEY:?}
 
 x-chat-env: &chat-env
   <<: *common-env
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/6
-  CHAT_ALLOWED_HOSTS: ${CHAT_ALLOWED_HOSTS:-}
-  CHAT_DB_NAME: ${CHAT_DB_NAME:-}
+  CHAT_ALLOWED_HOSTS: ${CHAT_ALLOWED_HOSTS:-${DOMAIN:?},chat,localhost,127.0.0.1}
+  CHAT_CORS_ORIGINS: ${CHAT_CORS_ORIGINS:-https://${DOMAIN:?}}
+  CHAT_DB_NAME: ${CHAT_DB_NAME:-chat_db}
   CHAT_DB_PASSWORD: ${CHAT_DB_PASSWORD:?}
-  CHAT_DB_USER: ${CHAT_DB_USER:-}
-  CHAT_DEBUG: ${CHAT_DEBUG:-}
+  CHAT_DB_USER: ${CHAT_DB_USER:-chat}
+  CHAT_DEBUG: ${CHAT_DEBUG:-false}
   CHAT_SECRET_KEY: ${CHAT_SECRET_KEY:?}
   # Calls (roadmap 3.7). Empty key or secret: every call endpoint answers 503
   # calls_unavailable and the SPA hides the call buttons.
   LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
   LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
-  LIVEKIT_URL: ${LIVEKIT_URL:-}
+  LIVEKIT_URL: ${LIVEKIT_URL:-wss://${DOMAIN:?}}
   LIVEKIT_INTERNAL_URL: ${LIVEKIT_INTERNAL_URL:-http://livekit:7880}
+  LIVEKIT_API_TIMEOUT: ${LIVEKIT_API_TIMEOUT:-3}
+  CALL_RING_TIMEOUT_SECONDS: ${CALL_RING_TIMEOUT_SECONDS:-45}
+  CALL_TOKEN_TTL_SECONDS: ${CALL_TOKEN_TTL_SECONDS:-600}
+  CALL_MAX_PARTICIPANTS: ${CALL_MAX_PARTICIPANTS:-16}
+  CALL_RECONCILE_AFTER_SECONDS: ${CALL_RECONCILE_AFTER_SECONDS:-120}
+  CALL_START_RATE: ${CALL_START_RATE:-20/min}
 
 x-marketplace-env: &marketplace-env
   <<: *common-env
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/8
-  MARKETPLACE_ALLOWED_HOSTS: ${MARKETPLACE_ALLOWED_HOSTS:-}
-  MARKETPLACE_AUTO_APPROVE: ${MARKETPLACE_AUTO_APPROVE:-}
-  MARKETPLACE_DEBUG: ${MARKETPLACE_DEBUG:-}
+  MARKETPLACE_ALLOWED_HOSTS: ${MARKETPLACE_ALLOWED_HOSTS:-${DOMAIN:?},marketplace,localhost,127.0.0.1}
+  MARKETPLACE_CORS_ORIGINS: ${MARKETPLACE_CORS_ORIGINS:-https://${DOMAIN:?}}
+  MARKETPLACE_AUTO_APPROVE: ${MARKETPLACE_AUTO_APPROVE:-false}
+  MARKETPLACE_DEBUG: ${MARKETPLACE_DEBUG:-false}
   MARKETPLACE_SECRET_KEY: ${MARKETPLACE_SECRET_KEY:?}
-  MARKET_DB_NAME: ${MARKET_DB_NAME:-}
+  MARKET_DB_NAME: ${MARKET_DB_NAME:-market_db}
   MARKET_DB_PASSWORD: ${MARKET_DB_PASSWORD:?}
-  MARKET_DB_USER: ${MARKET_DB_USER:-}
+  MARKET_DB_USER: ${MARKET_DB_USER:-market}
+  MARKETPLACE_REVIEW_MIN_INQUIRY_AGE_SECONDS: ${MARKETPLACE_REVIEW_MIN_INQUIRY_AGE_SECONDS:-86400}
+  MARKETPLACE_REVIEW_SELLER_WINDOW_DAYS: ${MARKETPLACE_REVIEW_SELLER_WINDOW_DAYS:-30}
 
 x-notification-env: &notification-env
   <<: *common-env
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/9
-  NOTIFICATION_ALLOWED_HOSTS: ${NOTIFICATION_ALLOWED_HOSTS:-}
-  NOTIFICATION_DEBUG: ${NOTIFICATION_DEBUG:-}
+  NOTIFICATION_ALLOWED_HOSTS: ${NOTIFICATION_ALLOWED_HOSTS:-${DOMAIN:?},notification,localhost,127.0.0.1}
+  NOTIFICATION_CORS_ORIGINS: ${NOTIFICATION_CORS_ORIGINS:-https://${DOMAIN:?}}
+  NOTIFICATION_DEBUG: ${NOTIFICATION_DEBUG:-false}
   NOTIFICATION_SECRET_KEY: ${NOTIFICATION_SECRET_KEY:?}
-  NOTIF_DB_NAME: ${NOTIF_DB_NAME:-}
+  NOTIF_DB_NAME: ${NOTIF_DB_NAME:-notif_db}
   NOTIF_DB_PASSWORD: ${NOTIF_DB_PASSWORD:?}
-  NOTIF_DB_USER: ${NOTIF_DB_USER:-}
+  NOTIF_DB_USER: ${NOTIF_DB_USER:-notif}
   VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
   VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
-  VAPID_SUBJECT: ${VAPID_SUBJECT:-}
+  VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@${DOMAIN:?}}
 
 x-search-env: &search-env
   <<: *common-env
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/10
-  SEARCH_ALLOWED_HOSTS: ${SEARCH_ALLOWED_HOSTS:-}
-  SEARCH_DB_NAME: ${SEARCH_DB_NAME:-}
+  SEARCH_ALLOWED_HOSTS: ${SEARCH_ALLOWED_HOSTS:-${DOMAIN:?},search,localhost,127.0.0.1}
+  SEARCH_CORS_ORIGINS: ${SEARCH_CORS_ORIGINS:-https://${DOMAIN:?}}
+  SEARCH_DB_NAME: ${SEARCH_DB_NAME:-search_db}
   SEARCH_DB_PASSWORD: ${SEARCH_DB_PASSWORD:?}
-  SEARCH_DB_USER: ${SEARCH_DB_USER:-}
-  SEARCH_DEBUG: ${SEARCH_DEBUG:-}
+  SEARCH_DB_USER: ${SEARCH_DB_USER:-search}
+  SEARCH_DEBUG: ${SEARCH_DEBUG:-false}
   SEARCH_SECRET_KEY: ${SEARCH_SECRET_KEY:?}
+  SEARCH_INTERNAL_TIMEOUT: ${SEARCH_INTERNAL_TIMEOUT:-1.5}
 
 x-moderation-env: &moderation-env
   <<: *common-env
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/11
-  MODERATION_ALLOWED_HOSTS: ${MODERATION_ALLOWED_HOSTS:-}
-  MODERATION_DB_NAME: ${MODERATION_DB_NAME:-}
+  MODERATION_ALLOWED_HOSTS: ${MODERATION_ALLOWED_HOSTS:-${DOMAIN:?},moderation,localhost,127.0.0.1}
+  MODERATION_CORS_ORIGINS: ${MODERATION_CORS_ORIGINS:-https://${DOMAIN:?}}
+  MODERATION_DB_NAME: ${MODERATION_DB_NAME:-moderation_db}
   MODERATION_DB_PASSWORD: ${MODERATION_DB_PASSWORD:?}
-  MODERATION_DB_USER: ${MODERATION_DB_USER:-}
-  MODERATION_DEBUG: ${MODERATION_DEBUG:-}
+  MODERATION_DB_USER: ${MODERATION_DB_USER:-moderation}
+  MODERATION_DEBUG: ${MODERATION_DEBUG:-false}
   MODERATION_SECRET_KEY: ${MODERATION_SECRET_KEY:?}
   # appeal.resolved for admin's audit log (8.1, deploy note).
   MODERATION_EMIT_AUDIT_EVENTS: ${MODERATION_EMIT_AUDIT_EVENTS:-true}
+  MODERATION_REPORT_RATE: ${MODERATION_REPORT_RATE:-20/hour}
 
 x-admin-env: &admin-env
   <<: *common-env
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/12
-  ADMIN_ALLOWED_HOSTS: ${ADMIN_ALLOWED_HOSTS:-}
-  ADMIN_DB_NAME: ${ADMIN_DB_NAME:-}
+  ADMIN_ALLOWED_HOSTS: ${ADMIN_ALLOWED_HOSTS:-${DOMAIN:?},admin,localhost,127.0.0.1}
+  ADMIN_CORS_ORIGINS: ${ADMIN_CORS_ORIGINS:-https://${DOMAIN:?}}
+  ADMIN_DB_NAME: ${ADMIN_DB_NAME:-admin_db}
   ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:?}
-  ADMIN_DB_USER: ${ADMIN_DB_USER:-}
-  ADMIN_DEBUG: ${ADMIN_DEBUG:-}
+  ADMIN_DB_USER: ${ADMIN_DB_USER:-adminsvc}
+  ADMIN_DEBUG: ${ADMIN_DEBUG:-false}
   ADMIN_SECRET_KEY: ${ADMIN_SECRET_KEY:?}
   # Identity and admin only: signs admin's calls to identity's role API (1.0d).
   ADMIN_IDENTITY_SECRET: ${ADMIN_IDENTITY_SECRET:?}
+  # Health poll and statistics (8.11), audit export (8.1), user console (8.6).
+  # No BFF in this stack: an empty URL drops it from the health targets.
+  ADMIN_BFF_READY_URL: ${ADMIN_BFF_READY_URL:-}
+  ADMIN_HEALTH_POLL_SECONDS: ${ADMIN_HEALTH_POLL_SECONDS:-30}
+  ADMIN_HEALTH_SNAPSHOTS_KEPT: ${ADMIN_HEALTH_SNAPSHOTS_KEPT:-500}
+  ADMIN_STATS_POLL_SECONDS: ${ADMIN_STATS_POLL_SECONDS:-300}
+  ADMIN_STATS_TIMEOUT: ${ADMIN_STATS_TIMEOUT:-5}
+  ADMIN_AUDIT_EXPORT_MAX_ROWS: ${ADMIN_AUDIT_EXPORT_MAX_ROWS:-10000}
+  ADMIN_AUDIT_EXPORT_RATE: ${ADMIN_AUDIT_EXPORT_RATE:-10/min}
+  ADMIN_USERS_CALL_TIMEOUT: ${ADMIN_USERS_CALL_TIMEOUT:-3}
+  ADMIN_USER_REVEAL_RATE: ${ADMIN_USER_REVEAL_RATE:-30/hour}
 
 x-ads-env: &ads-env
   <<: *common-env
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/13
-  ADS_ALLOWED_HOSTS: ${ADS_ALLOWED_HOSTS:-}
-  ADS_AUTO_APPROVE: ${ADS_AUTO_APPROVE:-}
-  ADS_DB_NAME: ${ADS_DB_NAME:-}
+  ADS_ALLOWED_HOSTS: ${ADS_ALLOWED_HOSTS:-${DOMAIN:?},ads,localhost,127.0.0.1}
+  ADS_CORS_ORIGINS: ${ADS_CORS_ORIGINS:-https://${DOMAIN:?}}
+  ADS_AUTO_APPROVE: ${ADS_AUTO_APPROVE:-false}
+  ADS_DB_NAME: ${ADS_DB_NAME:-ads_db}
   ADS_DB_PASSWORD: ${ADS_DB_PASSWORD:?}
-  ADS_DB_USER: ${ADS_DB_USER:-}
-  ADS_DEBUG: ${ADS_DEBUG:-}
+  ADS_DB_USER: ${ADS_DB_USER:-ads}
+  ADS_DEBUG: ${ADS_DEBUG:-false}
   ADS_SECRET_KEY: ${ADS_SECRET_KEY:?}
   ADS_SERVE_TOKEN_SECRET: ${ADS_SERVE_TOKEN_SECRET:?}
   ADS_SERVING_ENABLED: ${ADS_SERVING_ENABLED:-false}
@@ -240,20 +319,62 @@ x-ads-env: &ads-env
 x-realtime-env: &realtime-env
   <<: *common-env
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/7
-  REALTIME_ALLOWED_HOSTS: ${REALTIME_ALLOWED_HOSTS:-}
-  REALTIME_DEBUG: ${REALTIME_DEBUG:-}
+  REALTIME_ALLOWED_HOSTS: ${REALTIME_ALLOWED_HOSTS:-${DOMAIN:?},realtime,localhost,127.0.0.1}
+  REALTIME_DEBUG: ${REALTIME_DEBUG:-false}
   REALTIME_SECRET_KEY: ${REALTIME_SECRET_KEY:?}
+  PRESENCE_BLOCK_MEMORY_TTL: ${PRESENCE_BLOCK_MEMORY_TTL:-3600}
 
 services:
   # ======== backing services ================================================
   postgres:
     <<: *backing
     image: postgres:16-alpine
-    env_file: [.env]   # the init script reads every service's database settings
     environment:
       POSTGRES_USER: ${POSTGRES_SUPERUSER:-tara}
       POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?}
       POSTGRES_DB: postgres
+      # Read once by infra/postgres/init on an empty volume. Passed explicitly,
+      # not via env_file, so the roles always get these passwords and never
+      # the init script's dev fallbacks.
+      IDENTITY_DB_NAME: ${IDENTITY_DB_NAME:-identity_db}
+      IDENTITY_DB_USER: ${IDENTITY_DB_USER:-identity}
+      IDENTITY_DB_PASSWORD: ${IDENTITY_DB_PASSWORD:?}
+      PROFILE_DB_NAME: ${PROFILE_DB_NAME:-profile_db}
+      PROFILE_DB_USER: ${PROFILE_DB_USER:-profile}
+      PROFILE_DB_PASSWORD: ${PROFILE_DB_PASSWORD:?}
+      GRAPH_DB_NAME: ${GRAPH_DB_NAME:-graph_db}
+      GRAPH_DB_USER: ${GRAPH_DB_USER:-graph}
+      GRAPH_DB_PASSWORD: ${GRAPH_DB_PASSWORD:?}
+      MEDIA_DB_NAME: ${MEDIA_DB_NAME:-media_db}
+      MEDIA_DB_USER: ${MEDIA_DB_USER:-media}
+      MEDIA_DB_PASSWORD: ${MEDIA_DB_PASSWORD:?}
+      POST_DB_NAME: ${POST_DB_NAME:-post_db}
+      POST_DB_USER: ${POST_DB_USER:-post}
+      POST_DB_PASSWORD: ${POST_DB_PASSWORD:?}
+      FEED_DB_NAME: ${FEED_DB_NAME:-feed_db}
+      FEED_DB_USER: ${FEED_DB_USER:-feed}
+      FEED_DB_PASSWORD: ${FEED_DB_PASSWORD:?}
+      CHAT_DB_NAME: ${CHAT_DB_NAME:-chat_db}
+      CHAT_DB_USER: ${CHAT_DB_USER:-chat}
+      CHAT_DB_PASSWORD: ${CHAT_DB_PASSWORD:?}
+      MARKET_DB_NAME: ${MARKET_DB_NAME:-market_db}
+      MARKET_DB_USER: ${MARKET_DB_USER:-market}
+      MARKET_DB_PASSWORD: ${MARKET_DB_PASSWORD:?}
+      NOTIF_DB_NAME: ${NOTIF_DB_NAME:-notif_db}
+      NOTIF_DB_USER: ${NOTIF_DB_USER:-notif}
+      NOTIF_DB_PASSWORD: ${NOTIF_DB_PASSWORD:?}
+      SEARCH_DB_NAME: ${SEARCH_DB_NAME:-search_db}
+      SEARCH_DB_USER: ${SEARCH_DB_USER:-search}
+      SEARCH_DB_PASSWORD: ${SEARCH_DB_PASSWORD:?}
+      MODERATION_DB_NAME: ${MODERATION_DB_NAME:-moderation_db}
+      MODERATION_DB_USER: ${MODERATION_DB_USER:-moderation}
+      MODERATION_DB_PASSWORD: ${MODERATION_DB_PASSWORD:?}
+      ADMIN_DB_NAME: ${ADMIN_DB_NAME:-admin_db}
+      ADMIN_DB_USER: ${ADMIN_DB_USER:-adminsvc}
+      ADMIN_DB_PASSWORD: ${ADMIN_DB_PASSWORD:?}
+      ADS_DB_NAME: ${ADS_DB_NAME:-ads_db}
+      ADS_DB_USER: ${ADS_DB_USER:-ads}
+      ADS_DB_PASSWORD: ${ADS_DB_PASSWORD:?}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro

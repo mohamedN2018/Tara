@@ -2,7 +2,7 @@
 import { Flag, Plus, X } from "lucide-vue-next";
 import { onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 
 import AppShell from "@/components/layout/AppShell.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
@@ -15,11 +15,13 @@ import { type Page, pageService } from "@/services/pages";
 import { useToastStore } from "@/stores/toasts";
 
 const { t } = useI18n();
+const route = useRoute();
 const router = useRouter();
 const toasts = useToastStore();
 
 type Tab = "browse" | "mine";
-const tab = ref<Tab>("browse");
+// The main menu links "My pages" here as ?tab=mine.
+const tab = ref<Tab>(route.query.tab === "mine" ? "mine" : "browse");
 const query = ref("");
 const pages = ref<Page[]>([]);
 const cursor = ref<string | null>(null);
@@ -87,6 +89,20 @@ async function create() {
 }
 
 watch(tab, load);
+watch(
+  () => route.query.tab,
+  (value) => (tab.value = value === "mine" ? "mine" : "browse"),
+);
+// The main menu's "Create > Page" lands here as ?create=1: open the dialog once.
+watch(
+  () => route.query.create,
+  (value) => {
+    if (value !== "1") return;
+    showCreate.value = true;
+    router.replace({ query: { ...route.query, create: undefined } });
+  },
+  { immediate: true },
+);
 onMounted(load);
 </script>
 

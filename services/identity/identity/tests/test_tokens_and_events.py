@@ -124,7 +124,8 @@ def test_access_token_carries_roles_from_account_flags(
     assert claims["roles"] == expected
 
 
-def test_reused_refresh_token_stays_revoked_after_the_error(active_account):
+def test_reused_refresh_token_stays_revoked_after_the_error(active_account, settings):
+    settings.REFRESH_REUSE_GRACE_SECONDS = 0  # the grace window has its own tests
     issued = services.login(email=active_account.email, password="DevPassw0rd!")
     tokens.rotate_refresh_token(issued.refresh_token)
 

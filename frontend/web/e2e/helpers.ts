@@ -19,6 +19,30 @@ export interface Account {
 
 export const unique = () => Math.random().toString(36).slice(2, 8);
 
+/** Legal versions the server accepts (identity's LEGAL_*_VERSION settings). */
+export const LEGAL_VERSION = "2026-11-04-draft";
+
+/**
+ * A complete POST /auth/register/ body (plan 08, track 1D). The display name is
+ * built from first and last name, so `${first} ${last}` is the account's name.
+ */
+export function signupData(email: string, handle: string, first: string, last: string, extra: object = {}) {
+  return {
+    email,
+    handle,
+    first_name: first,
+    last_name: last,
+    password: PASSWORD,
+    password_confirm: PASSWORD,
+    date_of_birth: "1994-05-20",
+    accept_terms: true,
+    terms_version: LEGAL_VERSION,
+    privacy_version: LEGAL_VERSION,
+    language: "ar",
+    ...extra,
+  };
+}
+
 /** Poll Mailpit for the newest mail to `email` and return its verification token. */
 export async function verificationToken(api: APIRequestContext, email: string): Promise<string> {
   let id: string | undefined;
@@ -53,10 +77,9 @@ async function createAccount(api: APIRequestContext, slot: string): Promise<Acco
   const tag = unique();
   const handle = `e2e_${slot}_${tag}`;
   const email = `${handle}@example.com`;
-  const name = `${slot === "a" ? "ليلى" : "Omar"} ${tag}`;
-  const res = await api.post(`${API}/auth/register/`, {
-    data: { email, password: PASSWORD, handle, display_name: name, language: "ar" },
-  });
+  const first = slot === "a" ? "ليلى" : "Omar";
+  const name = `${first} ${tag}`;
+  const res = await api.post(`${API}/auth/register/`, { data: signupData(email, handle, first, tag) });
   expect(res.status(), await res.text()).toBe(201);
   const token = await verificationToken(api, email);
   expect((await api.post(`${API}/auth/verify-email/`, { data: { token } })).ok()).toBe(true);
@@ -116,6 +139,64 @@ export async function pageAs(
     [tokens.access, tokens.refresh],
   );
   return context.newPage();
+}
+
+export interface RegisterFields {
+  first: string;
+  last: string;
+  handle: string;
+  email: string;
+  password?: string;
+  confirm?: string;
+  /** [day, month, year] as the selects' values. */
+  dob?: [string, string, string];
+  consent?: boolean;
+}
+
+/** Labels of the sign-up form (track 1D), per language. */
+export const REGISTER_LABELS = {
+  ar: {
+    first: "الاسم الأول",
+    last: "اسم العائلة",
+    handle: "اسم المستخدم",
+    email: "البريد الإلكتروني",
+    password: "كلمة المرور",
+    confirm: "تأكيد كلمة المرور",
+    day: "اليوم",
+    month: "الشهر",
+    year: "السنة",
+    consent: /أوافق على/,
+    submit: "تسجيل",
+  },
+  en: {
+    first: "First name",
+    last: "Last name",
+    handle: "Username",
+    email: "Email",
+    password: "Password",
+    confirm: "Confirm password",
+    day: "Day",
+    month: "Month",
+    year: "Year",
+    consent: /I agree to/,
+    submit: "Sign up",
+  },
+} as const;
+
+/** Fill the sign-up form on /register (doesn't submit). */
+export async function fillRegisterForm(page: Page, fields: RegisterFields, lang: "ar" | "en" = "ar") {
+  const l = REGISTER_LABELS[lang];
+  await page.getByLabel(l.first, { exact: true }).fill(fields.first);
+  await page.getByLabel(l.last, { exact: true }).fill(fields.last);
+  await page.getByLabel(l.handle, { exact: true }).fill(fields.handle);
+  await page.getByLabel(l.email, { exact: true }).fill(fields.email);
+  await page.getByLabel(l.password, { exact: true }).fill(fields.password ?? PASSWORD);
+  await page.getByLabel(l.confirm, { exact: true }).fill(fields.confirm ?? fields.password ?? PASSWORD);
+  const [day, month, year] = fields.dob ?? ["20", "5", "1994"];
+  await page.getByLabel(l.day, { exact: true }).selectOption(day);
+  await page.getByLabel(l.month, { exact: true }).selectOption(month);
+  await page.getByLabel(l.year, { exact: true }).selectOption(year);
+  if (fields.consent ?? true) await page.getByLabel(l.consent).check();
 }
 
 /** Fail the test on anything that looks like a raw account id in visible text. */

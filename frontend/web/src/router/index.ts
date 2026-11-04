@@ -37,6 +37,10 @@ const routes: RouteRecordRaw[] = [
   { path: "/notifications", name: "notifications", component: () => import("@/views/NotificationsView.vue"), meta: { auth: true } },
   { path: "/search", name: "search", component: () => import("@/views/SearchView.vue"), meta: { auth: true } },
   { path: "/settings", name: "settings", component: () => import("@/views/SettingsView.vue"), meta: { auth: true } },
+  // The mobile menu (the fifth bottom tab): the categorised main menu as a page.
+  { path: "/menu", name: "menu", component: () => import("@/views/MobileMenuView.vue"), meta: { auth: true } },
+  // Public legal pages: readable signed in or out (neither `auth` nor `guest`).
+  { path: "/legal/:doc(terms|privacy)", name: "legal", component: () => import("@/views/LegalView.vue") },
   { path: "/admin", name: "admin", component: () => import("@/views/AdminView.vue"), meta: { auth: true, staff: true } },
   { path: "/admin/capabilities", name: "admin-capabilities", component: () => import("@/views/AdminCapabilitiesView.vue"), meta: { auth: true, staff: true, caps: ["admin.capabilities.manage"] } },
   { path: "/admin/audit", name: "admin-audit", component: () => import("@/views/AdminAuditView.vue"), meta: { auth: true, staff: true, caps: ["admin.audit.view"] } },

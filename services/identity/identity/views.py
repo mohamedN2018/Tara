@@ -9,7 +9,7 @@ from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
+from rest_framework.throttling import BaseThrottle, ScopedRateThrottle
 from rest_framework.views import APIView
 
 from tara_common.exceptions import TaraAPIError
@@ -36,6 +36,8 @@ from .tokens import build_jwks
 
 REFRESH_COOKIE = "refresh_token"
 REFRESH_COOKIE_PATH = "/api/v1/auth"
+# Set beside a session-only refresh cookie, so rotation does not make it persistent.
+SESSION_ONLY_COOKIE = "refresh_session_only"
 # Public auth endpoints never read the caller's access token, so a stale,
 # expired or signed-out one sent along by a client must not turn them into 401s.
 NO_AUTH: list = []
@@ -52,20 +54,35 @@ def _client_meta(request: Request) -> dict[str, str]:
     }
 
 
-def _set_refresh_cookie(response: Response, raw: str) -> None:
+def _set_refresh_cookie(response: Response, raw: str, *, session_only: bool = False) -> None:
+    """``session_only`` (an unticked "Remember me"): no Max-Age/Expires, so the
+    browser drops the cookie when it closes. A marker cookie with the same
+    lifetime tells the refresh endpoint to keep it that way on rotation."""
     response.set_cookie(
         REFRESH_COOKIE,
         raw,
-        max_age=settings.REFRESH_TOKEN_TTL_SECONDS,
+        max_age=None if session_only else settings.REFRESH_TOKEN_TTL_SECONDS,
         httponly=True,
         secure=not settings.DEBUG,
         samesite="Strict",
         path=REFRESH_COOKIE_PATH,
     )
+    if session_only:
+        response.set_cookie(
+            SESSION_ONLY_COOKIE,
+            "1",
+            httponly=True,
+            secure=not settings.DEBUG,
+            samesite="Strict",
+            path=REFRESH_COOKIE_PATH,
+        )
+    else:
+        response.delete_cookie(SESSION_ONLY_COOKIE, path=REFRESH_COOKIE_PATH)
 
 
 def _clear_refresh_cookie(response: Response) -> None:
     response.delete_cookie(REFRESH_COOKIE, path=REFRESH_COOKIE_PATH)
+    response.delete_cookie(SESSION_ONLY_COOKIE, path=REFRESH_COOKIE_PATH)
 
 
 def _token_body(issued: services.IssuedTokens) -> dict:
@@ -107,10 +124,18 @@ class RegisterView(APIView):
             account = services.register(
                 email=data["email"],
                 password=data["password"],
+                first_name=data["first_name"],
+                last_name=data["last_name"],
+                date_of_birth=data["date_of_birth"],
+                gender=data["gender"],
+                gender_custom=data["gender_custom"],
+                terms_version=data["terms_version"],
+                privacy_version=data["privacy_version"],
                 language=data["language"],
                 theme=data["theme"],
-                display_name=data["display_name"],
                 handle=data["handle"],
+                # The address behind the trusted proxies, only ever stored hashed.
+                client_ip=BaseThrottle().get_ident(request),
                 ip_region=meta["ip_region"],
                 user_agent=meta["user_agent"],
                 correlation_id=meta["correlation_id"],
@@ -127,7 +152,7 @@ class LoginView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = NO_AUTH
     throttle_scope = "auth_login"
-    # Per IP (auth_login) AND per targeted email (auth_login_target).
+    # Per IP (auth_login) AND per targeted email or username (auth_login_target).
     throttle_classes = [ScopedRateThrottle, LoginTargetThrottle]
 
     @extend_schema(request=LoginSerializer, responses={200: TokenResponseSerializer}, tags=["auth"])
@@ -136,14 +161,18 @@ class LoginView(APIView):
         serializer.is_valid(raise_exception=True)
         meta = _client_meta(request)
         issued = services.login(
-            email=serializer.validated_data["email"],
+            identifier=serializer.validated_data["identifier"],
             password=serializer.validated_data["password"],
             ip_region=meta["ip_region"],
             user_agent=meta["user_agent"],
             correlation_id=meta["correlation_id"],
         )
         response = data_response(_token_body(issued))
-        _set_refresh_cookie(response, issued.refresh_token)
+        _set_refresh_cookie(
+            response,
+            issued.refresh_token,
+            session_only=not serializer.validated_data["remember"],
+        )
         return response
 
 
@@ -165,7 +194,11 @@ class RefreshView(APIView):
             )
         issued = services.refresh(refresh_token=raw)
         response = data_response(_token_body(issued))
-        _set_refresh_cookie(response, issued.refresh_token)
+        _set_refresh_cookie(
+            response,
+            issued.refresh_token,
+            session_only=request.COOKIES.get(SESSION_ONLY_COOKIE) == "1",
+        )
         return response
 
 

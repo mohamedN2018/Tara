@@ -24,6 +24,8 @@ import uuid
 API = os.getenv("TARA_API", "http://127.0.0.1:8080/api/v1")
 MAILPIT = os.getenv("TARA_MAILPIT", "http://127.0.0.1:8026/api/v1")
 PASSWORD = "Str0ng-Pass-987!"  # noqa: S105 - synthetic test user
+# Identity's LEGAL_TERMS_VERSION / LEGAL_PRIVACY_VERSION (override when they change).
+LEGAL_VERSION = os.getenv("TARA_LEGAL_VERSION", "2026-11-04-draft")
 EVENT_TIMEOUT_SECONDS = 20
 PNG_1X1 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9"
@@ -74,7 +76,23 @@ def eventually(fetch, predicate):
 
 def make_user(name, tag):
     email = f"{name}{tag}@example.com"
-    status, body = call("POST", "/auth/register/", body={"email": email, "password": PASSWORD})
+    # The full sign-up body (plan 08, track 1D): names, confirmed password,
+    # date of birth and consent to the current legal versions.
+    signup = {
+        "email": email,
+        "password": PASSWORD,
+        "password_confirm": PASSWORD,
+        "first_name": name.capitalize(),
+        "last_name": "Smoke",
+        "date_of_birth": "1990-06-15",
+        "accept_terms": True,
+        "terms_version": LEGAL_VERSION,
+        "privacy_version": LEGAL_VERSION,
+    }
+    mismatched = {**signup, "password_confirm": "x" + PASSWORD}
+    status, body = call("POST", "/auth/register/", body=mismatched)
+    check(f"{name}: a mismatched confirmation is refused", status == 400, body)
+    status, body = call("POST", "/auth/register/", body=signup)
     check(f"{name} registers", status == 201, body)
 
     def mailbox():

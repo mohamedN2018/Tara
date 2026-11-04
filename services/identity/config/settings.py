@@ -147,6 +147,15 @@ REST_FRAMEWORK = {
     },
 }
 
+# ---- Registration (roadmap 2.12, decision 5.14) ------------------------------
+# The terms and privacy versions a sign-up must have been shown. The web client
+# sends the ones in frontend/web/src/lib/legal.ts; a mismatch is refused, so
+# bump both together when the legal text changes.
+LEGAL_TERMS_VERSION = os.getenv("LEGAL_TERMS_VERSION") or "2026-11-04-draft"
+LEGAL_PRIVACY_VERSION = os.getenv("LEGAL_PRIVACY_VERSION") or "2026-11-04-draft"
+# Minimum self-declared age at sign-up (roadmap §21 decision 5: 13, 16 or 18 per market).
+REGISTRATION_MIN_AGE = int(os.getenv("REGISTRATION_MIN_AGE") or "13")
+
 # ---- External sign-in and phone verification (all off unless configured) ----
 # Google Identity Services: the OAuth *web* client id (public, not a secret).
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
@@ -177,6 +186,13 @@ JWT_ISSUER = os.getenv("JWT_ISSUER", "tara-identity")
 JWT_AUDIENCE = os.getenv("JWT_AUDIENCE", "tara")
 ACCESS_TOKEN_TTL_SECONDS = int(os.getenv("ACCESS_TOKEN_TTL_SECONDS", "900"))
 REFRESH_TOKEN_TTL_SECONDS = int(os.getenv("REFRESH_TOKEN_TTL_SECONDS", "2592000"))
+# A spent refresh token replayed this soon (its response was lost) gets a
+# sibling instead of revoking the session. 0 disables the grace window.
+REFRESH_REUSE_GRACE_SECONDS = int(os.getenv("REFRESH_REUSE_GRACE_SECONDS") or "20")
+# Sign-in by username (decision 5.6): handles live in profile, which identity
+# asks through its internal API (shared INTERNAL_JWT_SECRET, never the edge).
+PROFILE_INTERNAL_URL = os.getenv("PROFILE_INTERNAL_URL", "http://profile:8000")
+PROFILE_CALL_TIMEOUT = float(os.getenv("PROFILE_CALL_TIMEOUT", "2"))
 
 # Consumed by tara_common.auth.JWTAuthentication to verify our own tokens locally.
 TARA_JWT_PUBLIC_KEY = JWT_PUBLIC_KEY

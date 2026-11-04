@@ -21,7 +21,7 @@ test("Seen survives a reload, and the inbox follows the latest message", async (
   await page.reload();
   await expect(page.locator('[data-testid="message-status"][data-status="read"]').last()).toBeVisible();
 
-  const rows = page.locator("ul li button");
+  const rows = page.getByRole("main").locator("ul li button");
   await expect(rows.first()).toContainText(c.name);
   await alice.post(`${API}/conversations/${withBob}/messages/`, { data: { body: `bump ${tag}` } });
   await page.reload();

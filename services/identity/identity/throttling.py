@@ -12,10 +12,13 @@ import hashlib
 
 from rest_framework.throttling import SimpleRateThrottle
 
+from .login_identifier import normalise
+
 
 def email_ident(raw: object) -> str | None:
-    """Normalised, hashed email, so raw addresses never become cache keys."""
-    email = raw.strip().lower() if isinstance(raw, str) else ""
+    """Normalised, hashed sign-in identifier (email or username), so raw
+    addresses never become cache keys. Normalised as ``services.login`` does."""
+    email = normalise(raw)
     if not email:
         return None
     return hashlib.sha256(email.encode()).hexdigest()
@@ -35,7 +38,8 @@ class LoginTargetThrottle(SimpleRateThrottle):
 
     def get_cache_key(self, request, view):
         data = request.data if hasattr(request.data, "get") else {}
-        ident = email_ident(data.get("email"))
+        # The same field services.login signs in with: identifier first (5.6).
+        ident = email_ident(data.get("identifier") or data.get("email"))
         if ident is None:
             return None  # nothing to key on; the per-IP throttle still applies
         return self.cache_format % {"scope": self.scope, "ident": ident}

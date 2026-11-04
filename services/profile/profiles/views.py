@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -38,6 +38,7 @@ from .serializers import (
     ProfileUpdateSerializer,
     WorkSerializer,
 )
+from .throttling import HandleCheckThrottle
 
 
 def _require_profile(request: Request) -> UserProfile:
@@ -236,6 +237,23 @@ class ProfileLookupView(APIView):
         return data_response(
             services.profile_cards(request.user.account_id, serializer.validated_data["ids"])
         )
+
+
+class HandleAvailabilityView(APIView):
+    """``GET /profile/handles/available/?handle=``: the sign-up form's live check.
+
+    Public (the form is signed out), limited per address, and it answers only
+    ``available`` with ``reason`` ``invalid`` or ``unavailable``: a hidden,
+    deleted or suspended holder reads the same as any other.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+    throttle_classes = [*APIView.throttle_classes, HandleCheckThrottle]
+
+    @extend_schema(responses={200: None}, tags=["profile"])
+    def get(self, request: Request) -> Response:
+        return data_response(services.handle_availability(request.query_params.get("handle", "")))
 
 
 # ---- pages ------------------------------------------------------------------

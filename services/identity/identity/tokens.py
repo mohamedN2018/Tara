@@ -19,6 +19,7 @@ from django.utils import timezone
 from tara_common.capabilities import capabilities_for_roles
 from tara_events.envelope import uuid7
 
+from .age import age_band, is_minor
 from .events import emit_security_event
 from .models import Account, RefreshToken, RoleCapability, UserSession
 
@@ -85,6 +86,9 @@ def issue_access_token(account: Account, session_id: str) -> tuple[str, int]:
         "scope": "user",
         "roles": roles,
         "caps": capabilities_for(roles),
+        # Roadmap 2.12: the only way age leaves identity (no age event).
+        "is_minor": is_minor(account.date_of_birth),
+        "age_band": age_band(account.date_of_birth),
         "iss": settings.JWT_ISSUER,
         "aud": settings.JWT_AUDIENCE,
         "iat": int(now.timestamp()),
@@ -133,6 +137,27 @@ def _revoke_family(family_id, *, reason: str) -> None:
     )
 
 
+#: Siblings a spent token may still mint inside the grace window.
+REUSE_GRACE_MAX_SUCCESSORS = 3
+
+
+def _within_reuse_grace(token: RefreshToken) -> bool:
+    """True for a benign replay: spent seconds ago, nothing downstream used yet."""
+    grace = settings.REFRESH_REUSE_GRACE_SECONDS
+    if grace <= 0 or token.used_at is None or token.revoked_at is not None:
+        return False
+    if token.used_at < _now() - timedelta(seconds=grace) or token.expires_at <= _now():
+        return False
+    if token.session.revoked_at is not None or not token.account.is_usable:
+        return False
+    successors = list(
+        RefreshToken.objects.filter(rotated_from=token).values_list("used_at", "revoked_at")
+    )
+    if len(successors) >= REUSE_GRACE_MAX_SUCCESSORS:
+        return False
+    return all(used is None and revoked is None for used, revoked in successors)
+
+
 def rotate_refresh_token(raw: str) -> tuple[Account, UserSession, str, int, str]:
     """Validate + rotate a refresh token.
 
@@ -150,6 +175,22 @@ def rotate_refresh_token(raw: str) -> tuple[Account, UserSession, str, int, str]
             )
         except RefreshToken.DoesNotExist as exc:
             raise TokenError("Invalid refresh token.") from exc
+
+        # A lost response: the token was rotated moments ago, but the client
+        # never stored the successor (a tab closed or reloaded mid-refresh).
+        # Within the grace window, and only while no successor has been used,
+        # issue a sibling instead of treating it as theft.
+        if _within_reuse_grace(current):
+            current.session.last_seen_at = _now()
+            current.session.save(update_fields=["last_seen_at"])
+            new_raw, _ = create_refresh_token(
+                current.account, current.session, family_id=current.family_id, rotated_from=current
+            )
+            access, ttl = issue_access_token(current.account, str(current.session_id))
+            emit_security_event(
+                current.account, "refresh_reuse_within_grace", {"family_id": str(current.family_id)}
+            )
+            return current.account, current.session, access, ttl, new_raw
 
         # Reuse / replay detection. The revocation must commit, so raise afterwards.
         if current.revoked_at is not None or current.used_at is not None:

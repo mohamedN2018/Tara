@@ -165,7 +165,7 @@ input[type="radio"] {
     @apply border-brand-600 bg-brand-600 text-white hover:text-white dark:border-brand-500 dark:bg-brand-600 dark:hover:text-white;
   }
   .badge {
-    @apply inline-flex min-w-5 items-center justify-center rounded-full bg-accent-500 px-1.5 text-[11px] font-bold leading-5 text-white;
+    @apply inline-flex min-w-5 items-center justify-center rounded-full bg-accent-700 px-1.5 text-[11px] font-bold leading-5 text-white;
   }
   .nav-item {
     @apply flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold text-gray-600 transition duration-150 hover:bg-gray-200/60 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-800/70 dark:hover:text-white;

@@ -124,8 +124,12 @@ HEALTH_TARGETS = {
     "ads": "http://ads:8000/readyz/",
     "realtime": "http://realtime:8000/readyz/",
     "admin": "http://admin:8000/readyz/",
-    "bff": os.getenv("ADMIN_BFF_READY_URL", "http://bff:8090/readyz"),
 }
+# The BFF runs only in the dev stack. Set ADMIN_BFF_READY_URL empty (the Dokploy
+# stack does) to stop polling it, or health would stay "degraded" for good.
+_BFF_READY_URL = os.getenv("ADMIN_BFF_READY_URL", "http://bff:8090/readyz").strip()
+if _BFF_READY_URL:
+    HEALTH_TARGETS["bff"] = _BFF_READY_URL
 HEALTH_TIMEOUT = float(os.getenv("ADMIN_HEALTH_TIMEOUT", "2.0"))
 HEALTH_POLL_SECONDS = float(os.getenv("ADMIN_HEALTH_POLL_SECONDS", "30"))
 # Health snapshots kept per service; older ones are deleted on each poll.

@@ -112,8 +112,10 @@ export const identityService = {
     const { data } = await api.delete<{ data: SecurityOverview }>("/me/phone/");
     return data.data;
   },
-  async verifyEmail(token: string): Promise<void> {
-    await api.post("/auth/verify-email/", { token });
+  /** Returns the verified account's id (for the "Complete your profile" step). */
+  async verifyEmail(token: string): Promise<string | undefined> {
+    const { data } = await api.post<{ data?: { id?: string } }>("/auth/verify-email/", { token });
+    return data?.data?.id;
   },
   async forgotPassword(email: string): Promise<void> {
     await api.post("/auth/password/forgot/", { email });
