@@ -2,6 +2,7 @@ import { createI18n } from "vue-i18n";
 
 import ar from "./ar";
 import en from "./en";
+import { applyBrandIcons } from "@/lib/brand";
 
 export type Locale = "en" | "ar";
 
@@ -46,6 +47,7 @@ export function setLocale(locale: Locale) {
   }
   document.documentElement.lang = locale;
   document.documentElement.dir = locale === "ar" ? "rtl" : "ltr";
+  applyBrandIcons(locale);
   // The service worker can't read localStorage: leave the language where it can.
   if ("caches" in window) {
     caches

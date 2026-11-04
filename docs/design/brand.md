@@ -34,15 +34,22 @@ backgrounds of content areas.
 
 ## Logo
 
-The mark is a geometric T: a slanted bar, a blade-like stem and a four-point spark.
+The logo follows the interface language: **Arabic gets the Arabic wordmark "تارا"; every
+other language gets the English "T" mark.** The source artwork is in `frontend/Desgin/`.
 
-- Component: `src/components/brand/TaraLogo.vue`
-  - `variant`: `full` (mark plus wordmark), `mark` or `icon` (app tile)
-  - `tone`: `gradient`, `white` (on photos or the gradient) or `ink` (single colour)
-- Files: `public/icons/tara-mark.svg` (favicon), `tara-icon.svg` (app icon), and the
-  PNGs at 192, 512, maskable 512, apple-touch 180 and notification badge 96.
-- Keep clear space of at least half the mark's height around it. Don't recolour the
-  gradient stops, rotate the mark or set the wordmark in another font.
+- Component: `src/components/brand/TaraLogo.vue`, with the language logic in `src/lib/brand.ts`.
+  - `variant`: `full` (Arabic: the wordmark; other languages: T mark plus "Tara"), `mark`, or `icon` (the app icon).
+  - `tone`: `gradient` (colour artwork) or `white` (on photos or the gradient). `ink` uses the colour artwork.
+  - `size`: the logo height in pixels.
+- In-app artwork, exported from `frontend/Desgin/`, trimmed and resized: `src/assets/brand/tara-ar.png`, `tara-ar-white.png`, `tara-en.png` and `tara-en-white.png`.
+- Icons in `public/icons/`:
+  - `favicon-ar.png`, `favicon-en.png`: the tab icon, swapped by language in `theme-init.js` and `applyBrandIcons()`.
+  - `icon-ar-*`, `icon-en-*`: app icons.
+  - `icon-192/512.png`, `icon-maskable-512.png`: the manifest (Arabic, the default language).
+  - `apple-touch-icon(-en).png`.
+  - `badge-96.png`: a monochrome notification badge.
+- To regenerate after the artwork changes, run `scripts/brand/export_logos.py` (usage in its header).
+- Keep clear space of at least half the logo's height around it. Don't recolour or rotate it.
 
 ## Type
 

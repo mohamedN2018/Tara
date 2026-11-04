@@ -1,7 +1,7 @@
 // Tara service worker: offline shell and Web Push. Plain JS: it is served as is.
 // API calls, sockets and signed media URLs always go to the network.
 
-const VERSION = "v2";
+const VERSION = "v3";
 const SHELL_CACHE = `tara-shell-${VERSION}`;
 const ASSET_CACHE = `tara-assets-${VERSION}`;
 const PREFS_CACHE = "tara-prefs"; // written by the app: src/i18n/index.ts
@@ -10,7 +10,8 @@ const SHELL_FILES = [
   "/index.html",
   "/manifest.webmanifest",
   "/theme-init.js",
-  "/icons/tara-mark.svg",
+  "/icons/favicon-ar.png",
+  "/icons/favicon-en.png",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
 ];

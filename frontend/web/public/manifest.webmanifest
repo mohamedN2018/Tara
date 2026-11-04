@@ -11,12 +11,6 @@
   "theme_color": "#0B0B1F",
   "icons": [
     {
-      "src": "/icons/tara-icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any"
-    },
-    {
       "src": "/icons/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
