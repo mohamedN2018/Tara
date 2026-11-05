@@ -810,7 +810,8 @@ services:
     volumes:
       - ./infra/minio:/init:ro
     depends_on: {minio: {condition: service_healthy}}
-    mem_limit: 64m
+    # 64m got the mc client OOM-killed (exit 137) on a redeploy.
+    mem_limit: 256m
 
   # Video transcoder (5.2): ffmpeg (in the media image) on queue media.transcode,
   # one job at a time, 2 CPUs and 1.5 GB at most, non-root, minimal environment.
