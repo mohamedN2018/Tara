@@ -267,6 +267,7 @@ x-post-env: &post-env
   # story.* (stories, 1.9). Upgrading: deploy once with false, consumers first.
   POST_EMIT_STORY_EVENTS: ${POST_EMIT_STORY_EVENTS:-true}
   POST_EMIT_HIDE_EVENTS: ${POST_EMIT_HIDE_EVENTS:-true}
+  POST_EMIT_SAVE_EVENTS: ${POST_EMIT_SAVE_EVENTS:-true}
   POST_REPORT_RATE: ${POST_REPORT_RATE:-20/hour}
 
 x-feed-env: &feed-env
@@ -283,6 +284,13 @@ x-feed-env: &feed-env
   FEED_DB_USER: ${FEED_DB_USER:-feed}
   FEED_DEBUG: ${FEED_DEBUG:-false}
   FEED_SECRET_KEY: ${FEED_SECRET_KEY:?}
+  # Tara Intelligence: serve tokens attribute telemetry (feed only, never a shared secret).
+  INTEL_SERVE_TOKEN_SECRET: ${INTEL_SERVE_TOKEN_SECRET:?}
+  # Production refuses synthetic accounts (readiness fails while any is registered).
+  INTEL_ACCEPT_SYNTHETIC: "false"
+  INTEL_SYNTHETIC_IN_RANKING: "false"
+  INTEL_SIGNAL_RETENTION_DAYS: ${INTEL_SIGNAL_RETENTION_DAYS:-30}
+  INTEL_ENGAGEMENT_RETENTION_DAYS: ${INTEL_ENGAGEMENT_RETENTION_DAYS:-30}
 
 x-chat-env: &chat-env
   <<: *common-env
@@ -936,6 +944,20 @@ services:
     environment: *feed-env
     depends_on: {feed: {condition: service_healthy}}
     mem_limit: 192m
+
+  # Telemetry ingestion (Tara Intelligence WP 2.4): the edge routes /api/v1/feed/signals
+  # here. It must never migrate, so this is the one merged env block (keep it small:
+  # Dokploy passes the expanded compose in one 128 KiB argument).
+  feed-signals:
+    <<: *app
+    networks: {tara: {aliases: [tara-feed-signals]}}
+    image: tara/feed
+    pull_policy: never   # built by the service of the same image
+    command: ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--timeout", "30", "--access-logfile", "-"]
+    environment: {<<: *feed-env, RUN_MIGRATIONS: "false"}
+    depends_on: {feed: {condition: service_healthy}}
+    mem_limit: 256m
+    healthcheck: *healthcheck
 
   chat-consumer:
     <<: *app

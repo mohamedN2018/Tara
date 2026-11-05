@@ -147,6 +147,8 @@ export interface FeedItem {
   reason: string;
   snapshot: Record<string, unknown>;
   post_created_at: string;
+  /** Tara Intelligence serve token (WP 2.3): sent back with this item's signals, never read. */
+  st?: string;
 }
 
 export interface SponsoredSlot {

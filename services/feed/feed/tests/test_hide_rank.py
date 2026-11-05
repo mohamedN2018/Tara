@@ -341,6 +341,9 @@ def test_item_shape_is_unchanged_in_every_mode(client_for, world):
             "score",
             "snapshot",
             "post_created_at",
+            # Tara Intelligence WP 2.3 (additive): the serve token that attributes
+            # this item's telemetry (intel/ranking/serve_tokens.py).
+            "st",
         }
         assert {"next_cursor", "has_more"} <= set(body["page"])
 

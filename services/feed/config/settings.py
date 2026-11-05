@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "django_prometheus",
     "feed",
+    "intel",
 ]
 
 MIDDLEWARE = [
@@ -81,8 +82,12 @@ FEED_HOT_CACHE = "hot"
 FEED_RANK_WINDOW = 500  # newest rows ranked per session; older ones follow in latest order
 FEED_RANK_SESSION_TTL = 1800  # seconds
 
+_THROTTLING = api_throttling()
+# Telemetry batches (Tara Intelligence, 02 section 12.2): 60 per minute per account.
+_THROTTLING["DEFAULT_THROTTLE_RATES"]["intel_signals"] = "60/min"
+
 REST_FRAMEWORK = {
-    **api_throttling(),
+    **_THROTTLING,
     "DEFAULT_AUTHENTICATION_CLASSES": ["tara_common.auth.JWTAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_PAGINATION_CLASS": "tara_common.pagination.CursorPagination",
@@ -127,7 +132,28 @@ CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", not bool(RABBITM
 CELERY_BEAT_SCHEDULE = {
     "drain-outbox": {"task": "tara_events.publish_outbox", "schedule": 2.0},
     "purge-events": {"task": "tara_events.purge_events", "schedule": 3600.0},
+    # Tara Intelligence (WP 2.2): partitions 7 days ahead and retention drops
+    # (idempotent, so hourly is safe and survives a beat restart), batch dedupe purge.
+    "intel-partitions": {"task": "intel.maintain_partitions", "schedule": 3600.0},
+    "intel-purge-signal-batches": {"task": "intel.purge_signal_batches", "schedule": 3600.0},
 }
+
+# ---- Tara Intelligence (docs/intelligence) ---------------------------------------
+TARA_ENV = os.getenv("TARA_ENV", "development").strip().lower()
+# Signs the serve tokens that attribute telemetry. Feed only: never FEED_SECRET_KEY
+# or INTERNAL_JWT_SECRET. Required in production; dev derives a key and warns.
+INTEL_SERVE_TOKEN_SECRET = os.getenv("INTEL_SERVE_TOKEN_SECRET", "")
+# Rows from accounts in intel_synthetic_account are stored as synthetic/test only
+# when this is true (dev, staging). Production: false, and the table must be empty.
+INTEL_ACCEPT_SYNTHETIC = env_bool("INTEL_ACCEPT_SYNTHETIC", False)
+# Dev only: let synthetic actors move post_stats / affinity / reaction_state.
+INTEL_SYNTHETIC_IN_RANKING = env_bool("INTEL_SYNTHETIC_IN_RANKING", False)
+# Raw telemetry partitions are dropped after this many days (owner decision: 30).
+INTEL_SIGNAL_RETENTION_DAYS = max(1, int(os.getenv("INTEL_SIGNAL_RETENTION_DAYS", "30")))
+# Per-user-item engagement (weekly partitions): 30 days, configurable from 7 to 30.
+INTEL_ENGAGEMENT_RETENTION_DAYS = min(
+    30, max(7, int(os.getenv("INTEL_ENGAGEMENT_RETENTION_DAYS", "30")))
+)
 
 CORS_ALLOWED_ORIGINS = env_list("FEED_CORS_ORIGINS", "http://localhost:5173")
 CORS_ALLOW_CREDENTIALS = True

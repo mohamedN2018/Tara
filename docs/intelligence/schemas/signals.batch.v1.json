@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/intel/signals.batch.v1.json",
+  "title": "POST /api/v1/feed/signals/ batch v1",
+  "description": "One telemetry batch from the web tracker (docs/intelligence/03 section 4.4). At most 50 events and 32 KB. Attribution (surface, config version, variant, source, position) is stamped by the server from the serve token `st`; a client `cfg` or `variant` is accepted and ignored, any other unknown field is refused (a batch-level one refuses the batch, an event-level one drops that event). The server answers 202 with {accepted, duplicate, rejected: {reason: n}}; a retried batch_id is a no-op. watch_ms is the cumulative watch time of one play (play_index, named on video_start).",
+  "type": "object",
+  "required": ["batch_id", "session_id", "events"],
+  "properties": {
+    "batch_id": {"type": "string", "format": "uuid"},
+    "session_id": {"type": "string", "format": "uuid", "description": "Per tab; rotates after 30 min idle."},
+    "cfg": {"description": "Ignored."},
+    "variant": {"description": "Ignored."},
+    "events": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "required": ["id", "t", "item", "ts"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "t": {
+            "enum": [
+              "feed_impression",
+              "post_open",
+              "video_start",
+              "video_progress",
+              "video_complete",
+              "video_rewatch",
+              "video_skip",
+              "reel_view",
+              "profile_visit"
+            ]
+          },
+          "item": {
+            "type": "string",
+            "pattern": "^(post|reel|video|profile|page|group|listing):[0-9a-fA-F-]{36}$"
+          },
+          "ts": {"type": "string", "format": "date-time", "description": "Client time; outside +-24 h of the server it is clamped (flag ts_clamped)."},
+          "st": {"type": "string", "maxLength": 512, "description": "The serve token the item came with."},
+          "surface": {"enum": ["home", "reels", "video", "groups", "marketplace", "discovery", "profile", "search", "link"], "description": "Hint, kept only for unattributed events and only profile, search, groups or link."},
+          "pos": {"type": "integer", "minimum": 0, "maximum": 10000, "description": "The feed position of an impression, when the client knows it. Optional: a served item's position comes from its serve token, and a card seen off a ranked surface (profile, group, search) has none."},
+          "watch_ms": {"type": "integer", "minimum": 0},
+          "pos_ms": {"type": "integer", "minimum": 0},
+          "play_index": {"type": "integer", "minimum": 1, "maximum": 1000},
+          "cfg": {"description": "Ignored."},
+          "variant": {"description": "Ignored."}
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

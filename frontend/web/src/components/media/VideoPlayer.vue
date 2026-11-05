@@ -10,6 +10,8 @@ import { AlertTriangle, Loader2, Maximize, Minimize, Pause, Play, VideoOff, Volu
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
+import type { SignalSurface } from "@/lib/signals";
+import { bindWatchSignals } from "@/lib/videoSignals";
 import { viaStorageProxy } from "@/services/media";
 import { isProcessing, type Playback, videoService } from "@/services/video";
 
@@ -21,10 +23,17 @@ type HlsInstance = {
   on(event: string, cb: (event: string, data: { fatal?: boolean; type?: string }) => void): void;
 };
 
-const props = withDefaults(defineProps<{ mediaId: string; pollMs?: number; label?: string }>(), {
-  pollMs: 3000,
-  label: "",
-});
+const props = withDefaults(
+  defineProps<{
+    mediaId: string;
+    pollMs?: number;
+    label?: string;
+    /** Tara Intelligence (WP 2.8): `video:<post id>` / `reel:<post id>`; no signals without it. */
+    signalItem?: string | null;
+    signalSurface?: SignalSurface;
+  }>(),
+  { pollMs: 3000, label: "", signalItem: null, signalSurface: "link" },
+);
 const emit = defineEmits<{ status: [status: string] }>();
 const { t, te } = useI18n();
 
@@ -275,7 +284,20 @@ watch(
   () => void retry(),
 );
 
+// Watch signals from what really played (start, progress, complete, rewatch, skip).
+let unbindSignals: (() => void) | null = null;
+watch(
+  [el, () => props.signalItem, () => props.signalSurface],
+  ([video, item, surface]) => {
+    unbindSignals?.();
+    unbindSignals = video && item ? bindWatchSignals(video, { item, surface }) : null;
+  },
+  { immediate: true },
+);
+
 onBeforeUnmount(() => {
+  unbindSignals?.();
+  unbindSignals = null;
   disposed = true;
   if (pollTimer) clearTimeout(pollTimer);
   observer?.disconnect();

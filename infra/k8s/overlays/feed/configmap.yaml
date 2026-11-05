@@ -16,3 +16,8 @@ data:
   LOG_LEVEL: "INFO"
   LOG_FORMAT: "json"
   ADS_INTERNAL_URL: "http://ads.tara.svc.cluster.local:8000"
+  # Tara Intelligence (INTEL_SERVE_TOKEN_SECRET comes from the secret).
+  INTEL_ACCEPT_SYNTHETIC: "false"
+  INTEL_SYNTHETIC_IN_RANKING: "false"
+  INTEL_SIGNAL_RETENTION_DAYS: "30"
+  INTEL_ENGAGEMENT_RETENTION_DAYS: "30"

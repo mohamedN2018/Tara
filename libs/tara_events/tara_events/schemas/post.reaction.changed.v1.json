@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/post.reaction.changed.v1.json",
+  "title": "post.reaction.changed v1 payload",
+  "description": "An existing reaction switched type (Tara Intelligence WP 2.6, D8), so consumers keep per-type counts in step. Notifies nobody. post.reacted / post.unreacted still mark the add and the removal.",
+  "type": "object",
+  "properties": {
+    "post_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reactor": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "author_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "from_type": {
+      "type": "string",
+      "enum": [
+        "like",
+        "love",
+        "care",
+        "haha",
+        "wow",
+        "sad",
+        "angry"
+      ]
+    },
+    "to_type": {
+      "type": "string",
+      "enum": [
+        "like",
+        "love",
+        "care",
+        "haha",
+        "wow",
+        "sad",
+        "angry"
+      ]
+    }
+  },
+  "required": [
+    "post_id",
+    "reactor",
+    "author_id",
+    "from_type",
+    "to_type"
+  ],
+  "additionalProperties": false
+}

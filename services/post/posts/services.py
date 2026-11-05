@@ -988,6 +988,33 @@ def _bump_type_count(post_id, reaction_type: str, delta: int) -> None:
         )
 
 
+def _change_reaction(post: Post, reaction: PostReaction, viewer_id: str, to_type: str) -> None:
+    """Switch an existing reaction to another type, in the caller's transaction.
+
+    ``post.reaction.changed`` (Tara Intelligence WP 2.6, D8) keeps the per-type
+    counts of consumers in step; a change notifies nobody. Ids and enums only.
+    """
+    from_type = reaction.type
+    if from_type == to_type:
+        return
+    _bump_type_count(post.id, from_type, -1)
+    _bump_type_count(post.id, to_type, +1)
+    reaction.type = to_type
+    reaction.save(update_fields=["type"])
+    events.emit(
+        "post.reaction.changed",
+        subject_id=str(post.id),
+        payload={
+            "post_id": str(post.id),
+            "reactor": str(viewer_id),
+            "author_id": str(post.author_id),
+            "from_type": from_type,
+            "to_type": to_type,
+        },
+        actor_id=str(viewer_id),
+    )
+
+
 def react(viewer_id: str, post_id: str, reaction_type: str) -> PostReaction:
     """Add or change the viewer's reaction. Only a new reaction notifies anyone."""
     if reaction_type not in REACTION_TYPES:
@@ -998,11 +1025,7 @@ def react(viewer_id: str, post_id: str, reaction_type: str) -> PostReaction:
             PostReaction.objects.select_for_update().filter(post=post, account_id=viewer_id).first()
         )
         if reaction is not None:
-            if reaction.type != reaction_type:
-                _bump_type_count(post.id, reaction.type, -1)
-                _bump_type_count(post.id, reaction_type, +1)
-                reaction.type = reaction_type
-                reaction.save(update_fields=["type"])
+            _change_reaction(post, reaction, viewer_id, reaction_type)
             return reaction
         try:
             with transaction.atomic():
@@ -1011,11 +1034,7 @@ def react(viewer_id: str, post_id: str, reaction_type: str) -> PostReaction:
                 )
         except IntegrityError:  # a concurrent first reaction won; treat this as a change
             reaction = PostReaction.objects.select_for_update().get(post=post, account_id=viewer_id)
-            if reaction.type != reaction_type:
-                _bump_type_count(post.id, reaction.type, -1)
-                _bump_type_count(post.id, reaction_type, +1)
-                reaction.type = reaction_type
-                reaction.save(update_fields=["type"])
+            _change_reaction(post, reaction, viewer_id, reaction_type)
             return reaction
         Post.objects.filter(id=post.id).update(reaction_count=F("reaction_count") + 1)
         _bump_type_count(post.id, reaction_type, +1)
@@ -1601,19 +1620,77 @@ def _default_collection(owner_id: str) -> SavedCollection:
     )
 
 
-def save_item(owner_id: str, item_type: str, item_id: str) -> SavedItem:
-    collection = _default_collection(owner_id)
-    item, _ = SavedItem.objects.get_or_create(
-        owner_id=owner_id,
-        item_type=item_type,
-        item_id=item_id,
-        defaults={"collection": collection},
+# Saved item types that are posts (a video is a post id too); only these emit.
+SAVE_EVENT_ITEM_TYPES = ("post", "video")
+
+
+def save_event_post(owner_id: str, item_type: str, item_id: str) -> Post | None:
+    """The post a new save would announce with ``post.saved``, or ``None``.
+
+    Only with ``POST_EMIT_SAVE_EVENTS`` on, only for posts (never a page or a
+    listing), and only for a post the saver may see, so nobody can inflate the
+    save counts of a post by saving its id blind. Called before the write
+    transaction (it may ask graph).
+    """
+    if not settings.POST_EMIT_SAVE_EVENTS or item_type not in SAVE_EVENT_ITEM_TYPES:
+        return None
+    post = Post.objects.filter(id=item_id).first()
+    if post is None or not visible_to_viewer(str(owner_id), post):
+        return None
+    return post
+
+
+def emit_save_event(event_type: str, owner_id: str, item_type: str, post: Post) -> None:
+    """``post.saved`` / ``post.unsaved`` (Tara Intelligence WP 2.6, owner decision 6).
+
+    Ids only: neither the collection id nor its name is ever sent. Consumed by
+    feed only. Call inside the transaction that wrote or deleted the save.
+    """
+    owner = str(owner_id)
+    events.emit(
+        event_type,
+        subject_id=str(post.id),
+        payload={
+            "post_id": str(post.id),
+            "account_id": owner,
+            "author_id": str(post.author_id),
+            "item_type": item_type,
+            "saved_at": timezone.now().isoformat(),
+        },
+        actor_id=owner,
+        partition_key=f"account:{owner}",
     )
+
+
+def save_item(owner_id: str, item_type: str, item_id: str) -> SavedItem:
+    announce = save_event_post(owner_id, item_type, item_id)
+    with transaction.atomic():
+        collection = _default_collection(owner_id)
+        item, created = SavedItem.objects.get_or_create(
+            owner_id=owner_id,
+            item_type=item_type,
+            item_id=item_id,
+            defaults={"collection": collection},
+        )
+        if created and announce is not None:
+            emit_save_event("post.saved", owner_id, item_type, announce)
     return item
 
 
 def unsave_item(owner_id: str, item_type: str, item_id: str) -> None:
-    SavedItem.objects.filter(owner_id=owner_id, item_type=item_type, item_id=item_id).delete()
+    """Always allowed: it only removes the owner's own row. ``post.unsaved`` is
+    emitted only when a save was really removed and its post still exists."""
+    with transaction.atomic():
+        deleted, _ = SavedItem.objects.filter(
+            owner_id=owner_id, item_type=item_type, item_id=item_id
+        ).delete()
+        if (
+            deleted
+            and settings.POST_EMIT_SAVE_EVENTS
+            and item_type in SAVE_EVENT_ITEM_TYPES
+            and (post := Post.objects.filter(id=item_id).only("id", "author_id").first())
+        ):
+            emit_save_event("post.unsaved", owner_id, item_type, post)
 
 
 def list_saved(owner_id: str, item_type: str | None = None):

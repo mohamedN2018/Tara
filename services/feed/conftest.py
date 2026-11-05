@@ -38,6 +38,19 @@ def _isolated_settings(settings):
     from django.core.cache import caches
 
     caches["hot"].clear()
+    # Tara Intelligence: production defaults unless a test opts in; per-process
+    # caches never carry state from one test's (rolled-back) transaction to the next.
+    settings.TARA_ENV = "development"
+    settings.INTEL_ACCEPT_SYNTHETIC = False
+    settings.INTEL_SYNTHETIC_IN_RANKING = False
+    settings.INTEL_SIGNAL_RETENTION_DAYS = 30
+    settings.INTEL_ENGAGEMENT_RETENTION_DAYS = 30
+    settings.INTEL_SERVE_TOKEN_SECRET = "test-intel-serve-token-secret-0123456789abcdef"
+    from intel import origin
+    from intel.signals import partitions
+
+    origin.clear_cache()
+    partitions.forget_known()
     return settings
 
 

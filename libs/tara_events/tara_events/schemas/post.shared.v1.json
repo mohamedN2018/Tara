@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/post.shared.v1.json",
+  "title": "post.shared v1 payload",
+  "description": "The sharer created share_post_id pointing at post_id (always the first post of a chain). Schema added by Tara Intelligence WP 2.6 (D9).",
+  "type": "object",
+  "properties": {
+    "post_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "share_post_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "sharer": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "author_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "post_id",
+    "share_post_id",
+    "sharer",
+    "author_id"
+  ],
+  "additionalProperties": false
+}

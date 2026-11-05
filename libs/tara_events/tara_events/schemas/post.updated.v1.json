@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/post.updated.v1.json",
+  "title": "post.updated v1 payload",
+  "description": "A post was edited, or shown again (an overturned removal, a reactivated author). Carries the full hashtag list and the search fields of post.created. Schema added by Tara Intelligence WP 2.6 (D9).",
+  "type": "object",
+  "properties": {
+    "post_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "author_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "audience": {
+      "type": "string",
+      "enum": [
+        "public",
+        "friends",
+        "followers",
+        "only_me",
+        "group"
+      ]
+    },
+    "comment_policy": {
+      "type": "string",
+      "enum": [
+        "everyone",
+        "friends",
+        "off"
+      ]
+    },
+    "excerpt": {
+      "type": "string",
+      "maxLength": 280
+    },
+    "hashtags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 80
+      }
+    },
+    "new_mentions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 30
+      }
+    },
+    "new_tagged_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "text",
+        "image",
+        "video",
+        "link",
+        "share",
+        "poll",
+        "reel"
+      ]
+    },
+    "author_type": {
+      "type": "string",
+      "enum": [
+        "user",
+        "page"
+      ]
+    },
+    "media_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "post_id",
+    "author_id",
+    "audience",
+    "comment_policy",
+    "excerpt",
+    "hashtags",
+    "new_mentions",
+    "new_tagged_ids",
+    "type",
+    "author_type",
+    "media_ids",
+    "created_at"
+  ],
+  "additionalProperties": false
+}

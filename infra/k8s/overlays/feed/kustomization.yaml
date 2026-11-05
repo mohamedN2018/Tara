@@ -13,6 +13,7 @@ resources:
   - secret.example.yaml
   - migrate-job.yaml
   - ingress.yaml
+  - signals-deployment.yaml
 
 components:
   - ../../components/worker
@@ -24,6 +25,9 @@ images:
     newTag: "1.0.0"
 
 patches:
+  # Only the API deployment: an unnamed target also appended a bogus "app" container
+  # (no image) to feed-signals, the consumer and the worker.
   - path: patch-deployment.yaml
     target:
       kind: Deployment
+      name: service

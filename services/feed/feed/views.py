@@ -1,10 +1,18 @@
-"""Feed API: the viewer's home feed in four modes, plus hide and snooze (2A, 1.7)."""
+"""Feed API: the viewer's home feed in four modes, plus hide and snooze (2A, 1.7).
+
+Every post-menu action handled here also writes one Tara Intelligence signal row
+(``source=server``) in the request's transaction (WP 2.5); undoing it writes the
+inverse row. Items carry ``st``, a serve token that attributes telemetry (WP 2.3).
+"""
 
 from __future__ import annotations
 
 from django.utils import timezone
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
+from intel.models import EventType, ItemType
+from intel.ranking import serve_tokens
+from intel.signals.server import record as menu_signal
 from rest_framework import generics, status
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -15,6 +23,7 @@ from tara_common.pagination import CursorPagination
 from tara_common.responses import data_response
 
 from . import feedback, ranking, services
+from .models import AuthorSnooze, PostHide
 from .serializers import (
     AuthorSnoozeSerializer,
     FeedItemSerializer,
@@ -68,6 +77,10 @@ class HomeFeedView(generics.ListAPIView):
         else:
             response = super().get(request, *args, **kwargs)
         if response.status_code == 200:
+            if mode != "for_you":  # ranked pages are stamped in _ranked (they know positions)
+                serve_tokens.stamp_home_items(
+                    request.user.account_id, response.data["data"], mode, offset=None, ranked=False
+                )
             response.data["mode"] = mode
             # Blend one sponsored slot into the first page; never block organic content.
             if request.query_params.get("cursor") is None:
@@ -81,14 +94,23 @@ class HomeFeedView(generics.ListAPIView):
         token = request.query_params.get("cursor")
         try:
             if token is None:
-                page = ranking.first_page(viewer, size, timezone.now())
+                page, offset = ranking.first_page(viewer, size, timezone.now()), 0
             else:
+                cursor = ranking.decode_cursor(token)
                 page = ranking.next_page(viewer, token, size)
+                offset = int(cursor.get("o", 0)) if cursor.get("k") == "r" else None
         except ranking.InvalidCursor as exc:
             raise NotFound("Invalid cursor.") from exc
+        # The first page is ranked even when its session could not be stored; a later
+        # page is ranked only while it reads the session (not the latest-order fallback).
+        ranked = offset is not None and (token is None or not page.fallback)
+        data = FeedItemSerializer(page.items, many=True).data
+        serve_tokens.stamp_home_items(
+            viewer, data, "for_you", offset=offset if ranked else None, ranked=ranked
+        )
         return Response(
             {
-                "data": FeedItemSerializer(page.items, many=True).data,
+                "data": data,
                 "page": {
                     "next_cursor": page.next_cursor,
                     "prev_cursor": None,
@@ -111,9 +133,11 @@ class HideView(APIView):
     def post(self, request):
         body = HideRequestSerializer(data=request.data)
         body.is_valid(raise_exception=True)
-        hide = feedback.hide_post(
-            request.user.account_id, body.validated_data["post_id"], body.validated_data["reason"]
-        )
+        viewer, post_id = request.user.account_id, body.validated_data["post_id"]
+        was_hidden = PostHide.objects.filter(account_id=viewer, post_id=post_id).exists()
+        hide = feedback.hide_post(viewer, post_id, body.validated_data["reason"])
+        if not was_hidden:  # a repeat or a new reason is the same hide, not a new action
+            menu_signal(viewer, EventType.POST_HIDE, ItemType.POST, post_id, hide.author_id)
         return data_response(PostHideSerializer(hide).data, status=status.HTTP_201_CREATED)
 
 
@@ -122,7 +146,11 @@ class UnhideView(APIView):
 
     @extend_schema(responses={204: None}, tags=["feed"])
     def delete(self, request, post_id):
-        feedback.unhide_post(request.user.account_id, post_id)
+        viewer = request.user.account_id
+        hide = PostHide.objects.filter(account_id=viewer, post_id=post_id).first()
+        feedback.unhide_post(viewer, post_id)
+        if hide is not None:
+            menu_signal(viewer, EventType.POST_UNHIDE, ItemType.POST, post_id, hide.author_id)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -135,7 +163,9 @@ class SnoozeView(APIView):
     def post(self, request):
         body = SnoozeRequestSerializer(data=request.data)
         body.is_valid(raise_exception=True)
-        snooze = feedback.snooze_author(request.user.account_id, body.validated_data["author_id"])
+        viewer, author_id = request.user.account_id, body.validated_data["author_id"]
+        snooze = feedback.snooze_author(viewer, author_id)
+        menu_signal(viewer, EventType.AUTHOR_SNOOZE, ItemType.PROFILE, author_id, author_id)
         return data_response(AuthorSnoozeSerializer(snooze).data, status=status.HTTP_201_CREATED)
 
 
@@ -144,7 +174,11 @@ class UnsnoozeView(APIView):
 
     @extend_schema(responses={204: None}, tags=["feed"])
     def delete(self, request, author_id):
-        feedback.unsnooze_author(request.user.account_id, author_id)
+        viewer = request.user.account_id
+        was_snoozed = AuthorSnooze.objects.filter(account_id=viewer, author_id=author_id).exists()
+        feedback.unsnooze_author(viewer, author_id)
+        if was_snoozed:
+            menu_signal(viewer, EventType.AUTHOR_UNSNOOZE, ItemType.PROFILE, author_id, author_id)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

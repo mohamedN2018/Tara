@@ -66,6 +66,8 @@ class PostState(models.Model):
     excerpt = models.TextField(blank=True, default="")
     hidden = models.BooleanField(default=False)
     hidden_at = models.DateTimeField(null=True, blank=True)
+    # The newest event's hashtags (Tara Intelligence WP 2.7); null = not known yet.
+    hashtags = models.JSONField(null=True, blank=True)
 
     class Meta:
         db_table = "post_state"

@@ -4,6 +4,7 @@ import { computed, ref } from "vue";
 import { api, apiError, isAuthFailure } from "@/lib/api";
 import { releasePush, resumePush } from "@/lib/pwa";
 import { browserSessionEnded, forgetSignIn, rememberSignIn } from "@/lib/rememberMe";
+import { resetSignals } from "@/lib/signals";
 import { capabilitiesFromClaims, opensConsole } from "@/lib/capabilities";
 import { jwtClaims, tokenStore } from "@/lib/tokens";
 import { clearBlockedCards } from "@/lib/blockedCards";
@@ -81,6 +82,7 @@ export const useAuthStore = defineStore("auth", () => {
   /** Forget the previous account's cached names, recent searches and comparisons. */
   function clearAccountData(nextOwner: string | null = null) {
     useDirectoryStore().clear();
+    resetSignals(); // queued signals and serve tokens belong to the previous account
     clearBlockedCards();
     clearMediaCache();
     try {

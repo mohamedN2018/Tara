@@ -11,6 +11,7 @@ urlpatterns = [
     path("readyz/", health.readiness, name="readiness"),
     path("startupz/", health.readiness, name="startup"),
     path("", include("django_prometheus.urls")),
+    path("api/v1/", include("intel.urls")),
     path("api/v1/", include("feed.urls")),
     path("api/v1/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/v1/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),

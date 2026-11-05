@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/reel.state.changed.v1.json",
+  "title": "reel.state.changed v1 payload",
+  "description": "The reels reconcile job changed a reel's publish_state (Tara Intelligence WP 2.6, D15): hidden because its video is gone, failed or bound elsewhere, or restored. Exactly one per change; a dry run emits none. Ids and enums only.",
+  "type": "object",
+  "properties": {
+    "post_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "author_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "from_state": {
+      "type": "string",
+      "enum": [
+        "published",
+        "media_missing",
+        "media_failed",
+        "media_elsewhere"
+      ]
+    },
+    "to_state": {
+      "type": "string",
+      "enum": [
+        "published",
+        "media_missing",
+        "media_failed",
+        "media_elsewhere"
+      ]
+    }
+  },
+  "required": [
+    "post_id",
+    "author_id",
+    "from_state",
+    "to_state"
+  ],
+  "additionalProperties": false
+}

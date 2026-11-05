@@ -89,9 +89,12 @@ export const reelsService = {
     return data.data;
   },
 
-  /** Counted once per viewer per day by the server; the author's never count. */
-  async view(id: string): Promise<{ view_count: number; counted: boolean }> {
-    const { data } = await api.post<{ data: { view_count: number; counted: boolean } }>(`/reels/${id}/view/`);
+  /** Counted once per viewer per day by the server, after at least 1 s of real
+   * play (`watchMs`, D12); the author's never count. */
+  async view(id: string, watchMs: number): Promise<{ view_count: number; counted: boolean }> {
+    const { data } = await api.post<{ data: { view_count: number; counted: boolean } }>(`/reels/${id}/view/`, {
+      watch_ms: Math.max(0, Math.round(watchMs)),
+    });
     return data.data;
   },
 

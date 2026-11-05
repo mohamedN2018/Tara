@@ -13,17 +13,21 @@ This job asks media about the videos of live reels, oldest-checked first, and:
 - video ready on this post again -> back to ``published``.
 
 Hiding is a ``publish_state`` change, never a delete, so a mistake (or media
-recovering) is repaired by the next run. Media down: the run stops and changes
-nothing more; the next tick carries on. Idempotent and safe beside another run.
+recovering) is repaired by the next run. Every change records one
+``reel.state.changed`` (ids and states only) in the same transaction as the
+update (Tara Intelligence WP 2.6, D15); a dry run records nothing. Media
+down: the run stops and changes nothing more; the next tick carries on.
+Idempotent and safe beside another run.
 """
 
 from __future__ import annotations
 
 import logging
 
+from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
-from posts import media_client
+from posts import events, media_client
 from posts.models import Audience
 
 from tara_common.exceptions import TaraAPIError
@@ -107,7 +111,36 @@ def reconcile(*, limit: int = DEFAULT_LIMIT, dry_run: bool = False) -> dict:
                     extra={"reel_id": str(reel.post_id), "from": reel.publish_state, "to": state},
                 )
             if not dry_run:
-                Reel.objects.filter(pk=reel.pk).update(
-                    publish_state=state, reconciled_at=timezone.now()
-                )
+                _save_state(reel, state)
     return stats
+
+
+def _save_state(reel: Reel, state: str) -> None:
+    """Store the checked state; a change also records ``reel.state.changed``.
+
+    The row is re-read under a lock so a concurrent run that already moved it
+    records nothing (exactly one event per change).
+    """
+    with transaction.atomic():
+        current = (
+            Reel.objects.select_for_update()
+            .filter(pk=reel.pk)
+            .values_list("publish_state", flat=True)
+            .first()
+        )
+        if current is None:
+            return
+        Reel.objects.filter(pk=reel.pk).update(publish_state=state, reconciled_at=timezone.now())
+        if current != state:
+            events.emit(
+                "reel.state.changed",
+                subject_id=str(reel.post_id),
+                payload={
+                    "post_id": str(reel.post_id),
+                    "author_id": str(reel.author_id),
+                    "from_state": current,
+                    "to_state": state,
+                },
+                actor_id=None,
+                partition_key=f"author:{reel.author_id}",
+            )

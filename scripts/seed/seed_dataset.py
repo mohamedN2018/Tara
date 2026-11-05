@@ -23,6 +23,12 @@ Standard library only; Pillow (images, AVIF) and openpyxl (xlsx price menus)
 are used when installed, and ffprobe (local) when on PATH, for the dry-run plan.
 Whether a video becomes a reel is decided by the server after transcoding
 (``POST /reels/eligibility/``), never by the file name or the local probe.
+
+Never production (D16): the script exits when ``TARA_ENV=production`` or when
+``--api`` points at the production domain (``DOMAIN`` in the environment or in
+``.env_prod``), whatever the other flags say. Every seed account is registered
+as synthetic with Tara Intelligence (label ``seed-*``), so its activity is kept
+apart from real analytics (docs/intelligence/02 section 12.3).
 """
 
 from __future__ import annotations
@@ -71,6 +77,15 @@ DEFAULT_PASSWORD = os.getenv("TARA_SEED_PASSWORD", "Seed-Tara-2026!")
 LEGAL_VERSION = os.getenv("TARA_LEGAL_VERSION", "2026-11-04-draft")
 SEED = 2026
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1", "0.0.0.0", "host.docker.internal"}  # noqa: S104
+LOCAL_SUFFIXES = (".localhost", ".local", ".test")
+# Env files that describe the production deployment: only their DOMAIN key is read.
+PRODUCTION_ENV_FILES = (REPO / ".env_prod", REPO / ".env.production")
+# Tara Intelligence synthetic registry (WP 2.9): the label decides the origin,
+# `seed-*` = synthetic. Feed's command takes the ids as `--ids`, in chunks.
+SYNTHETIC_LABEL = "seed-dataset"
+SYNTHETIC_FILE = "synthetic-accounts.json"
+FEED_REGISTER_SYNTHETIC = ("python", "manage.py", "intel_register_synthetic", "--label")
+SYNTHETIC_CHUNK = 200  # ids per call (keeps the command line short on Windows)
 
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".avif", ".gif"}
 VIDEO_EXT = {".mp4", ".mov", ".webm"}
@@ -2866,6 +2881,8 @@ class Seeder:
         self.phase_accounts()
         if not self.users:
             raise SystemExit("no accounts could be created; is the stack up?")
+        if self.args.synthetic_label:
+            register_synthetic(self.state, self.args.synthetic_label, self.args.api)
         if "graph" in phases:
             self.phase_graph()
         else:
@@ -2902,6 +2919,57 @@ class Seeder:
                 _, a, b = k.split(":")
                 self.friends[a].add(b)
                 self.friends[b].add(a)
+
+
+# ---- synthetic registry (Tara Intelligence WP 2.9) ------------------------------------
+def synthetic_ids(state: State) -> list[str]:
+    return sorted({a["id"] for a in state.data["accounts"].values() if a.get("id")})
+
+
+def register_synthetic(state: State, label: str, api: str, runner=subprocess.run) -> bool:
+    """Register every seed account as synthetic with feed.
+
+    The ids also go to ``.seed-state/synthetic-accounts.json`` first, so a run
+    against a stack whose feed does not have the command yet can be registered
+    later with ``--register-synthetic``. Only for a local stack (the command
+    runs through ``docker compose exec``); otherwise the file and the command to
+    run are printed. Returns whether feed confirmed the registration.
+    """
+    if not label.startswith("seed-"):
+        raise SystemExit(f"synthetic label {label!r} must start with 'seed-' (it sets the origin)")
+    ids = synthetic_ids(state)
+    if not ids:
+        return False
+    path = state.folder / SYNTHETIC_FILE
+    path.write_text(
+        json.dumps({"label": label, "count": len(ids), "account_ids": ids}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    command = [*FEED_REGISTER_SYNTHETIC, label]
+    if not _is_local((urllib.parse.urlparse(api).hostname or "").lower()):
+        log(f"synthetic: {len(ids)} ids in {path}; on that stack run feed's: {' '.join(command)}")
+        return False
+    compose = ["docker", "compose", "-f", str(REPO / "infra/compose/docker-compose.yml")]
+    if (REPO / ".env").exists():
+        compose += ["--env-file", str(REPO / ".env")]
+    for start in range(0, len(ids), SYNTHETIC_CHUNK):
+        chunk = ids[start : start + SYNTHETIC_CHUNK]
+        try:
+            result = runner(
+                [*compose, "exec", "-T", "feed", *command, "--ids", *chunk],
+                text=True,
+                capture_output=True,
+                timeout=180,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            log(f"synthetic: not registered ({type(exc).__name__}); ids kept in {path}")
+            return False
+        if result.returncode != 0:
+            tail = (result.stderr or result.stdout or "").strip().splitlines()[-1:] or [""]
+            log(f"synthetic: feed refused ({tail[0][:160]}); ids kept in {path}")
+            return False
+    log(f"synthetic: {len(ids)} seed accounts registered as {label}")
+    return True
 
 
 # ---- reporting ----------------------------------------------------------------------
@@ -2971,10 +3039,52 @@ def dry_run(cat: Catalog, args) -> None:
     print(f"\naccounts planned: {args.accounts}, pages: {len(PAGES)}, groups: {len(GROUPS)}")
 
 
+def _is_local(host: str) -> bool:
+    return host in LOCAL_HOSTS or host.endswith(LOCAL_SUFFIXES)
+
+
+def _env_file_value(path: Path, key: str) -> str:
+    """One key of a dotenv file, or "" (the file's other values are never read)."""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        name, sep, value = line.strip().partition("=")
+        if sep and name.strip() == key:
+            return value.split(" #")[0].strip().strip("'\"")
+    return ""
+
+
+def production_domains(env=None, env_files=PRODUCTION_ENV_FILES) -> set[str]:
+    """The production host names: ``DOMAIN`` from the environment and the
+    production env files. Local names never count (a dev ``DOMAIN=localhost``)."""
+    env = os.environ if env is None else env
+    found = {env.get("DOMAIN", "")} | {_env_file_value(Path(f), "DOMAIN") for f in env_files}
+    out = set()
+    for raw in found:
+        host = raw.strip().lower().rstrip(".")
+        if "://" in host:
+            host = (urllib.parse.urlparse(host).hostname or "").lower()
+        if host and not _is_local(host):
+            out.add(host)
+    return out
+
+
+def refuse_production(api: str, env=None, env_files=PRODUCTION_ENV_FILES) -> None:
+    """Exit unless this is clearly not production (D16). No flag overrides it."""
+    env = os.environ if env is None else env
+    if env.get("TARA_ENV", "").strip().lower() == "production":
+        raise SystemExit("refusing to seed: TARA_ENV=production (the seed is for dev and staging)")
+    host = (urllib.parse.urlparse(api).hostname or "").lower().rstrip(".")
+    for domain in production_domains(env, env_files):
+        if host == domain or host.endswith("." + domain):
+            raise SystemExit(f"refusing to seed {host}: it is the production domain")
+
+
 def check_target(api: str, allow_remote: bool) -> None:
     host = (urllib.parse.urlparse(api).hostname or "").lower()
-    local = host in LOCAL_HOSTS or host.endswith((".localhost", ".local", ".test"))
-    if local:
+    if _is_local(host):
         return
     if not allow_remote:
         raise SystemExit(f"refusing to seed {host}: only a local/dev API unless --allow-remote")
@@ -3014,8 +3124,19 @@ def main(argv=None) -> int:
     ap.add_argument("--namespace", default="tara-seed-v1", help="idempotency-key namespace")
     ap.add_argument("--allow-remote", action="store_true")
     ap.add_argument("--report", action="store_true", help="print counts from the manifest")
+    ap.add_argument(
+        "--synthetic-label",
+        default=SYNTHETIC_LABEL,
+        help="Tara Intelligence registry label for the seed accounts (seed-*; empty: skip)",
+    )
+    ap.add_argument(
+        "--register-synthetic",
+        action="store_true",
+        help="only register the accounts already in the manifest as synthetic, then exit",
+    )
     ap.add_argument("--verbose", "-v", action="store_true")
     args = ap.parse_args(argv)
+    refuse_production(args.api)  # before anything else, even a dry run (D16)
     args.phases = set(args.phases.split(","))
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -3024,6 +3145,9 @@ def main(argv=None) -> int:
     if args.report:
         print(json.dumps(report(state), ensure_ascii=False, indent=2))
         return 0
+    if args.register_synthetic:
+        label = args.synthetic_label or SYNTHETIC_LABEL
+        return 0 if register_synthetic(state, label, args.api) else 1
     catalog = scan_sources(args.source)
     if args.dry_run:
         dry_run(catalog, args)

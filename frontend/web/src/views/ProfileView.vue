@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { X } from "lucide-vue-next";
-import { computed, defineAsyncComponent, reactive, ref } from "vue";
+import { computed, defineAsyncComponent, reactive, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import AppShell from "@/components/layout/AppShell.vue";
@@ -19,6 +19,7 @@ import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import { useFocusTrap } from "@/lib/useFocusTrap";
+import { itemKey, track } from "@/lib/signals";
 import { useProfile } from "@/lib/useProfile";
 import type { Post, Profile } from "@/types";
 
@@ -31,6 +32,12 @@ const SellerShop = defineAsyncComponent(() => import("@/components/marketplace/S
 
 const { t } = useI18n();
 const p = reactive(useProfile());
+// Tara Intelligence signals (WP 2.8): a visit to someone else's profile, once a day.
+watch(
+  () => (p.profile && !p.isSelf ? p.profile.account_id : null),
+  (id) => id && track({ t: "profile_visit", item: itemKey("profile", id), surface: "profile" }),
+  { immediate: true },
+);
 
 const lightbox = ref<string | null>(null);
 const lightboxEl = ref<HTMLElement | null>(null);

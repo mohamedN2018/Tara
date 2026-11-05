@@ -164,7 +164,8 @@ def test_a_post_i_cannot_see_cannot_be_saved(client_for, monkeypatch):
     assert not SavedItem.objects.filter(owner_id=me).exists()
 
 
-def test_saves_emit_no_events(client_for):
+def test_saves_emit_no_events_with_the_flag_off(client_for, settings):
+    settings.POST_EMIT_SAVE_EVENTS = False  # Tara Intelligence WP 2.6: on by default
     post = services.create_post(_acct(), body="p", audience="public")
     before = OutboxEvent.objects.count()
     me = client_for(_acct())

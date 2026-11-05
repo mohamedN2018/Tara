@@ -96,6 +96,10 @@ POST_EMIT_STORY_EVENTS = env_bool("POST_EMIT_STORY_EVENTS", True)
 # rollout; feed's and search's consumers ship first. Off: deactivation emits
 # post.deleted, which feed cannot undo on reactivation.
 POST_EMIT_HIDE_EVENTS = env_bool("POST_EMIT_HIDE_EVENTS", True)
+# post.saved / post.unsaved (Tara Intelligence WP 2.6, owner decision 6): ids
+# only, consumed by feed only. Two-release rollout: feed's consumer ships first;
+# off turns the emission off without touching saves themselves.
+POST_EMIT_SAVE_EVENTS = env_bool("POST_EMIT_SAVE_EVENTS", True)
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Tara Post API",

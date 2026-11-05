@@ -358,14 +358,18 @@ def test_views_count_once_per_viewer_per_day_never_the_author(client_for, media_
     graph.befriend(author, viewer)
     reel_id = _reel(client_for, media_stub, author, audience="friends")
     url = reverse("reels:reel-view", args=[reel_id])
-    first = client_for(viewer).post(url).json()["data"]
+    watched = {"watch_ms": 1500}  # D12: at least 1 s of play
+    first = client_for(viewer).post(url, watched, format="json").json()["data"]
     assert first == {"view_count": 1, "counted": True}
-    assert client_for(viewer).post(url).json()["data"] == {"view_count": 1, "counted": False}
-    assert client_for(author).post(url).json()["data"] == {"view_count": 1, "counted": False}
+    again = client_for(viewer).post(url, watched, format="json").json()["data"]
+    assert again == {"view_count": 1, "counted": False}
+    mine = client_for(author).post(url, watched, format="json").json()["data"]
+    assert mine == {"view_count": 1, "counted": False}
     # Someone who may not see it cannot count a view (and learns nothing).
-    assert client_for(stranger).post(url).status_code == 404
+    assert client_for(stranger).post(url, watched, format="json").status_code == 404
     # The next day counts again.
     ReelView.objects.update(day=timezone.now().date() - timedelta(days=1))
-    assert client_for(viewer).post(url).json()["data"] == {"view_count": 2, "counted": True}
+    later = client_for(viewer).post(url, watched, format="json").json()["data"]
+    assert later == {"view_count": 2, "counted": True}
     data = client_for(viewer).get(reverse("reels:reel-detail", args=[reel_id])).json()["data"]
     assert data["reel"]["view_count"] == 2 and data["reel"]["viewed_today"] is True

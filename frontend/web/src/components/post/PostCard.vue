@@ -26,7 +26,7 @@ import {
 } from "lucide-vue-next";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import type { RouteLocationRaw } from "vue-router";
+import { type RouteLocationRaw, useRoute } from "vue-router";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import VideoPlayer from "@/components/media/VideoPlayer.vue";
@@ -54,9 +54,11 @@ import NameHoverCard from "@/components/social/NameHoverCard.vue";
 import { AUDIENCE_ICON, audienceLabel } from "@/lib/audiences";
 import { downloadMedia } from "@/lib/downloadMedia";
 import { relativeTime } from "@/lib/format";
+import { itemKey, surfaceForRoute, track } from "@/lib/signals";
 import { applyReactionChange } from "@/lib/reactionCounts";
 import { hasLink } from "@/lib/richText";
 import { useEscapeKey } from "@/lib/useEscapeKey";
+import { useImpression } from "@/lib/useImpression";
 import { useMediaViewer } from "@/lib/useMediaViewer";
 import { useRelationshipPrefs } from "@/lib/useRelationshipPrefs";
 import type { FeedReason } from "@/services/feed";
@@ -494,6 +496,20 @@ function toggleComments() {
   if (showComments.value) commentsMounted.value = true;
 }
 
+// Tara Intelligence signals (WP 2.8): a card half on screen for 1 s is an
+// impression; opening its comments or its media is an open. Ids only.
+const route = useRoute();
+const signalSurface = computed(() => surfaceForRoute(route?.name));
+const cardEl = ref<HTMLElement | null>(null);
+useImpression(cardEl, () => ({ item: itemKey("post", props.post.id), surface: signalSurface.value }));
+const signalOpen = () => track({ t: "post_open", item: itemKey("post", props.post.id), surface: signalSurface.value });
+watch(showComments, (open) => open && signalOpen());
+watch(
+  () => viewer.index.value,
+  (index) => index !== null && signalOpen(),
+);
+const videoItem = computed(() => itemKey(props.post.type === "reel" ? "reel" : "video", props.post.id));
+
 // Inline preview (plan 08, 2B): up to two comments the post serializer sends as
 // `top_comments` (2C), which the server filters for blocks. A server without the
 // field sends none, and only the comment box shows.
@@ -621,7 +637,7 @@ const iconCls = "h-5 w-5 shrink-0 text-gray-600 dark:text-gray-300";
 </script>
 
 <template>
-  <article class="card p-4 sm:p-5" :data-post-id="post.id">
+  <article ref="cardEl" class="card p-4 sm:p-5" :data-post-id="post.id">
     <header class="flex items-center gap-3">
       <RouterLink :to="authorTo" :aria-label="authorDisplay">
         <UserAvatar :name="authorDisplay" :media-id="avatarId" :size="44" />
@@ -863,7 +879,13 @@ const iconCls = "h-5 w-5 shrink-0 text-gray-600 dark:text-gray-300";
     <!-- Media run edge to edge, as on the reference. -->
     <div v-if="mediaIds.length" class="-mx-4 sm:-mx-5">
       <!-- A video post (5.7): one transcoded video, played through the media service's token-checked HLS. -->
-      <VideoPlayer v-if="post.type === 'video' || post.type === 'reel'" :media-id="mediaIds[0]" class="!rounded-none" />
+      <VideoPlayer
+        v-if="post.type === 'video' || post.type === 'reel'"
+        :media-id="mediaIds[0]"
+        :signal-item="videoItem"
+        :signal-surface="signalSurface"
+        class="!rounded-none"
+      />
       <!-- A reel (5.8) in the feed: played here, and one tap away from the reels viewer. -->
       <RouterLink
         v-if="post.type === 'reel'"

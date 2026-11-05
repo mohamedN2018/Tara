@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 
+from intel import origin
+
 from tara_events import on_event
 from tara_events.envelope import EventEnvelope
 
@@ -84,6 +86,7 @@ def on_post_updated(event: EventEnvelope) -> None:
         p.get("audience"),
         p.get("media_ids"),
         when=services.occurred_at(event.occurred_at),
+        hashtags=p.get("hashtags"),
     )
 
 
@@ -132,10 +135,22 @@ def on_relationship_unfavorited(event: EventEnvelope) -> None:
 
 
 # ---- 1.7: engagement and affinity for the ranking -------------------------------
+# Tara Intelligence WP 2.9: a registered synthetic or test actor moves none of
+# post_stats, affinity, reaction_state or comment_state unless
+# INTEL_SYNTHETIC_IN_RANKING=true (dev, where the whole dataset is synthetic).
+
+
+def _synthetic_actor(event: EventEnvelope, *actors) -> bool:
+    if origin.excluded_from_ranking(*actors):
+        logger.debug("synthetic actor kept out of ranking", extra={"event_type": event.event_type})
+        return True
+    return False
 
 
 def _reaction(event: EventEnvelope, active: bool) -> None:
     p = event.payload
+    if _synthetic_actor(event, p.get("reactor")):
+        return
     readmodels.set_reaction(
         p["post_id"],
         p.get("reactor"),
@@ -158,6 +173,8 @@ def on_post_unreacted(event: EventEnvelope) -> None:
 
 def _comment_created(event: EventEnvelope) -> None:
     p = event.payload
+    if _synthetic_actor(event, p.get("author")):
+        return
     readmodels.set_comments(
         p["post_id"],
         [p.get("comment_id")],
@@ -182,6 +199,8 @@ def on_comment_replied(event: EventEnvelope) -> None:
 def on_comment_deleted(event: EventEnvelope) -> None:
     """A deleted comment (a root takes its replies) stops counting for the post."""
     p = event.payload
+    if _synthetic_actor(event, p.get("author_id")):
+        return
     readmodels.set_comments(
         p["post_id"],
         p.get("removed_ids") or [p.get("comment_id")],
@@ -196,6 +215,8 @@ def on_comment_deleted(event: EventEnvelope) -> None:
 def on_comment_restored(event: EventEnvelope) -> None:
     """An overturned moderation removal counts the comments it brings back again."""
     p = event.payload
+    if _synthetic_actor(event, event.actor_id):  # actor_id is the comment's author
+        return
     readmodels.set_comments(
         p["post_id"],
         p.get("restored_ids") or [p.get("comment_id")],
@@ -207,6 +228,8 @@ def on_comment_restored(event: EventEnvelope) -> None:
 @on_event("post.shared")
 def on_post_shared(event: EventEnvelope) -> None:
     p = event.payload
+    if _synthetic_actor(event, p.get("sharer")):
+        return
     readmodels.bump_stats(p["post_id"], shares=1)
     readmodels.bump_affinity(p.get("sharer"), p.get("author_id"), 1)
 

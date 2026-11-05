@@ -1,0 +1,3 @@
+# Known failures accepted by scripts/intel/baseline.sh, one per line:
+#   <suite> <test id>  # owner: one-line cause
+# A failure not listed here makes the baseline fail.

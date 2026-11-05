@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/post.created.v1.json",
+  "title": "post.created v1 payload",
+  "description": "A post was published: on create, or when a draft or a scheduled post goes out (post-service emit_created). Schema added by Tara Intelligence WP 2.6 (D9) for the payload as emitted; additive fields go into properties.",
+  "type": "object",
+  "properties": {
+    "post_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "author_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "author_type": {
+      "type": "string",
+      "enum": [
+        "user",
+        "page"
+      ]
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "text",
+        "image",
+        "video",
+        "link",
+        "share",
+        "poll",
+        "reel"
+      ]
+    },
+    "audience": {
+      "type": "string",
+      "enum": [
+        "public",
+        "friends",
+        "followers",
+        "only_me",
+        "group"
+      ]
+    },
+    "excerpt": {
+      "type": "string",
+      "maxLength": 280
+    },
+    "media_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    },
+    "hashtags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 80
+      }
+    },
+    "mentions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 30
+      }
+    },
+    "shared_post_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "group_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "approval_state": {
+      "type": "string",
+      "enum": [
+        "approved",
+        "pending"
+      ]
+    },
+    "tagged_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uuid"
+      }
+    }
+  },
+  "required": [
+    "post_id",
+    "author_id",
+    "author_type",
+    "type",
+    "audience",
+    "excerpt",
+    "media_ids",
+    "hashtags",
+    "mentions",
+    "shared_post_id",
+    "created_at",
+    "group_id",
+    "approval_state",
+    "tagged_ids"
+  ],
+  "additionalProperties": false
+}

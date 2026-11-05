@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/post.deleted.v1.json",
+  "title": "post.deleted v1 payload",
+  "description": "A post was deleted by its author, a page moderator or the group's staff (by=group, with group_id), or removed by moderation. Schema added by Tara Intelligence WP 2.6 (D9).",
+  "type": "object",
+  "properties": {
+    "post_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "by": {
+      "type": "string",
+      "enum": [
+        "group"
+      ]
+    },
+    "group_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "post_id"
+  ],
+  "additionalProperties": false
+}

@@ -178,11 +178,11 @@ async function unlike(reel: Reel) {
   }
 }
 
-async function onWatched(reel: Reel) {
+async function onWatched(reel: Reel, watchMs: number) {
   if (watched.has(reel.id)) return;
   watched.add(reel.id);
   try {
-    const { view_count } = await reelsService.view(reel.id);
+    const { view_count } = await reelsService.view(reel.id, watchMs);
     patch(reel.id, { reel: { ...reel.reel, view_count, viewed_today: true } });
   } catch {
     // A view is best effort.

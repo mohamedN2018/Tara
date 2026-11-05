@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/reel.viewed.v1.json",
+  "title": "reel.viewed v1 payload",
+  "description": "A counted reel view: one per viewer per reel per UTC day (the ReelView dedupe), never the author, and only after at least 1 s of play (D12). Tara Intelligence WP 2.6. Ids only.",
+  "type": "object",
+  "properties": {
+    "post_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "viewer_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "author_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "day": {
+      "type": "string",
+      "format": "date"
+    }
+  },
+  "required": [
+    "post_id",
+    "viewer_id",
+    "author_id",
+    "day"
+  ],
+  "additionalProperties": false
+}

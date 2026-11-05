@@ -22,6 +22,14 @@ spec:
     - host: api.tara.example
       http:
         paths:
+          # Telemetry first (Tara Intelligence WP 2.4): the feed-signals role.
+          - path: /api/v1/feed/signals
+            pathType: Prefix
+            backend:
+              service:
+                name: signals
+                port:
+                  number: 80
           - path: /api/v1/feed
             pathType: Prefix
             backend:

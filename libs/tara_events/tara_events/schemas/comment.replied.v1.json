@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/comment.replied.v1.json",
+  "title": "comment.replied v1 payload",
+  "description": "A reply, flattened onto the thread root: parent_id is the root, reply_to_id the comment answered and parent_author_id its author. Schema added by Tara Intelligence WP 2.6 (D9).",
+  "type": "object",
+  "properties": {
+    "post_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "comment_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "author": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "parent_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "parent_author_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "reply_to_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "root_author_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "uuid"
+    },
+    "post_author_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "mentions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 30
+      }
+    }
+  },
+  "required": [
+    "post_id",
+    "comment_id",
+    "author",
+    "parent_id",
+    "parent_author_id",
+    "reply_to_id",
+    "root_author_id",
+    "post_author_id",
+    "mentions"
+  ],
+  "additionalProperties": false
+}

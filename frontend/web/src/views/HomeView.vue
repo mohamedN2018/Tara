@@ -23,6 +23,7 @@ import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
 import StoriesRail from "@/components/stories/StoriesRail.vue";
+import { itemKey, noteServed } from "@/lib/signals";
 import { realtime } from "@/lib/ws";
 import { FEED_MODES, type FeedMode, type FeedReason, feedService, type HideReason, hydrateFeed } from "@/services/feed";
 import { graphService } from "@/services/graph";
@@ -111,7 +112,10 @@ async function load(initial = false) {
     if (page.modeApplied) modesSupported.value = true;
     const known = new Set(initial ? [] : posts.value.map((p) => p.id));
     const fresh = page.posts.filter((p) => !known.has(p.id));
+    const offset = initial ? 0 : posts.value.length;
     posts.value = initial ? fresh : [...posts.value, ...fresh];
+    // Signals (WP 2.8): each served item's token and feed position, for its impression.
+    fresh.forEach((p, i) => noteServed(itemKey("post", p.id), { st: page.serveTokens?.[p.id], pos: offset + i, surface: "home" }));
     reasons.value = initial ? { ...page.reasons } : { ...reasons.value, ...page.reasons };
     if (initial) {
       sponsored.value = page.sponsored;
@@ -338,6 +342,7 @@ async function addFromTop(only: Set<string> | null) {
     if (!items.length) return;
     const live = await hydrateFeed(items);
     if (run !== generation) return;
+    items.forEach((i) => noteServed(itemKey("post", i.post_id), { st: i.st, surface: "home" }));
     const fresh = live.filter((p) => !known(p.id) && !snoozedAuthors.value.has(p.author_id));
     pending.value = [...fresh, ...pending.value];
   } catch {

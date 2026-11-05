@@ -22,6 +22,7 @@ import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
 import { httpStatus } from "@/lib/api";
+import { itemKey, track } from "@/lib/signals";
 import { mediaService } from "@/services/media";
 import { canEditPage, canModeratePosts, canPostAs, type Page, pageService } from "@/services/pages";
 import { usePageDirectoryStore } from "@/stores/pageDirectory";
@@ -62,6 +63,8 @@ async function load() {
     const p = await pageService.get(String(route.params.handle));
     page.value = p;
     pageDirectory.remember(p);
+    // Tara Intelligence signals (WP 2.8): a page visit, once a day (never the page's own team).
+    if (!p.my_role) track({ t: "profile_visit", item: itemKey("page", p.id), surface: "profile" });
     void loadSaved();
     void loadPosts(true);
     if (route.query.edit === "1") {

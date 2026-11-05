@@ -31,7 +31,8 @@ const emit = defineEmits<{
   comments: [reel: Reel];
   share: [reel: Reel];
   menu: [reel: Reel];
-  watched: [reel: Reel];
+  /** The reel played for at least 1 s (watch time in ms): the parent counts the view. */
+  watched: [reel: Reel, watchMs: number];
 }>();
 
 const { t, locale } = useI18n();
@@ -152,7 +153,9 @@ function setPlayer(id: string, el: unknown) {
 
 function onPlaying(reel: Reel) {
   pausedIds.value = { ...pausedIds.value, [reel.id]: false };
-  if (current.value?.id === reel.id) emit("watched", reel);
+}
+function onWatched(reel: Reel, watchMs: number) {
+  if (current.value?.id === reel.id) emit("watched", reel, watchMs);
 }
 function onPaused(reel: Reel, index: number) {
   // A reel scrolled away is paused too; only the active one shows the pause badge.
@@ -215,7 +218,9 @@ defineExpose({ goTo, active });
               :active="i === active"
               :cover="covers[reel.id] ?? null"
               :label="t('reels.byAuthor', { name: name(reel) })"
+              :reel-id="reel.id"
               @playing="onPlaying(reel)"
+              @watched="onWatched(reel, $event)"
               @paused="onPaused(reel, i)"
             />
             <div v-else class="h-full w-full bg-gradient-to-br from-gray-950 via-brand-950 to-gray-900" aria-hidden="true" />

@@ -250,6 +250,20 @@ def progressive(self, media_id: str) -> None:
     _run_step(self, media_id, "progressive", body)
 
 
+def probe_fields(video_meta: dict | None) -> dict:
+    """``has_audio`` and ``fps`` for ``media.processed`` (Tara Intelligence WP 2.6b),
+    from the probe stored at prepare time; a field the probe lacks is left out
+    (both are optional in the schema), never guessed."""
+    probe = (video_meta or {}).get("probe") or {}
+    out: dict = {}
+    if isinstance(probe.get("has_audio"), bool):
+        out["has_audio"] = probe["has_audio"]
+    fps = probe.get("fps")
+    if isinstance(fps, (int, float)) and not isinstance(fps, bool) and fps >= 0:
+        out["fps"] = round(float(fps), 3)
+    return out
+
+
 @shared_task(name="media.video.finalize", max_retries=3, **_STEP)
 def finalize(self, media_id: str) -> None:
     """Mark the video ready and record ``media.processed``, exactly once."""
@@ -297,6 +311,7 @@ def finalize(self, media_id: str) -> None:
                 "duration_ms": asset.duration_ms,
                 "width": asset.width,
                 "height": asset.height,
+                **probe_fields(asset.video_meta),
             },
             actor_id=str(asset.owner_id),
         )

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/post.unreacted.v1.json",
+  "title": "post.unreacted v1 payload",
+  "description": "The reactor removed their reaction. Schema added by Tara Intelligence WP 2.6 (D9).",
+  "type": "object",
+  "properties": {
+    "post_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reactor": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reaction_type": {
+      "type": "string",
+      "enum": [
+        "like",
+        "love",
+        "care",
+        "haha",
+        "wow",
+        "sad",
+        "angry"
+      ]
+    },
+    "author_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "post_id",
+    "reactor",
+    "reaction_type",
+    "author_id"
+  ],
+  "additionalProperties": false
+}

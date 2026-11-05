@@ -6,7 +6,10 @@ another account's collection id is 404, never 403. Deleting a collection
 keeps its items: they move back to the default collection. The default
 collection itself can be neither renamed nor deleted.
 
-Saves are private state and emit no events.
+Saves are private state. A new save of a post, and its removal, emit
+``post.saved`` / ``post.unsaved`` with ids only (never the collection), behind
+``POST_EMIT_SAVE_EVENTS`` (Tara Intelligence WP 2.6); moves and collection
+changes emit nothing.
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ from django.db.models import Count
 from tara_common.exceptions import TaraAPIError
 
 from .models import Post, SavedCollection, SavedItem
-from .services import _default_collection
+from .services import _default_collection, emit_save_event, save_event_post
 
 MAX_COLLECTIONS = 100
 NAME_MAX = 80
@@ -116,6 +119,7 @@ def delete_collection(owner_id: str, collection_id) -> None:
 def save_into(owner_id: str, item_type: str, item_id: str, collection_id=None) -> SavedItem:
     """Save an item, or move it when it is saved already. Without a collection
     a new save goes to the default one and an existing save stays where it is."""
+    announce = save_event_post(owner_id, item_type, item_id)
     with transaction.atomic():
         target = own_collection(owner_id, collection_id) if collection_id else None
         item = (
@@ -124,12 +128,14 @@ def save_into(owner_id: str, item_type: str, item_id: str, collection_id=None) -
             .first()
         )
         if item is None:
-            item, _ = SavedItem.objects.get_or_create(
+            item, created = SavedItem.objects.get_or_create(
                 owner_id=owner_id,
                 item_type=item_type,
                 item_id=item_id,
                 defaults={"collection": target or _default_collection(owner_id)},
             )
+            if created and announce is not None:
+                emit_save_event("post.saved", owner_id, item_type, announce)
         if target is not None and item.collection_id != target.id:
             item.collection = target
             item.save(update_fields=["collection"])

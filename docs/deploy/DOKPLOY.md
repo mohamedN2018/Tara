@@ -368,6 +368,7 @@ Some releases add required settings. Add them to Dokploy's Environment panel
 | Step 1 wave A | `ADS_SERVE_TOKEN_SECRET` | `openssl rand -hex 32`. Ad tokens issued before the change stop working (they last 30 minutes). |
 | Step 1 wave A | `ADS_SERVING_ENABLED` | `false`. Paid ads must not serve until payment verification exists. |
 | Fix round 3 | `CHAT_IDENTITY_SECRET` | `openssl rand -hex 32`, different from `INTERNAL_JWT_SECRET` and `ADMIN_IDENTITY_SECRET`. Only chat and identity use it. |
+| Tara Intelligence phase 2 | `INTEL_SERVE_TOKEN_SECRET` | `openssl rand -hex 32`, different from `FEED_SECRET_KEY` and `INTERNAL_JWT_SECRET`. Only feed uses it (signs the serve tokens that attribute telemetry). |
 
 Migrations in that release are additive and run at boot. The search migration
 `0004_purge_nonpublic_hashtags` rebuilds hashtag links from public posts in
@@ -897,6 +898,52 @@ it does not conflict.
   re-checks the current password shares a fixed budget of 5 wrong passwords
   per account per hour (then 429 `throttled`, even for the right password);
   a correct password resets it. Not configurable on purpose.
+
+### Upgrading: Tara Intelligence producer events (WP 2.6 / 2.6b)
+
+- **New variable, optional:** on post `POST_EMIT_SAVE_EVENTS` (default `true`,
+  owner decision 6). A new save of a post emits `post.saved` and its removal
+  `post.unsaved`, ids only (never the collection), consumed by feed only. Set it
+  to `false` to stop both events; saves themselves are unchanged.
+- **Order:** feed's consumer of `post.saved` / `post.unsaved` ships in the same
+  release (see the feed notes below). On an existing install deploy feed first,
+  or deploy once with `POST_EMIT_SAVE_EVENTS=false` and turn it on after.
+- **New events, no flag:** `post.reaction.changed`, `reel.hidden`,
+  `reel.unhidden`, `reel.viewed` and `reel.state.changed` (post), and the
+  optional `has_audio` / `fps` fields in `media.processed`. Additive types: a
+  consumer that does not bind them never sees them.
+- **Behaviour change:** a reel view counts only after at least 1 s of play: the
+  web sends `watch_ms` with `POST /reels/<id>/view/`, and a call without it (an
+  old cached bundle) answers `counted: false`.
+- **No migration.**
+
+### Upgrading: Tara Intelligence telemetry (WP 2.1 to 2.10)
+
+- **New required variable:** `INTEL_SERVE_TOKEN_SECRET` (see the table above).
+  Without it the stack refuses to start (`${INTEL_SERVE_TOKEN_SECRET:?}`), and
+  feed's deploy check `intel.E002` refuses a placeholder or a short value.
+- **Optional:** `INTEL_SIGNAL_RETENTION_DAYS` (default 30) and
+  `INTEL_ENGAGEMENT_RETENTION_DAYS` (default 30, 7 to 30). The compose file pins
+  `INTEL_ACCEPT_SYNTHETIC=false` and `INTEL_SYNTHETIC_IN_RANKING=false`: production
+  never accepts seed data, and feed's `/readyz/` fails (`intel_synthetic`) if
+  `intel_synthetic_account` holds any row.
+- **New container:** `feed-signals` (the feed image, gunicorn, `RUN_MIGRATIONS=false`).
+  The web edge sends `/api/v1/feed/signals` to it (`tara-feed-signals`, body limit
+  64 KB); everything else under `/api/v1/feed` still goes to `feed`. Deploy the
+  new web image together with it: an old edge sends signals to `feed`, which serves
+  them too.
+- **Migrations (feed, additive, run at boot):** `feed.0008_post_state_hashtags`
+  and `intel.0001_initial` (partitioned `intel_signal_event` and
+  `intel_user_item_engagement`, created with partitions from yesterday to 7 days
+  ahead; `feed-worker`'s beat keeps them 7 days ahead and drops those past
+  retention every hour).
+- **New consumers in `feed-consumer`:** `post.reacted` / `post.unreacted`,
+  `post.commented`, `comment.replied`, `post.shared`, `post.saved` / `post.unsaved`,
+  `post.reported`, `user.followed` / `user.unfollowed`, `relationship.muted` /
+  `relationship.unmuted`, `user.blocked` / `user.unblocked` (one signal row each)
+  and `account.deleted` (erases the account's `intel_*` rows, its `redis-hot`
+  sessions and its posts from discovery pools). Consumers ship before producers:
+  deploy feed before turning on `POST_EMIT_SAVE_EVENTS`.
 
 ### Backups
 

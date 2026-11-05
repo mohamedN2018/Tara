@@ -17,7 +17,10 @@ The rules a reel follows, all enforced here:
   own reels, anyone blocked either way, accounts the viewer muted, and reels
   the viewer marked "not interested". Graph down: no friends or follows (fail
   closed: public reels only); mutes unknown are not applied.
-- **Views.** One per viewer per reel per UTC day; the author's are not counted.
+- **Views.** One per viewer per reel per UTC day; the author's are not counted,
+  and neither is a play shorter than ``MIN_VIEW_WATCH_MS`` (D12). A counted
+  view emits ``reel.viewed``; "not interested" emits ``reel.hidden`` /
+  ``reel.unhidden`` (Tara Intelligence WP 2.6). Ids only.
 
 Remote calls (media, graph) run before any write transaction.
 """
@@ -34,7 +37,7 @@ from django.db.models import Exists, F, OuterRef, Q
 from django.utils import timezone
 from gatherings import graph
 from posts import clients as post_clients
-from posts import media_client, pages
+from posts import events, media_client, pages
 from posts import services as post_services
 from posts.clients import Relationship
 from posts.models import Audience, CommentPolicy, Post, PostMedia, PostState
@@ -61,6 +64,11 @@ TAB_FOR_YOU = "for_you"
 TAB_FOLLOWING = "following"
 TABS = (TAB_FOR_YOU, TAB_FOLLOWING)
 _COVER_STATUSES = {"processing", "ready"}
+# A play shorter than this is not a view (D12): the client reports how long the
+# reel really played, and a zero-second scroll-past no longer counts.
+MIN_VIEW_WATCH_MS = 1000
+# The largest watch time a view call may report (a day); larger is a bad request.
+MAX_VIEW_WATCH_MS = 86_400_000
 
 
 def _bad_request(message: str, code: str = "validation_error") -> TaraAPIError:
@@ -409,33 +417,81 @@ def get_reel(viewer_id: str, reel_id) -> Reel:
 # ---- views and "not interested" ----------------------------------------------------
 
 
-def record_view(viewer_id: str, reel_id) -> tuple[Reel, bool]:
-    """Count the viewer once per reel per UTC day (never the author)."""
+def _watch_ms(value) -> int:
+    """The client's watch time for a view call: a whole number of milliseconds."""
+    if value is None or value == "":
+        return 0
+    if isinstance(value, bool):
+        raise _bad_request("watch_ms must be a whole number of milliseconds.")
+    try:
+        watch_ms = int(value)
+    except (TypeError, ValueError):
+        raise _bad_request("watch_ms must be a whole number of milliseconds.") from None
+    if watch_ms < 0 or watch_ms > MAX_VIEW_WATCH_MS or str(watch_ms) != str(value).strip():
+        raise _bad_request("watch_ms must be a whole number of milliseconds.")
+    return watch_ms
+
+
+def _ids(reel: Reel, viewer: str) -> dict:
+    return {"post_id": str(reel.post_id), "viewer_id": viewer, "author_id": str(reel.author_id)}
+
+
+def record_view(viewer_id: str, reel_id, watch_ms=None) -> tuple[Reel, bool]:
+    """Count the viewer once per reel per UTC day (never the author), and only
+    after at least ``MIN_VIEW_WATCH_MS`` of play (D12). A counted view emits
+    ``reel.viewed`` in the same transaction."""
+    played = _watch_ms(watch_ms)
     reel = get_reel(viewer_id, reel_id)
     viewer = str(viewer_id)
-    if viewer == str(reel.author_id):
+    if viewer == str(reel.author_id) or played < MIN_VIEW_WATCH_MS:
         return reel, False
     with transaction.atomic():
-        _, created = ReelView.objects.get_or_create(
-            reel=reel, viewer_id=viewer, day=timezone.now().date()
-        )
+        day = timezone.now().date()
+        _, created = ReelView.objects.get_or_create(reel=reel, viewer_id=viewer, day=day)
         if created:
             Reel.objects.filter(pk=reel.pk).update(view_count=F("view_count") + 1)
+            events.emit(
+                "reel.viewed",
+                subject_id=str(reel.post_id),
+                payload={**_ids(reel, viewer), "day": day.isoformat()},
+                actor_id=viewer,
+                partition_key=f"account:{viewer}",
+            )
     reel.refresh_from_db(fields=["view_count"])
     return reel, created
 
 
 def hide(viewer_id: str, reel_id) -> None:
     reel = get_reel(viewer_id, reel_id)
-    if str(reel.author_id) == str(viewer_id):
+    viewer = str(viewer_id)
+    if str(reel.author_id) == viewer:
         raise _bad_request("You can't hide your own reel.", "reel_own")
-    ReelHide.objects.get_or_create(reel=reel, account_id=str(viewer_id))
+    with transaction.atomic():
+        _, created = ReelHide.objects.get_or_create(reel=reel, account_id=viewer)
+        if created:
+            events.emit(
+                "reel.hidden",
+                subject_id=str(reel.post_id),
+                payload=_ids(reel, viewer),
+                actor_id=viewer,
+                partition_key=f"account:{viewer}",
+            )
 
 
 def unhide(viewer_id: str, reel_id) -> None:
     """Undo "not interested". A reel the viewer can no longer see is 404."""
     reel = get_reel(viewer_id, reel_id)
-    ReelHide.objects.filter(reel=reel, account_id=str(viewer_id)).delete()
+    viewer = str(viewer_id)
+    with transaction.atomic():
+        deleted, _ = ReelHide.objects.filter(reel=reel, account_id=viewer).delete()
+        if deleted:
+            events.emit(
+                "reel.unhidden",
+                subject_id=str(reel.post_id),
+                payload=_ids(reel, viewer),
+                actor_id=viewer,
+                partition_key=f"account:{viewer}",
+            )
 
 
 def views_today(viewer_id: str, reels: list[Reel]) -> set:

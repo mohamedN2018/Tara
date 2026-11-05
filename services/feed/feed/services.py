@@ -65,8 +65,17 @@ def _snapshot(payload: dict) -> dict:
         "audience": payload.get("audience", "public"),
         "excerpt": payload.get("excerpt", ""),
         "media_ids": payload.get("media_ids", []),
+        # Topic signal for Tara Intelligence (WP 2.7). Content, like the excerpt: only
+        # public items and the author's own keep it (``snapshot_for``).
+        "hashtags": _hashtags(payload.get("hashtags")),
         "created_at": payload.get("created_at"),
     }
+
+
+def _hashtags(value) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return sorted({str(t) for t in value if isinstance(t, str) and t})
 
 
 def shows_content(snapshot: dict, recipient_id, author_id) -> bool:
@@ -124,7 +133,13 @@ def occurred_at(value) -> datetime:
 
 
 def record_post_state(
-    post_id: str, when: datetime, *, deleted: bool = False, audience=None, excerpt=None
+    post_id: str,
+    when: datetime,
+    *,
+    deleted: bool = False,
+    audience=None,
+    excerpt=None,
+    hashtags=None,
 ) -> bool:
     """Store a post's newest edit or delete. False when ``when`` is older than
     what is stored: the event is stale and must change nothing."""
@@ -136,6 +151,7 @@ def record_post_state(
                 "deleted": deleted,
                 "audience": audience or "",
                 "excerpt": excerpt or "",
+                "hashtags": _hashtags(hashtags) if hashtags is not None else None,
             },
         )
         if created:
@@ -147,6 +163,8 @@ def record_post_state(
             state.audience = audience
         if excerpt is not None:
             state.excerpt = excerpt
+        if hashtags is not None:
+            state.hashtags = _hashtags(hashtags)
         state.save()
         return True
 
@@ -168,6 +186,7 @@ def fan_out_post(payload: dict) -> int:
             **payload,
             "audience": state.audience or payload.get("audience"),
             "excerpt": state.excerpt,
+            "hashtags": state.hashtags if state.hashtags is not None else payload.get("hashtags"),
         }
     audience = payload.get("audience", "public")
     created_at = parse_datetime(payload.get("created_at") or "") or timezone.now()
@@ -272,6 +291,7 @@ def release_post(payload: dict, when: datetime) -> int:
                 "hidden_at": when,
                 "audience": payload.get("audience") or "",
                 "excerpt": payload.get("excerpt") or "",
+                "hashtags": _hashtags(payload["hashtags"]) if "hashtags" in payload else None,
             },
         )
         if not created:
@@ -283,6 +303,8 @@ def release_post(payload: dict, when: datetime) -> int:
                 state.occurred_at, state.deleted = when, False
                 state.audience = payload.get("audience") or state.audience
                 state.excerpt = payload.get("excerpt", state.excerpt)
+                if "hashtags" in payload:
+                    state.hashtags = _hashtags(payload["hashtags"])
             state.save()
     return fan_out_post(payload)
 
@@ -319,6 +341,7 @@ def update_post_excerpt(
     audience: str | None = None,
     media_ids: list | None = None,
     when: datetime | None = None,
+    hashtags: list | None = None,
 ) -> None:
     """Follow an edit: drop the rows the new audience no longer reaches, refresh the rest.
 
@@ -328,7 +351,9 @@ def update_post_excerpt(
     carries them, else from the author's own item, which always keeps the full
     snapshot; with neither, they stay absent and the client hydrates the media.
     """
-    if not record_post_state(post_id, when or timezone.now(), audience=audience, excerpt=excerpt):
+    if not record_post_state(
+        post_id, when or timezone.now(), audience=audience, excerpt=excerpt, hashtags=hashtags
+    ):
         logger.info("stale post.updated ignored", extra={"post_id": post_id})
         return
     if audience is not None:
@@ -350,6 +375,8 @@ def update_post_excerpt(
             snapshot["audience"] = audience
         if media_ids is not None:
             snapshot["media_ids"] = media_ids
+        if hashtags is not None:
+            snapshot["hashtags"] = _hashtags(hashtags)
         item.snapshot = snapshot_for(snapshot, item.recipient_id, item.author_id)
     FeedItem.objects.bulk_update(items, ["snapshot"], batch_size=500)
 

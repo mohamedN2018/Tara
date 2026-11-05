@@ -15,6 +15,16 @@ x-identity-env: &identity-env
     EMAIL_PORT: "1025"
     IDENTITY_JWT_KEY_DIR: /app/.keys
 
+# Tara Intelligence in dev: the whole dev dataset is synthetic, so seed accounts are
+# accepted and still feed the ranking; raw telemetry is kept 90 days so the 60-day
+# synthetic history survives. Production (docker-compose.dokploy.yml) refuses both.
+x-feed-intel-env: &feed-intel-env
+  INTEL_SERVE_TOKEN_SECRET: ${INTEL_SERVE_TOKEN_SECRET:-dev-only-intel-serve-token-secret-change-me}
+  INTEL_ACCEPT_SYNTHETIC: ${INTEL_ACCEPT_SYNTHETIC:-true}
+  INTEL_SYNTHETIC_IN_RANKING: ${INTEL_SYNTHETIC_IN_RANKING:-true}
+  INTEL_SIGNAL_RETENTION_DAYS: ${INTEL_SIGNAL_RETENTION_DAYS:-90}
+  INTEL_ENGAGEMENT_RETENTION_DAYS: ${INTEL_ENGAGEMENT_RETENTION_DAYS:-30}
+
 services:
   # ---- Backing services ----------------------------------------------------
   postgres:
@@ -580,6 +590,7 @@ services:
     env_file:
       - ../../.env
     environment:
+      <<: *feed-intel-env
       POSTGRES_HOST: postgres
       REDIS_URL: redis://redis:6379/5
       REDIS_HOT_URL: ${REDIS_HOT_URL:-redis://redis-hot:6379/0}
@@ -612,6 +623,7 @@ services:
     env_file:
       - ../../.env
     environment:
+      <<: *feed-intel-env
       POSTGRES_HOST: postgres
       REDIS_URL: redis://redis:6379/5
       RABBITMQ_URL: ${RABBITMQ_URL}
@@ -626,13 +638,46 @@ services:
     env_file:
       - ../../.env
     environment:
+      <<: *feed-intel-env
       POSTGRES_HOST: postgres
       REDIS_URL: redis://redis:6379/5
+      # account.deleted drops the account's ranking sessions and pool members (intel).
+      REDIS_HOT_URL: ${REDIS_HOT_URL:-redis://redis-hot:6379/0}
       RABBITMQ_URL: ${RABBITMQ_URL}
       GRAPH_INTERNAL_URL: http://graph:8000
       RUN_MIGRATIONS: "false"
     depends_on:
       feed: {condition: service_healthy}
+
+  # Telemetry ingestion (Tara Intelligence WP 2.4): same image, its own gunicorn,
+  # never migrates. Traefik sends /api/v1/feed/signals here ahead of feed's router.
+  feed-signals:
+    image: tara/feed:dev
+    profiles: ["core"]
+    command: ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "30", "--access-logfile", "-"]
+    env_file:
+      - ../../.env
+    environment:
+      <<: *feed-intel-env
+      POSTGRES_HOST: postgres
+      REDIS_URL: redis://redis:6379/5
+      REDIS_HOT_URL: ${REDIS_HOT_URL:-redis://redis-hot:6379/0}
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      TARA_JWKS_URL: http://identity:8000/.well-known/jwks.json
+      RUN_MIGRATIONS: "false"
+    depends_on:
+      feed: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.feed-signals.rule=PathPrefix(`/api/v1/feed/signals`)"
+      - traefik.http.routers.feed-signals.priority=200
+      - traefik.http.routers.feed-signals.entrypoints=web
+      - traefik.http.services.feed-signals.loadbalancer.server.port=8000
 
   # ---- Chat service (Phase 4) ----------------------------------------------
   chat:

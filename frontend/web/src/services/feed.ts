@@ -36,6 +36,8 @@ export interface HydratedFeedPage {
   hasMore: boolean;
   /** The server ranked by the requested mode (it echoes `mode`), so the switcher may show. */
   modeApplied: boolean;
+  /** post id -> the serve token it came with (signals attribution, WP 2.8); empty on older servers. */
+  serveTokens?: Record<string, string>;
 }
 
 // Upper bound on fully-filtered pages followed in a row.
@@ -84,7 +86,12 @@ export const feedService = {
     const modeApplied = !!mode && resp.mode === mode;
     let posts = await hydrateFeed(resp.data);
     const reasons: Record<string, FeedReason> = {};
-    const note = (items: FeedItem[]) => items.forEach((i) => (reasons[i.post_id] = i.reason as FeedReason));
+    const serveTokens: Record<string, string> = {};
+    const note = (items: FeedItem[]) =>
+      items.forEach((i) => {
+        reasons[i.post_id] = i.reason as FeedReason;
+        if (typeof i.st === "string" && i.st) serveTokens[i.post_id] = i.st;
+      });
     note(resp.data);
     const sponsored = resp.sponsored ? [resp.sponsored] : [];
     for (let i = 0; i < MAX_EMPTY_PAGES; i++) {
@@ -93,7 +100,7 @@ export const feedService = {
       note(resp.data);
       posts = await hydrateFeed(resp.data);
     }
-    return { posts, reasons, sponsored, nextCursor: resp.page.next_cursor, hasMore: resp.page.has_more, modeApplied };
+    return { posts, reasons, sponsored, nextCursor: resp.page.next_cursor, hasMore: resp.page.has_more, modeApplied, serveTokens };
   },
 
   /** Hide a post from this viewer's feed, with why (201). */

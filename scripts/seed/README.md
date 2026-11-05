@@ -78,6 +78,21 @@ recitation clips). The `داتا` tree is read by its own folder layout.
 | `--workers` | `4` | Parallel API calls |
 | `--dry-run` | | Scan and plan, no network |
 | `--allow-remote` | | Needed for any host that is not local; prints a content-rights warning |
+| `--synthetic-label` | `seed-dataset` | Tara Intelligence registry label of the seed accounts (must start with `seed-`; empty skips) |
+| `--register-synthetic` | | Only register the accounts already in the manifest as synthetic, then exit |
+
+### Never production; synthetic accounts
+
+The script exits before doing anything (even `--dry-run`) when `TARA_ENV=production`
+or when `--api` is the production domain (`DOMAIN` from the environment or from
+`.env_prod`; only that key is read). No flag overrides it.
+
+Right after the accounts phase, every seed account is registered as **synthetic**
+with Tara Intelligence (feed's `intel_register_synthetic --label seed-dataset --ids ...`,
+through `docker compose exec`; feed needs `INTEL_ACCEPT_SYNTHETIC=true`), so its activity never mixes with real
+analytics. The ids are also written to `.seed-state/synthetic-accounts.json`; if
+feed does not have the command yet, register later with
+`python scripts/seed/seed_dataset.py --source x --register-synthetic`.
 
 ### Idempotent and resumable
 
@@ -175,3 +190,12 @@ public server.
 الفيديوهات والصور حقوقها لأصحابها (قنوات أخبار، قرّاء، محلات). السكريبت ده
 للاستخدام **المحلي** بس. السكريبت بيرفض يشتغل على أي سيرفر مش محلي إلا لو
 استخدمت `--allow-remote`، وحتى ساعتها متستخدموش على سيرفر عام.
+
+### عمره ما يشتغل على البرودكشن، والحسابات "اصطناعية"
+
+السكريبت بيقفل قبل ما يعمل أي حاجة (حتى `--dry-run`) لو `TARA_ENV=production` أو لو
+`--api` هو دومين البرودكشن (`DOMAIN` من البيئة أو من `.env_prod`، وبيقرا المفتاح ده بس).
+وبعد مرحلة الحسابات بيسجّل كل حسابات الـ seed كحسابات اصطناعية في Tara Intelligence
+(`intel_register_synthetic --label seed-dataset` في feed)، عشان نشاطها ما يختلطش
+بالتحليلات الحقيقية. الـ ids بتتكتب كمان في `.seed-state/synthetic-accounts.json`، ولو
+feed لسه ما فيهوش الأمر، سجّلهم بعدين بـ `--register-synthetic`.

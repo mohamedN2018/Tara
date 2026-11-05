@@ -212,6 +212,8 @@ ADMIN_IDENTITY_SECRET=$(secret)
 CHAT_IDENTITY_SECRET=$(secret)
 # Ads only: signs the ad serve tokens browsers hold.
 ADS_SERVE_TOKEN_SECRET=$(secret)
+# Feed only (Tara Intelligence): signs the serve tokens that attribute telemetry.
+INTEL_SERVE_TOKEN_SECRET=$(secret)
 # Telegram webhook check (unused until TELEGRAM_BOT_TOKEN is set).
 TELEGRAM_WEBHOOK_SECRET=$(secret)
 
@@ -277,6 +279,7 @@ POST_EMIT_GROUP_EVENTS=true
 POST_EMIT_TAG_EVENTS=true
 POST_EMIT_STORY_EVENTS=true
 POST_EMIT_HIDE_EVENTS=true
+POST_EMIT_SAVE_EVENTS=true
 GRAPH_EMIT_MUTE_FAVORITE_EVENTS=true
 GRAPH_EMIT_RESTRICT_EVENTS=true
 ADMIN_EMIT_SYSTEM_NOTICES=true

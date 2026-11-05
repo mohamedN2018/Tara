@@ -8,6 +8,7 @@ import { AlertTriangle, Loader2, VideoOff } from "lucide-vue-next";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
+import { bindWatchSignals } from "@/lib/videoSignals";
 import { viaStorageProxy } from "@/services/media";
 import { type Playback, videoService } from "@/services/video";
 
@@ -21,11 +22,12 @@ type HlsInstance = {
   on(event: string, cb: (event: string, data: { fatal?: boolean; type?: string }) => void): void;
 };
 
-const props = withDefaults(defineProps<{ mediaId: string; active: boolean; label?: string; cover?: string | null }>(), {
-  label: "",
-  cover: null,
-});
-const emit = defineEmits<{ playing: []; paused: [] }>();
+const props = withDefaults(
+  defineProps<{ mediaId: string; active: boolean; label?: string; cover?: string | null; reelId?: string | null }>(),
+  { label: "", cover: null, reelId: null },
+);
+// `watched`: the reel really played for 1 s (WP 2.8 / D12), with that watch time.
+const emit = defineEmits<{ playing: []; paused: []; watched: [watchMs: number] }>();
 const { t } = useI18n();
 
 type State = "loading" | "ready" | "unavailable" | "error";
@@ -151,8 +153,22 @@ function onTime() {
   progress.value = Math.min(1, video.currentTime / video.duration);
 }
 
+// Watch signals (Tara Intelligence WP 2.8): start, progress, complete, rewatch
+// (each loop), skip, and the reel view after 1 s of real play.
+let unbindSignals: (() => void) | null = null;
+watch(
+  [el, () => props.reelId],
+  ([video, id]) => {
+    unbindSignals?.();
+    unbindSignals = video && id ? bindWatchSignals(video, { item: `reel:${id}`, surface: "reels", onReelView: (ms) => emit("watched", ms) }) : null;
+  },
+  { immediate: true },
+);
+
 onMounted(() => void load());
 onBeforeUnmount(() => {
+  unbindSignals?.();
+  unbindSignals = null;
   disposed = true;
   hls?.destroy();
   hls = null;

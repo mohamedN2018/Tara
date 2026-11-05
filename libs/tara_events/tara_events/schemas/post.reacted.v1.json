@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/post.reacted.v1.json",
+  "title": "post.reacted v1 payload",
+  "description": "A new reaction on a post (a type change is post.reaction.changed). Schema added by Tara Intelligence WP 2.6 (D9).",
+  "type": "object",
+  "properties": {
+    "post_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reactor": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reaction_type": {
+      "type": "string",
+      "enum": [
+        "like",
+        "love",
+        "care",
+        "haha",
+        "wow",
+        "sad",
+        "angry"
+      ]
+    },
+    "author_id": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "post_id",
+    "reactor",
+    "reaction_type",
+    "author_id"
+  ],
+  "additionalProperties": false
+}

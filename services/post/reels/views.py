@@ -149,8 +149,10 @@ class ReelViewView(APIView):
 
     @extend_schema(tags=["reels"])
     def post(self, request: Request, reel_id) -> Response:
-        """The viewer watched it: counted once per viewer per day, never the author."""
-        reel, counted = services.record_view(_me(request), reel_id)
+        """The viewer watched it for ``watch_ms`` (at least 1 s counts): counted
+        once per viewer per day, never the author."""
+        body = request.data if isinstance(request.data, dict) else {}
+        reel, counted = services.record_view(_me(request), reel_id, body.get("watch_ms"))
         return data_response({"view_count": reel.view_count, "counted": counted})
 
 
