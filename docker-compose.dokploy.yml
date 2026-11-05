@@ -17,6 +17,12 @@
 # (mailpit, traefik, bff). Names differ: each dev `<svc>-relay` and
 # `identity-beat` is a `<svc>-worker` here (Celery worker with embedded beat),
 # and dev `search-indexer` is `search-consumer`.
+#
+# Images: the tara/* images exist only on the server, never on a registry.
+# Each service with a `build` section has `pull_policy: build`, and every
+# worker/consumer that reuses its image has `pull_policy: never`, so
+# `up -d --build` builds them first and never asks Docker Hub for tara/*.
+# Third-party images are pinned to exact tags or digests.
 # =============================================================================
 name: tara
 
@@ -108,13 +114,17 @@ x-identity-env: &identity-env
   IDENTITY_SECRET_KEY: ${IDENTITY_SECRET_KEY:?}
   # Identity and admin only: identity's role API refuses INTERNAL_JWT_SECRET (1.0d).
   ADMIN_IDENTITY_SECRET: ${ADMIN_IDENTITY_SECRET:?}
+  # Identity and chat only: chat's call to the capability-holders list.
+  CHAT_IDENTITY_SECRET: ${CHAT_IDENTITY_SECRET:?}
   # Role and capability-matrix events for admin's audit log (8.1, deploy note).
   IDENTITY_EMIT_AUDIT_EVENTS: ${IDENTITY_EMIT_AUDIT_EVENTS:-true}
   # account.suspended/unsuspended, account.signed_out, account.verification.resent (8.4, 8.6).
   IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS: ${IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS:-true}
   REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-2592000}
   REFRESH_REUSE_GRACE_SECONDS: ${REFRESH_REUSE_GRACE_SECONDS:-20}
-  EMAIL_HOST: ${EMAIL_HOST:?set EMAIL_HOST in the OWNER MUST FILL block}
+  # Empty: no mail is sent (set EMAIL_VERIFICATION_REQUIRED=false then).
+  EMAIL_HOST: ${EMAIL_HOST:-}
+  EMAIL_VERIFICATION_REQUIRED: ${EMAIL_VERIFICATION_REQUIRED:-true}
   EMAIL_PORT: ${EMAIL_PORT:-587}
   EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
   EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
@@ -275,6 +285,10 @@ x-chat-env: &chat-env
   # Message requests and message reports (plan 08 T5).
   CHAT_MESSAGE_REQUESTS: ${CHAT_MESSAGE_REQUESTS:-true}
   CHAT_EMIT_MESSAGE_REPORTED: ${CHAT_EMIT_MESSAGE_REPORTED:-true}
+  # Support team notices (fix round 3): chat asks identity who answers the
+  # support inbox, signed with the secret only identity and chat hold.
+  CHAT_IDENTITY_SECRET: ${CHAT_IDENTITY_SECRET:?}
+  CHAT_NOTIFY_SUPPORT_TEAM: ${CHAT_NOTIFY_SUPPORT_TEAM:-true}
   # Calls (roadmap 3.7). Empty key or secret: every call endpoint answers 503
   # calls_unavailable and the SPA hides the call buttons.
   LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
@@ -394,7 +408,7 @@ services:
   # ======== backing services ================================================
   postgres:
     <<: *backing
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_SUPERUSER:-tara}
       POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?}
@@ -453,7 +467,7 @@ services:
 
   redis:
     <<: *backing
-    image: redis:7-alpine
+    image: redis:7.4.11-alpine
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?}"]
     volumes: [redisdata:/data]
     mem_limit: 256m
@@ -467,7 +481,7 @@ services:
   # makes a full redis-hot refuse writes (feed then serves latest order).
   redis-hot:
     <<: *backing
-    image: redis:7-alpine
+    image: redis:7.4.11-alpine
     command: ["redis-server", "--save", "", "--appendonly", "no", "--requirepass", "${REDIS_PASSWORD:?}",
               "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
     mem_limit: 160m
@@ -479,7 +493,7 @@ services:
 
   rabbitmq:
     <<: *backing
-    image: rabbitmq:3.13-management-alpine
+    image: rabbitmq:3.13.7-management-alpine
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-tara}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:?}
@@ -513,6 +527,7 @@ services:
     <<: *app
     build: {context: ., dockerfile: services/identity/Dockerfile}
     image: tara/identity
+    pull_policy: build
     environment: {<<: *identity-env, RUN_MIGRATIONS: "true"}
     volumes: [identity-keys:/app/.keys]
     mem_limit: 384m
@@ -522,6 +537,7 @@ services:
     <<: *app
     build: {context: ., dockerfile: services/profile/Dockerfile}
     image: tara/profile
+    pull_policy: build
     environment: {<<: *profile-env, RUN_MIGRATIONS: "true"}
     mem_limit: 384m
     healthcheck: *healthcheck
@@ -530,6 +546,7 @@ services:
     <<: *app
     build: {context: ., dockerfile: services/graph/Dockerfile}
     image: tara/graph
+    pull_policy: build
     environment: {<<: *graph-env, RUN_MIGRATIONS: "true"}
     mem_limit: 384m
     healthcheck: *healthcheck
@@ -538,6 +555,7 @@ services:
     <<: *app
     build: {context: ., dockerfile: services/media/Dockerfile}
     image: tara/media
+    pull_policy: build
     environment: {<<: *media-env, RUN_MIGRATIONS: "true"}
     depends_on:
       postgres: {condition: service_healthy}
@@ -551,6 +569,7 @@ services:
     <<: *app
     build: {context: ., dockerfile: services/post/Dockerfile}
     image: tara/post
+    pull_policy: build
     environment: {<<: *post-env, RUN_MIGRATIONS: "true"}
     mem_limit: 384m
     healthcheck: *healthcheck
@@ -559,6 +578,7 @@ services:
     <<: *app
     build: {context: ., dockerfile: services/feed/Dockerfile}
     image: tara/feed
+    pull_policy: build
     environment: {<<: *feed-env, RUN_MIGRATIONS: "true"}
     depends_on:
       postgres: {condition: service_healthy}
@@ -572,6 +592,7 @@ services:
     <<: *app
     build: {context: ., dockerfile: services/chat/Dockerfile}
     image: tara/chat
+    pull_policy: build
     environment: {<<: *chat-env, RUN_MIGRATIONS: "true"}
     mem_limit: 384m
     healthcheck: *healthcheck
@@ -580,6 +601,7 @@ services:
     <<: *app
     build: {context: ., dockerfile: services/marketplace/Dockerfile}
     image: tara/marketplace
+    pull_policy: build
     environment: {<<: *marketplace-env, RUN_MIGRATIONS: "true"}
     mem_limit: 384m
     healthcheck: *healthcheck
@@ -588,6 +610,7 @@ services:
     <<: *app
     build: {context: ., dockerfile: services/notification/Dockerfile}
     image: tara/notification
+    pull_policy: build
     environment: {<<: *notification-env, RUN_MIGRATIONS: "true"}
     mem_limit: 384m
     healthcheck: *healthcheck
@@ -596,6 +619,7 @@ services:
     <<: *app
     build: {context: ., dockerfile: services/search/Dockerfile}
     image: tara/search
+    pull_policy: build
     environment: {<<: *search-env, RUN_MIGRATIONS: "true"}
     mem_limit: 384m
     healthcheck: *healthcheck
@@ -604,6 +628,7 @@ services:
     <<: *app
     build: {context: ., dockerfile: services/moderation/Dockerfile}
     image: tara/moderation
+    pull_policy: build
     environment: {<<: *moderation-env, RUN_MIGRATIONS: "true"}
     mem_limit: 384m
     healthcheck: *healthcheck
@@ -612,6 +637,7 @@ services:
     <<: *app
     build: {context: ., dockerfile: services/admin/Dockerfile}
     image: tara/admin
+    pull_policy: build
     environment: {<<: *admin-env, RUN_MIGRATIONS: "true"}
     mem_limit: 384m
     healthcheck: *healthcheck
@@ -620,6 +646,7 @@ services:
     <<: *app
     build: {context: ., dockerfile: services/ads/Dockerfile}
     image: tara/ads
+    pull_policy: build
     environment: {<<: *ads-env, RUN_MIGRATIONS: "true"}
     mem_limit: 384m
     healthcheck: *healthcheck
@@ -628,6 +655,7 @@ services:
     <<: *app
     build: {context: ., dockerfile: services/realtime/Dockerfile}
     image: tara/realtime
+    pull_policy: build
     # Daphne drops oversized WebSocket frames/messages before buffering them
     # (the consumer itself closes above 16 KiB); nginx cannot limit WS frames.
     command: ["daphne", "-b", "0.0.0.0", "-p", "8000",
@@ -673,6 +701,7 @@ services:
   identity-worker:
     <<: *app
     image: tara/identity
+    pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
     environment: {<<: *identity-env, RUN_MIGRATIONS: "false"}
     volumes: [identity-keys:/app/.keys]
@@ -682,6 +711,7 @@ services:
   profile-worker:
     <<: *app
     image: tara/profile
+    pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
     environment: {<<: *profile-env, RUN_MIGRATIONS: "false"}
     depends_on: {profile: {condition: service_healthy}}
@@ -690,6 +720,7 @@ services:
   graph-worker:
     <<: *app
     image: tara/graph
+    pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
     environment: {<<: *graph-env, RUN_MIGRATIONS: "false"}
     depends_on: {graph: {condition: service_healthy}}
@@ -698,6 +729,7 @@ services:
   media-worker:
     <<: *app
     image: tara/media
+    pull_policy: never   # built by the service of the same image
     # Only media's own queue: video transcoding belongs to media-transcoder.
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-Q", "media.tasks", "-l", "info", "--concurrency", "2"]
     environment: {<<: *media-env, RUN_MIGRATIONS: "false"}
@@ -727,6 +759,7 @@ services:
   media-transcoder:
     <<: *app
     image: tara/media
+    pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-Q", "media.transcode", "--concurrency", "1", "--prefetch-multiplier", "1", "-O", "fair", "--max-tasks-per-child", "50", "-l", "info"]
     environment: *media-transcoder-env
     depends_on:
@@ -738,6 +771,7 @@ services:
   post-worker:
     <<: *app
     image: tara/post
+    pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
     environment: {<<: *post-env, RUN_MIGRATIONS: "false"}
     depends_on: {post: {condition: service_healthy}}
@@ -746,6 +780,7 @@ services:
   feed-worker:
     <<: *app
     image: tara/feed
+    pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
     environment: {<<: *feed-env, RUN_MIGRATIONS: "false"}
     depends_on: {feed: {condition: service_healthy}}
@@ -754,6 +789,7 @@ services:
   chat-worker:
     <<: *app
     image: tara/chat
+    pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
     environment: {<<: *chat-env, RUN_MIGRATIONS: "false"}
     depends_on: {chat: {condition: service_healthy}}
@@ -762,6 +798,7 @@ services:
   marketplace-worker:
     <<: *app
     image: tara/marketplace
+    pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
     environment: {<<: *marketplace-env, RUN_MIGRATIONS: "false"}
     depends_on: {marketplace: {condition: service_healthy}}
@@ -770,6 +807,7 @@ services:
   notification-worker:
     <<: *app
     image: tara/notification
+    pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
     environment: {<<: *notification-env, RUN_MIGRATIONS: "false"}
     depends_on: {notification: {condition: service_healthy}}
@@ -778,6 +816,7 @@ services:
   moderation-worker:
     <<: *app
     image: tara/moderation
+    pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
     environment: {<<: *moderation-env, RUN_MIGRATIONS: "false"}
     depends_on: {moderation: {condition: service_healthy}}
@@ -787,6 +826,7 @@ services:
   admin-worker:
     <<: *app
     image: tara/admin
+    pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
     environment: {<<: *admin-env, RUN_MIGRATIONS: "false"}
     depends_on: {admin: {condition: service_healthy}}
@@ -795,6 +835,7 @@ services:
   ads-worker:
     <<: *app
     image: tara/ads
+    pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
     environment: {<<: *ads-env, RUN_MIGRATIONS: "false"}
     depends_on: {ads: {condition: service_healthy}}
@@ -804,6 +845,7 @@ services:
   profile-consumer:
     <<: *app
     image: tara/profile
+    pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
     environment: {<<: *profile-env, RUN_MIGRATIONS: "false"}
     depends_on: {profile: {condition: service_healthy}}
@@ -812,6 +854,7 @@ services:
   graph-consumer:
     <<: *app
     image: tara/graph
+    pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
     environment: {<<: *graph-env, RUN_MIGRATIONS: "false"}
     depends_on: {graph: {condition: service_healthy}}
@@ -820,6 +863,7 @@ services:
   post-consumer:
     <<: *app
     image: tara/post
+    pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
     environment: {<<: *post-env, RUN_MIGRATIONS: "false"}
     depends_on: {post: {condition: service_healthy}}
@@ -828,6 +872,7 @@ services:
   feed-consumer:
     <<: *app
     image: tara/feed
+    pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
     environment: {<<: *feed-env, RUN_MIGRATIONS: "false"}
     depends_on: {feed: {condition: service_healthy}}
@@ -836,6 +881,7 @@ services:
   chat-consumer:
     <<: *app
     image: tara/chat
+    pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
     environment: {<<: *chat-env, RUN_MIGRATIONS: "false"}
     depends_on: {chat: {condition: service_healthy}}
@@ -844,6 +890,7 @@ services:
   marketplace-consumer:
     <<: *app
     image: tara/marketplace
+    pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
     environment: {<<: *marketplace-env, RUN_MIGRATIONS: "false"}
     depends_on: {marketplace: {condition: service_healthy}}
@@ -852,6 +899,7 @@ services:
   notification-consumer:
     <<: *app
     image: tara/notification
+    pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
     environment: {<<: *notification-env, RUN_MIGRATIONS: "false"}
     depends_on: {notification: {condition: service_healthy}}
@@ -860,6 +908,7 @@ services:
   search-consumer:
     <<: *app
     image: tara/search
+    pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
     environment: {<<: *search-env, RUN_MIGRATIONS: "false"}
     depends_on: {search: {condition: service_healthy}}
@@ -868,6 +917,7 @@ services:
   moderation-consumer:
     <<: *app
     image: tara/moderation
+    pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
     environment: {<<: *moderation-env, RUN_MIGRATIONS: "false"}
     depends_on: {moderation: {condition: service_healthy}}
@@ -877,6 +927,7 @@ services:
   admin-consumer:
     <<: *app
     image: tara/admin
+    pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
     environment: {<<: *admin-env, RUN_MIGRATIONS: "false"}
     depends_on: {admin: {condition: service_healthy}}
@@ -886,6 +937,7 @@ services:
   realtime-bridge:
     <<: *app
     image: tara/realtime
+    pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
     environment: {<<: *realtime-env}
     depends_on: {realtime: {condition: service_healthy}}
@@ -899,6 +951,7 @@ services:
         VITE_API_BASE: /api/v1
         VITE_WS_URL: ""
     image: tara/web
+    pull_policy: build
     restart: unless-stopped
     logging: *logging
     networks: [tara, dokploy-network]

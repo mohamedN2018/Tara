@@ -67,9 +67,10 @@ cat > "$output" <<EOF
 # tara.yourdomain.com behind Cloudflare. Allowed hosts, CORS, the LiveKit URL,
 # the TURN domain and the sender address all derive from it.
 DOMAIN=${DOMAIN}
-# SMTP: new accounts must verify their email. The stack refuses to start while
-# EMAIL_HOST is empty.
+# SMTP. Empty EMAIL_HOST: no mail is sent, so keep EMAIL_VERIFICATION_REQUIRED
+# false (new accounts are active at once). Set both once SMTP is ready.
 EMAIL_HOST=
+EMAIL_VERIFICATION_REQUIRED=false
 EMAIL_PORT=587
 EMAIL_HOST_USER=
 EMAIL_HOST_PASSWORD=
@@ -207,6 +208,8 @@ ADS_SECRET_KEY=$(secret)
 INTERNAL_JWT_SECRET=$(secret)
 # Identity and admin only: identity's role API refuses INTERNAL_JWT_SECRET (1.0d).
 ADMIN_IDENTITY_SECRET=$(secret)
+# Identity and chat only: who answers the support inbox (support team notices).
+CHAT_IDENTITY_SECRET=$(secret)
 # Ads only: signs the ad serve tokens browsers hold.
 ADS_SERVE_TOKEN_SECRET=$(secret)
 # Telegram webhook check (unused until TELEGRAM_BOT_TOKEN is set).
@@ -279,6 +282,7 @@ GRAPH_EMIT_RESTRICT_EVENTS=true
 ADMIN_EMIT_SYSTEM_NOTICES=true
 CHAT_MESSAGE_REQUESTS=true
 CHAT_EMIT_MESSAGE_REPORTED=true
+CHAT_NOTIFY_SUPPORT_TEAM=true
 
 # ---- Registration (track 1D) -----------------------------------------------------
 LEGAL_TERMS_VERSION=2026-11-04-draft

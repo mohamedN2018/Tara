@@ -210,6 +210,10 @@ TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-s
 ADMIN_IDENTITY_SECRET = os.getenv(
     "ADMIN_IDENTITY_SECRET", "dev-only-admin-identity-secret-change-me"
 )
+# Held only by identity and chat: chat asks who answers the support inbox
+# (internal capability-holders endpoint) to tell them of a new support message.
+# Same deploy check as ADMIN_IDENTITY_SECRET.
+CHAT_IDENTITY_SECRET = os.getenv("CHAT_IDENTITY_SECRET", "dev-only-chat-identity-secret-change-me")
 # Emit account.role.granted/revoked and capability.matrix.changed for admin's
 # audit log. Roadmap 3.3 deploy order: ship admin-consumer first with this off.
 IDENTITY_EMIT_AUDIT_EVENTS = env_bool("IDENTITY_EMIT_AUDIT_EVENTS", True)
@@ -259,8 +263,16 @@ CELERY_BEAT_SCHEDULE = {
 }
 
 # ---- Email (Mailpit in dev) -------------------------------------------------
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = os.getenv("EMAIL_HOST", "127.0.0.1")
+# No mail server configured (EMAIL_HOST empty): mail is dropped, not retried
+# forever. Pair it with EMAIL_VERIFICATION_REQUIRED=false so sign-up still works.
+EMAIL_BACKEND = (
+    "django.core.mail.backends.smtp.EmailBackend"
+    if EMAIL_HOST
+    else "django.core.mail.backends.dummy.EmailBackend"
+)
+# false: new accounts are active at once, with no verification link mailed.
+EMAIL_VERIFICATION_REQUIRED = env_bool("EMAIL_VERIFICATION_REQUIRED", True)
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", "1025"))
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")

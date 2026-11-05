@@ -24,8 +24,9 @@
   السكريبت مش هيكتب فوق ملف موجود إلا لو ضفت `--force`.
 - افتح الملف واملأ البلوك اللي فوق خالص **`=== OWNER MUST FILL ===`**:
   - `DOMAIN`: الدومين بتاعك.
-  - `EMAIL_HOST` و`EMAIL_HOST_USER` و`EMAIL_HOST_PASSWORD`: بيانات SMTP. من غيرها
-    الستاك مش هيقوم، لأن كل حساب جديد لازم يأكد الإيميل.
+  - `EMAIL_HOST` و`EMAIL_HOST_USER` و`EMAIL_HOST_PASSWORD`: بيانات SMTP. لو لسه
+    مفيش SMTP سيبهم فاضيين وخلي `EMAIL_VERIFICATION_REQUIRED=false`: الحساب الجديد
+    بيتفعّل على طول ومفيش إيميلات بتتبعت. لما تضيف SMTP خليها `true`.
   - `DEFAULT_FROM_EMAIL`: لو سبته فاضي هيبقى `no-reply@DOMAIN`.
   - `LIVEKIT_NODE_IP`: الـ IP العام بتاع السيرفر (للمكالمات).
   - `LIVEKIT_TURN_DOMAIN`: لو بتستخدم Cloudflare (شوف خطوة 3).
@@ -100,3 +101,74 @@ docker exec $P-feed-consumer-1 python -m tara_events.topology status    # الم
 - **الرجوع:** ارجع لـ commit قبله واعمل Deploy. الـ migrations كلها إضافية فالنسخة
   القديمة بتشتغل عادي. **ماترجعش migrations لورا**، ولو محتاج الداتا ترجع
   استرجع الباك أب.
+
+## 9. إعادة الـ Deploy بالـ webhook
+
+ممكن Dokploy يعمل Deploy لوحده مع كل push بدل ما تدوس **Deploy** بإيدك. هو بيشغّل نفس
+الأمر بتاع الزرار (`up -d --build --remove-orphans`)، وبيقرا المتغيرات من تاب
+Environment، فالـ volumes ومفاتيح JWT بتفضل زي ما هي.
+
+1. لو الـ Provider هو GitHub: شغّل **Autodeploy** في الـ compose service، والـ GitHub App
+   بتاعة Dokploy هتعمل Deploy مع كل push على البرانش المتحدد.
+2. غير كده: خد الـ Dokploy webhook URL من تاب **Deployments** في السيرفس، وفي GitHub افتح
+   الريبو ← **Settings ← Webhooks ← Add webhook**، وحطه في Payload URL، وخلي الـ content
+   type `application/json`، واختار **Just the push event**. الـ push على أي برانش تاني
+   بيتجاهل.
+3. الـ Dokploy webhook URL جواه token، وأي حد معاه يقدر يعمل Deploy. خليه في password
+   manager، و**ماتحطوش أبدًا في الريبو** ولا في issue ولا في شات. لو اتسرّب، اعمله
+   regenerate من نفس التاب وحدّث الـ webhook في GitHub.
+
+قبل أي release فيها متغيرات جديدة، ضيفها في Environment الأول (خطوة 8).
+
+## 10. لو الـ Deploy فشل: "pull access denied" أو network reset
+
+**الأعراض:** اللوج بيطلع سطر زي ده لكل image من `tara/*`:
+
+```text
+Error pull access denied for tara/feed, repository does not exist or may require 'docker login'
+```
+
+وفي الآخر بيقع بخطأ شبكة وهو بيسحب image زي `rabbitmq` من Docker Hub
+(`connection reset by peer` أو `TLS handshake timeout`).
+
+**السبب:** images تارا (`tara/*`) مش موجودة على Docker Hub، Dokploy بيبنيها على السيرفر.
+الـ workers والـ consumers كانوا كاتبين `image: tara/<svc>` من غير `build`، فـ Compose كان
+بيحاول يسحبها من Docker Hub الأول. Compose بيتجاهل الفشل ده لما سيرفس تانية بتبني نفس
+الـ image، فالسطور دي كانت دوشة بس، لكن كل سطر منها طلب زيادة على Docker Hub. والـ Deploy
+وقف فعلًا بسبب الـ network reset بتاع Docker Hub.
+
+**اللي اتصلح في `docker-compose.dokploy.yml`:**
+
+- الـ 15 سيرفس اللي ليهم `build` (14 باك إند + `web`) عليهم `pull_policy: build`، يعني
+  بتتبني دايمًا ومش بتتسحب.
+- الـ 24 سيرفس اللي بيستخدموا نفس الـ images (`*-worker` و`*-consumer` و`media-transcoder`
+  و`realtime-bridge`) عليهم `pull_policy: never`. Compose بيبني كل الـ images قبل ما يعمل أي
+  كونتينر، فبيقوموا من الـ image اللي اتبنت في نفس الـ `up -d --build`.
+- الحاجات الوحيدة اللي بتتسحب هي الـ images الخارجية، وكلها متثبتة على tag أو digest محدد:
+  `postgres:16.15-alpine` و`redis:7.4.11-alpine` و`rabbitmq:3.13.7-management-alpine`
+  و`livekit/livekit-server:v1.13.10` وimages الـ `minio` والـ `minio-client` بتوع Chainguard.
+  Mailpit للـ dev بس ومش موجود في الملف ده، والإيميل بيروح على SMTP اللي في `EMAIL_HOST`.
+
+**تعمل إيه لو حصل:**
+
+1. **الـ reset بتاع Docker Hub مؤقت.** دوس **Deploy** تاني أو اعمل push عشان الـ webhook
+   يشتغل. الـ layers اللي نزلت بتفضل على السيرفر، فالمحاولة الجاية بتكمّل من مكانها.
+2. **لو لسه شايف `pull access denied for tara/...`:** يبقى البرانش اللي عليه الـ Deploy مافيهوش
+   التصليح ده. راجع البرانش والـ commit في لوج الـ Deploy.
+3. **لو الـ reset بيتكرر:** اعمل registry mirror على السيرفر. مثلًا ضيف ده في
+   `/etc/docker/daemon.json` واعمل restart لـ Docker:
+
+   ```json
+   { "registry-mirrors": ["https://mirror.gcr.io"] }
+   ```
+
+   الـ restart بيوقّف Dokploy وكل الكونتينرات شوية، فاعمله في وقت هادي. و`docker login` على
+   السيرفر بيرفع حد Docker Hub عن الـ pulls من غير حساب.
+4. **لو الخطأ `required variable ... is missing a value`:** يبقى تاب Environment مافيهوش
+   `.env_prod` كامل. Dokploy بيكتب التاب في `.env`، والأمر مش بيقرا غيره. الزق الملف كله،
+   ومعاه بلوك `OWNER MUST FILL` متملّي وكل متغير جديد في ملاحظات الـ release، ودوس **Save**
+   واعمل Deploy تاني. **ماتولّدوش من جديد** لو الستاك شغال قبل كده (خطوة 2).
+
+للتأكد على جهازك من غير ما تلمس السيرفر، استخدم env تجريبي (مش `.env_prod`) واعمل
+`config -q` و`pull --ignore-buildable`؛ الأوامر في `DOKPLOY.md` (القسم 10). كل images تارا
+هتطلع `Skipped`. استخدم `config -q` دايمًا، لأن `config` من غير `-q` بيطبع كل الأسرار.

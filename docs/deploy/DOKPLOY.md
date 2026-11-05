@@ -50,7 +50,10 @@ P=$(docker ps --format '{{.Names}}' | sed -n 's/-identity-1$//p' | head -1); ech
    `EMAIL_HOST`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, `DEFAULT_FROM_EMAIL`
    (empty means `no-reply@DOMAIN`), `LIVEKIT_NODE_IP` and `LIVEKIT_TURN_DOMAIN`.
    S3/R2, Google and Telegram are optional. The stack refuses to start while
-   `DOMAIN` or `EMAIL_HOST` is empty.
+   `DOMAIN` is empty. No SMTP yet: leave `EMAIL_HOST` empty and set
+   `EMAIL_VERIFICATION_REQUIRED=false` (the generator's default): new accounts
+   are active at once and no mail is sent. Without `COMPOSE_PROFILES=calls`
+   (and the LiveKit key empty) the stack runs without calls.
 3. Dokploy → the compose service → **Environment** → paste the whole file → **Save**.
 4. Keep a copy in a password manager. Do not regenerate it after the first
    deploy: new database passwords never reach an existing volume, and a new
@@ -172,6 +175,104 @@ on the newer schema. Do not migrate backwards. If data really has to go back,
 restore the backup taken in step 2. The DLQ change has its own
 `python -m tara_events.topology rollback`.
 
+### 9. Redeploy with the webhook
+
+Dokploy can redeploy on every push instead of a manual **Deploy**. It runs the
+same command as the button:
+
+```bash
+docker compose -p <app> --env-file .env -f ./docker-compose.dokploy.yml up -d --build --remove-orphans
+```
+
+The `.env` it writes is the Environment tab, so a redeploy keeps the
+variables, the volumes and the JWT keys. Images are rebuilt from cached layers,
+and only containers whose image or settings changed are recreated.
+
+1. With the GitHub provider, turn on **Autodeploy** in the compose service.
+   Dokploy's GitHub App then redeploys on each push to the deployed branch.
+2. Otherwise, copy the Dokploy webhook URL from the service's **Deployments**
+   tab. In GitHub → the repository → **Settings → Webhooks → Add webhook**, paste
+   it as the payload URL, set the content type to `application/json`, and choose
+   **Just the push event**. Pushes to other branches are ignored.
+3. The Dokploy webhook URL contains a token, and anyone holding it can start a
+   deploy. Keep it in a password manager, never in the repo, an issue or a chat.
+   If it leaks, regenerate it in the same tab and update the GitHub webhook.
+
+A redeploy applies migrations at boot like the first deploy. Before a release
+that adds variables, add them to the Environment tab first (step 8).
+
+### 10. Troubleshooting: "Deploy failed: pull access denied / network reset"
+
+**Symptom.** The deploy log shows a line like this for every `tara/*` image:
+
+```text
+Error pull access denied for tara/feed, repository does not exist or may require 'docker login'
+```
+
+It then fails with a network error while pulling a third-party image, for
+example `rabbitmq`: `connection reset by peer`, `TLS handshake timeout`, or
+`unexpected EOF` from `registry-1.docker.io`.
+
+**Cause.** The `tara/*` images exist only on the server, because Dokploy builds
+them. They are not on Docker Hub. Each worker, relay and consumer used to
+reference `image: tara/<svc>` without a `build` section. Compose therefore
+asked Docker Hub for each of those images before building them. Compose
+ignores that failure for an image that another service builds, so these lines
+are noise, but each one is still a Docker Hub request. The deploy then stopped
+on the real error: a network reset from Docker Hub.
+
+**What the compose file does now** (`docker-compose.dokploy.yml`):
+
+- The 15 services with a `build` section (14 backends and `web`) have
+  `pull_policy: build`, so Compose always builds them and never pulls them.
+- The 24 services that reuse one of those images (`*-worker`, `*-consumer`,
+  `media-transcoder` and `realtime-bridge`) have `pull_policy: never`. Compose
+  builds every image before it creates any container, so they start from the
+  image built in the same `up -d --build`.
+- Only these third-party images are pulled, each pinned to an exact tag or
+  digest: `postgres:16.15-alpine`, `redis:7.4.11-alpine`,
+  `rabbitmq:3.13.7-management-alpine`, `livekit/livekit-server:v1.13.10`, and
+  the Chainguard `minio` and `minio-client` images. Mailpit is dev-only and is
+  not in this file. Email goes through the SMTP server set by `EMAIL_HOST`.
+
+To check this on your own machine without touching the server, use an env
+generated into a scratch file, never `.env_prod`:
+
+```bash
+./scripts/gen-dokploy-env.sh --output /tmp/tara-test.env tara.example.test
+sed -i 's/^EMAIL_HOST=$/EMAIL_HOST=smtp.example.test/' /tmp/tara-test.env
+docker compose -p tara-check -f docker-compose.dokploy.yml --env-file /tmp/tara-test.env config -q
+docker compose -p tara-check -f docker-compose.dokploy.yml --env-file /tmp/tara-test.env pull --ignore-buildable
+```
+
+The `pull` lists every `tara/*` image as `Skipped`. Use `config -q`: without
+`-q`, `config` prints every secret.
+
+**What to do when a deploy fails this way:**
+
+1. **A Docker Hub reset is transient.** Press **Deploy** again, or push to start
+   the webhook. Layers that finished downloading stay on the server, so the next
+   attempt continues from there.
+2. **If `pull access denied for tara/...` still appears**, the deployed branch
+   does not have this fix. Check the branch and the commit in Dokploy's
+   deployment log.
+3. **If resets keep happening**, configure a registry mirror on the server. For
+   example, add this to `/etc/docker/daemon.json` and restart Docker:
+
+   ```json
+   { "registry-mirrors": ["https://mirror.gcr.io"] }
+   ```
+
+   Restarting Docker restarts Dokploy and every container, so do it at a quiet
+   hour. `docker login` on the server also raises the Docker Hub rate limit
+   above the limit for anonymous pulls.
+4. **If the error is `required variable ... is missing a value`**, the
+   Environment tab does not contain the whole `.env_prod`. Dokploy writes the
+   tab to `.env`, and the command reads only that file. Paste the full file,
+   including the filled-in `OWNER MUST FILL` block and every variable the
+   release notes added, then **Save** and deploy again. Do not regenerate it on
+   an existing install (step 2).
+
 ---
 
 ## 0. Prerequisites
@@ -196,8 +297,8 @@ Keep it safe and never commit it. Run it once: new passwords do not reach an
 existing database. Deployments generated before 2026-11-04 have a
 `.env.dokploy` instead, which keeps working.
 
-**Then fill in the `OWNER MUST FILL` block** (domain, SMTP, LiveKit IP). The
-stack refuses to start without `EMAIL_HOST`, because new accounts must verify
+**Then fill in the `OWNER MUST FILL` block** (domain, SMTP, LiveKit IP). With
+SMTP set, also set `EMAIL_VERIFICATION_REQUIRED=true` so new accounts verify
 their email before they can sign in. Your provider must allow sending from
 `DEFAULT_FROM_EMAIL`.
 
@@ -266,6 +367,7 @@ Some releases add required settings. Add them to Dokploy's Environment panel
 | Step 1 wave A | `ADMIN_IDENTITY_SECRET` | `openssl rand -hex 32`, different from `INTERNAL_JWT_SECRET`. Only admin and identity use it. |
 | Step 1 wave A | `ADS_SERVE_TOKEN_SECRET` | `openssl rand -hex 32`. Ad tokens issued before the change stop working (they last 30 minutes). |
 | Step 1 wave A | `ADS_SERVING_ENABLED` | `false`. Paid ads must not serve until payment verification exists. |
+| Fix round 3 | `CHAT_IDENTITY_SECRET` | `openssl rand -hex 32`, different from `INTERNAL_JWT_SECRET` and `ADMIN_IDENTITY_SECRET`. Only chat and identity use it. |
 
 Migrations in that release are additive and run at boot. The search migration
 `0004_purge_nonpublic_hashtags` rebuilds hashtag links from public posts in
@@ -643,6 +745,19 @@ it does not conflict.
   one-off commands, no new containers. New endpoints are under
   `/api/v1/conversations/` and `/api/v1/messages/`, already routed to chat.
 
+### Upgrading: support team notices (fix round 3)
+
+- **New variables:** `CHAT_IDENTITY_SECRET` (required on identity and chat; see
+  the table above) and, on chat, `CHAT_NOTIFY_SUPPORT_TEAM` (optional, default
+  `true`). Chat asks identity's internal
+  `/internal/v1/capability-holders/?capability=moderation.case.view` (ids only,
+  cached 60 s) who answers the support inbox, and puts them in
+  `message.created`'s `team.recipients`; notification writes a
+  `message.support` row for each, opening `/admin/support?conversation=<id>`.
+- **Order:** deploy notification-consumer and identity first (or together with
+  chat). If chat runs ahead, the notice is only lost: the message is kept and
+  the support inbox badge counts it. No migrations, no one-off commands.
+
 ### Upgrading: the video pipeline (roadmap 5.2 / 5.3)
 
 - **New containers:** `minio-init` (one-shot: creates the transcoder's MinIO
@@ -724,6 +839,27 @@ it does not conflict.
   media asks post's `/internal/v1/posts/<id>/visibility/` (which answers for
   stories too). An expired story's photo is 404 to everyone but its author.
 
+### Upgrading: reels (roadmap 5.5 / 5.8)
+
+- **Migrations (post, additive, run at boot):** `posts 0011_post_type_reel` (a
+  choices-only change: `post.type` may now be `reel`; no SQL) and
+  `reels 0001_initial` (new tables `reel`, `reel_view` and `reel_hide`).
+  Nothing existing changes.
+- **Order:** deploy **media first**. Its internal `media/batch/` answer gains
+  `width` and `height` (additive), and post reads them to decide what may be a
+  reel. Against an older media every reel is refused with
+  `reel_video_not_ready`; nothing else changes.
+- **Events:** none new. A reel is published with the usual `post.created`
+  (feed fans it out to followers at its publish time), whose `type` may now be
+  `reel`; every consumer passes the type through.
+- **Edge:** the new endpoints are under `/api/v1/reels/`. The web image's nginx
+  routes that prefix to post (rebuild `web`); Traefik's post router and the
+  k8s post ingress list it too. No new variables, containers or one-off
+  commands.
+- **Media:** a reel's video is bound like a video post's; an optional cover
+  photo is bound to the reel's post *restricted*, so it always follows the
+  reel's visibility.
+
 ### Upgrading: moderation console, Support inbox and notices (plan 08 T7)
 
 - **New variable, optional:** on admin `ADMIN_EMIT_SYSTEM_NOTICES` (default
@@ -748,7 +884,8 @@ it does not conflict.
   and notifications about them are kept.
 - **Order (new event types):** feed and search consume the pair in this
   release. On an existing install deploy once with `POST_EMIT_HIDE_EVENTS=false`,
-  so `feed-consumer` and `search-consumer` bind `post.hidden` / `post.unhidden`;
+  so `feed-consumer` binds `post.hidden` / `post.unhidden` and `search-consumer`
+  binds `post.hidden` (search re-indexes from the `post.updated` that follows);
   then set it to `true` and redeploy post. With the flag off, deactivation emits
   `post.deleted` as before (feed rows and notifications are dropped for good).
   Posts of accounts deactivated under that older behaviour get their feed rows
@@ -756,7 +893,10 @@ it does not conflict.
 - **Migration (feed, additive, run at boot):** `0007_post_state_hidden`.
 - **New variable, optional:** on identity `ACCOUNT_SECURITY_RATE` (default
   `30/hour`, per account): two-factor setup, confirm and disable, recovery
-  codes, deactivation and deletion.
+  codes, deactivation and deletion. On top of it, every endpoint that
+  re-checks the current password shares a fixed budget of 5 wrong passwords
+  per account per hour (then 429 `throttled`, even for the right password);
+  a correct password resets it. Not configurable on purpose.
 
 ### Backups
 

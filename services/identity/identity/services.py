@@ -178,6 +178,9 @@ def register(
     _validate_password(password)
     # Profile's display name is at most 80 characters.
     display_name = f"{first_name} {last_name}".strip()[:80]
+    # EMAIL_VERIFICATION_REQUIRED=false (a deployment with no mail server yet):
+    # the account is active and verified at once, and no link is mailed.
+    verify_by_email = settings.EMAIL_VERIFICATION_REQUIRED
 
     with transaction.atomic():
         account = Account.objects.create_user(
@@ -185,7 +188,8 @@ def register(
             password=password,
             language=language,
             theme=theme,
-            status=Account.Status.PENDING,
+            status=Account.Status.PENDING if verify_by_email else Account.Status.ACTIVE,
+            email_verified=not verify_by_email,
             date_of_birth=date_of_birth,
             gender=gender,
             gender_custom=gender_custom,
@@ -196,12 +200,13 @@ def register(
             privacy_version=privacy_version,
             ip_hash=consent_ip_hash(client_ip),
         )
-        raw_token = secrets.token_urlsafe(32)
-        EmailVerification.objects.create(
-            account=account,
-            token_hash=_hash(raw_token),
-            expires_at=timezone.now() + EMAIL_VERIFICATION_TTL,
-        )
+        raw_token = secrets.token_urlsafe(32) if verify_by_email else ""
+        if verify_by_email:
+            EmailVerification.objects.create(
+                account=account,
+                token_hash=_hash(raw_token),
+                expires_at=timezone.now() + EMAIL_VERIFICATION_TTL,
+            )
         # No email here: security events outlive the account (SET_NULL on delete).
         emit_security_event(account, "account_registered", {}, ip_region=ip_region)
         emit_domain_event(
@@ -210,7 +215,7 @@ def register(
             # No email on the bus: no consumer needs it (docs/.../04-event-contracts.md).
             # No date of birth or gender either: age leaves only as token claims.
             payload={
-                "email_verified": False,
+                "email_verified": not verify_by_email,
                 "language": language,
                 "display_name": display_name,
                 "first_name": first_name,
@@ -220,7 +225,17 @@ def register(
             actor_id=str(account.id),
             correlation_id=correlation_id,
         )
-        transaction.on_commit(lambda: send_verification_email(email, raw_token))
+        if verify_by_email:
+            transaction.on_commit(lambda: send_verification_email(email, raw_token))
+        else:
+            emit_security_event(account, "email_verified", {})
+            emit_domain_event(
+                "account.verified",
+                subject_id=str(account.id),
+                payload={"email_verified": True},
+                actor_id=str(account.id),
+                correlation_id=correlation_id,
+            )
     return account
 
 

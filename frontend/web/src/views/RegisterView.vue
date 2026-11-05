@@ -271,6 +271,16 @@ async function submit() {
     });
     // "Complete your profile" waits on /home for this account's first sign-in.
     markProfileToComplete(result.account_id);
+    // A deployment without email verification answers "active": sign in now.
+    if (result.status === "active") {
+      try {
+        await auth.login(form.email.trim(), form.password);
+        router.push("/home");
+        return;
+      } catch {
+        // Fall through to the "account created" panel; the login page works.
+      }
+    }
     // Pending until the mailed link is opened: no auto-login.
     done.value = true;
   } catch (e) {

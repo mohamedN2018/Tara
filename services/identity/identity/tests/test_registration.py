@@ -302,3 +302,38 @@ def test_gender_is_optional_and_never_in_the_token(api_client, django_capture_on
 
 def test_an_unknown_gender_value_is_refused(api_client):
     assert _detail(_register(api_client, gender="robot"))[0] == "gender"
+
+
+# ---- no mail server yet (EMAIL_VERIFICATION_REQUIRED=false) ------------------
+
+
+def test_without_email_verification_the_account_is_active_at_once(
+    api_client, settings, django_capture_on_commit_callbacks
+):
+    settings.EMAIL_VERIFICATION_REQUIRED = False
+    with django_capture_on_commit_callbacks(execute=True):
+        resp = _register(api_client, "nomail@tara.local")
+    assert resp.status_code == 201, resp.content
+    assert resp.json()["data"]["status"] == "active"
+    account = Account.objects.get(email="nomail@tara.local")
+    assert account.email_verified is True
+    assert mail.outbox == []  # no link is mailed
+    types = [
+        e.event_type
+        for e in OutboxEvent.objects.all()
+        if e.payload.get("subject_id") == str(account.id)
+    ]
+    assert "account.registered" in types and "account.verified" in types
+    login = api_client.post(
+        reverse("identity:login"),
+        {"email": "nomail@tara.local", "password": PASSWORD},
+        format="json",
+    )
+    assert login.status_code == 200, login.content
+
+
+def test_email_verification_stays_on_by_default(api_client, django_capture_on_commit_callbacks):
+    with django_capture_on_commit_callbacks(execute=True):
+        resp = _register(api_client, "withmail@tara.local")
+    assert resp.json()["data"]["status"] == "pending"
+    assert len(mail.outbox) == 1
