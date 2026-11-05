@@ -214,6 +214,10 @@ CHAT_IDENTITY_SECRET=$(secret)
 ADS_SERVE_TOKEN_SECRET=$(secret)
 # Feed only (Tara Intelligence): signs the serve tokens that attribute telemetry.
 INTEL_SERVE_TOKEN_SECRET=$(secret)
+# Feed (Tara Intelligence) retention in days: raw telemetry / per-user-item
+# engagement (owner decision: 30 / 30; engagement accepts 7 to 30).
+INTEL_SIGNAL_RETENTION_DAYS=30
+INTEL_ENGAGEMENT_RETENTION_DAYS=30
 # Telegram webhook check (unused until TELEGRAM_BOT_TOKEN is set).
 TELEGRAM_WEBHOOK_SECRET=$(secret)
 
