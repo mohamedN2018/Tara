@@ -535,6 +535,8 @@ services:
 
   minio:
     <<: *backing
+    # Unique name for the edge: dokploy-network may hold another project\'s "minio".
+    networks: {tara: {aliases: [tara-minio]}}
     # Official minio/minio images are no longer published; pinned by digest.
     image: cgr.dev/chainguard/minio@sha256:090010a3f73f6aa2dff606c61cd0de3640b22748abe19f4e48cce6dc9de7a53f
     command: ["server", "/data", "--console-address", ":9001"]
@@ -553,6 +555,8 @@ services:
   # ======== web (HTTP) services =============================================
   identity:
     <<: *app
+    # Unique name for the edge: dokploy-network may hold another project\'s "identity".
+    networks: {tara: {aliases: [tara-identity]}}
     build: {context: ., dockerfile: services/identity/Dockerfile}
     image: tara/identity
     pull_policy: build
@@ -563,6 +567,8 @@ services:
 
   profile:
     <<: *app
+    # Unique name for the edge: dokploy-network may hold another project\'s "profile".
+    networks: {tara: {aliases: [tara-profile]}}
     build: {context: ., dockerfile: services/profile/Dockerfile}
     image: tara/profile
     pull_policy: build
@@ -572,6 +578,8 @@ services:
 
   graph:
     <<: *app
+    # Unique name for the edge: dokploy-network may hold another project\'s "graph".
+    networks: {tara: {aliases: [tara-graph]}}
     build: {context: ., dockerfile: services/graph/Dockerfile}
     image: tara/graph
     pull_policy: build
@@ -581,6 +589,8 @@ services:
 
   media:
     <<: *app
+    # Unique name for the edge: dokploy-network may hold another project\'s "media".
+    networks: {tara: {aliases: [tara-media]}}
     build: {context: ., dockerfile: services/media/Dockerfile}
     image: tara/media
     pull_policy: build
@@ -595,6 +605,8 @@ services:
 
   post:
     <<: *app
+    # Unique name for the edge: dokploy-network may hold another project\'s "post".
+    networks: {tara: {aliases: [tara-post]}}
     build: {context: ., dockerfile: services/post/Dockerfile}
     image: tara/post
     pull_policy: build
@@ -604,6 +616,8 @@ services:
 
   feed:
     <<: *app
+    # Unique name for the edge: dokploy-network may hold another project\'s "feed".
+    networks: {tara: {aliases: [tara-feed]}}
     build: {context: ., dockerfile: services/feed/Dockerfile}
     image: tara/feed
     pull_policy: build
@@ -618,6 +632,8 @@ services:
 
   chat:
     <<: *app
+    # Unique name for the edge: dokploy-network may hold another project\'s "chat".
+    networks: {tara: {aliases: [tara-chat]}}
     build: {context: ., dockerfile: services/chat/Dockerfile}
     image: tara/chat
     pull_policy: build
@@ -627,6 +643,8 @@ services:
 
   marketplace:
     <<: *app
+    # Unique name for the edge: dokploy-network may hold another project\'s "marketplace".
+    networks: {tara: {aliases: [tara-marketplace]}}
     build: {context: ., dockerfile: services/marketplace/Dockerfile}
     image: tara/marketplace
     pull_policy: build
@@ -636,6 +654,8 @@ services:
 
   notification:
     <<: *app
+    # Unique name for the edge: dokploy-network may hold another project\'s "notification".
+    networks: {tara: {aliases: [tara-notification]}}
     build: {context: ., dockerfile: services/notification/Dockerfile}
     image: tara/notification
     pull_policy: build
@@ -645,6 +665,8 @@ services:
 
   search:
     <<: *app
+    # Unique name for the edge: dokploy-network may hold another project\'s "search".
+    networks: {tara: {aliases: [tara-search]}}
     build: {context: ., dockerfile: services/search/Dockerfile}
     image: tara/search
     pull_policy: build
@@ -654,6 +676,8 @@ services:
 
   moderation:
     <<: *app
+    # Unique name for the edge: dokploy-network may hold another project\'s "moderation".
+    networks: {tara: {aliases: [tara-moderation]}}
     build: {context: ., dockerfile: services/moderation/Dockerfile}
     image: tara/moderation
     pull_policy: build
@@ -663,6 +687,8 @@ services:
 
   admin:
     <<: *app
+    # Unique name for the edge: dokploy-network may hold another project\'s "admin".
+    networks: {tara: {aliases: [tara-admin]}}
     build: {context: ., dockerfile: services/admin/Dockerfile}
     image: tara/admin
     pull_policy: build
@@ -672,6 +698,8 @@ services:
 
   ads:
     <<: *app
+    # Unique name for the edge: dokploy-network may hold another project\'s "ads".
+    networks: {tara: {aliases: [tara-ads]}}
     build: {context: ., dockerfile: services/ads/Dockerfile}
     image: tara/ads
     pull_policy: build
@@ -681,6 +709,8 @@ services:
 
   realtime:
     <<: *app
+    # Unique name for the edge: dokploy-network may hold another project\'s "realtime".
+    networks: {tara: {aliases: [tara-realtime]}}
     build: {context: ., dockerfile: services/realtime/Dockerfile}
     image: tara/realtime
     pull_policy: build
@@ -703,7 +733,7 @@ services:
     profiles: ["calls"]
     restart: unless-stopped
     logging: *logging
-    networks: [tara]
+    networks: {tara: {aliases: [tara-livekit]}}
     command: ["--config", "/etc/livekit.yaml"]
     environment:
       # `:-`, not `:?`: compose interpolates services of inactive profiles too,
