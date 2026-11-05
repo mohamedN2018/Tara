@@ -1,0 +1,447 @@
+"""Typed schema of the ranking config, per surface (02 section 8.2; WP 4.1).
+
+Every version is validated on write, and a version that fails can never be stored
+or activated. The rules:
+
+- unknown sections and unknown keys are rejected (a typo in a weight must fail, not
+  be ignored: 09 R0 note on 02:310);
+- every number has bounds; weights live in [-10, 10];
+- half-lives are > 0;
+- ratios that share a whole (``mix``, ``diversity.sim_weights``) sum to 1;
+- ``schema_version`` names the schema the params were written for. A new block
+  (``exposure``, ``session`` v2, ``delivery`` ...) arrives with a schema bump and its
+  own spec, never by accepting unknown keys.
+
+The specs are frozen dataclasses (``Num``, ``Int``, ``Bool``, ``Section``, ``Map``,
+``ListOf``); ``validate(surface, params)`` returns the list of problems (empty when
+valid) and ``check`` raises ``ConfigInvalid`` with all of them.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+from typing import Any
+
+SCHEMA_VERSION = 1
+SURFACES = ("home", "reels", "video", "groups")
+POST_TYPES = ("text", "image", "video", "link", "share", "poll", "reel")
+SOURCES = ("connections", "follow_pull", "groups", "reels", "video")
+# Candidate reasons a relationship prior can name (sources' ``reason`` codes).
+REASONS = (
+    "self",
+    "friend",
+    "follow",
+    "page",
+    "group",
+    "group_notify",
+    "capped",
+    "new_follow",
+    "public",
+    "discovery",
+)
+
+
+class ConfigInvalid(ValueError):
+    def __init__(self, problems: list[str]):
+        super().__init__("; ".join(problems))
+        self.problems = problems
+
+
+@dataclass(frozen=True)
+class Num:
+    lo: float
+    hi: float
+    gt: bool = False  # strictly greater than ``lo`` (half-lives)
+
+    def check(self, value, path: str, out: list[str]) -> None:
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            out.append(f"{path}: a number is required")
+            return
+        if not math.isfinite(value):
+            out.append(f"{path}: must be finite")
+        elif (value <= self.lo if self.gt else value < self.lo) or value > self.hi:
+            low = f"> {self.lo}" if self.gt else f">= {self.lo}"
+            out.append(f"{path}: {value} out of range ({low}, <= {self.hi})")
+
+
+@dataclass(frozen=True)
+class Int:
+    lo: int
+    hi: int
+
+    def check(self, value, path: str, out: list[str]) -> None:
+        if isinstance(value, bool) or not isinstance(value, int):
+            out.append(f"{path}: an integer is required")
+        elif not self.lo <= value <= self.hi:
+            out.append(f"{path}: {value} out of range [{self.lo}, {self.hi}]")
+
+
+@dataclass(frozen=True)
+class Bool:
+    def check(self, value, path: str, out: list[str]) -> None:
+        if not isinstance(value, bool):
+            out.append(f"{path}: true or false is required")
+
+
+@dataclass(frozen=True)
+class Fixed:
+    """A switch whose other value is not built yet: accepting it would be a no-op
+    toggle in the admin (no fake features). ``until`` names the work that lifts it."""
+
+    value: Any
+    until: str
+
+    def check(self, value, path: str, out: list[str]) -> None:
+        if type(value) is not type(self.value) or value != self.value:
+            out.append(f"{path}: only {self.value!r} is supported until {self.until}")
+
+
+@dataclass(frozen=True)
+class Str:
+    choices: tuple[str, ...]
+
+    def check(self, value, path: str, out: list[str]) -> None:
+        if value not in self.choices:
+            out.append(f"{path}: must be one of {', '.join(self.choices)}")
+
+
+@dataclass(frozen=True)
+class ListOf:
+    item: Any
+    max_len: int = 64
+    min_len: int = 0
+    unique: bool = False
+
+    def check(self, value, path: str, out: list[str]) -> None:
+        if not isinstance(value, list):
+            out.append(f"{path}: a list is required")
+            return
+        if not self.min_len <= len(value) <= self.max_len:
+            out.append(f"{path}: {len(value)} items (allowed {self.min_len} to {self.max_len})")
+        for i, v in enumerate(value):
+            self.item.check(v, f"{path}[{i}]", out)
+        if self.unique and len({repr(v) for v in value}) != len(value):
+            out.append(f"{path}: items must be distinct")
+
+
+@dataclass(frozen=True)
+class Pair:
+    """A Beta prior ``[a, b]``: two positive pseudo-counts."""
+
+    hi: float = 10_000.0
+
+    def check(self, value, path: str, out: list[str]) -> None:
+        if not (isinstance(value, list) and len(value) == 2):
+            out.append(f"{path}: [a, b] is required")
+            return
+        for i, v in enumerate(value):
+            Num(0.0, self.hi, gt=True).check(v, f"{path}[{i}]", out)
+
+
+@dataclass(frozen=True)
+class Map:
+    """A dict whose keys come from ``keys`` (all optional unless ``required``)."""
+
+    value: Any
+    keys: tuple[str, ...] | None = None  # None: any key matching ``key_pattern``
+    required: tuple[str, ...] = ()
+    numeric_keys: bool = False
+
+    def check(self, value, path: str, out: list[str]) -> None:
+        if not isinstance(value, dict):
+            out.append(f"{path}: an object is required")
+            return
+        for k in self.required:
+            if k not in value:
+                out.append(f"{path}.{k}: required")
+        for k, v in value.items():
+            if self.keys is not None and k not in self.keys:
+                out.append(f"{path}.{k}: unknown key")
+                continue
+            if self.numeric_keys and not (isinstance(k, str) and k.isdigit()):
+                out.append(f"{path}.{k}: a non-negative integer key is required")
+                continue
+            self.value.check(v, f"{path}.{k}", out)
+
+
+@dataclass(frozen=True)
+class Section:
+    fields: dict[str, Any]
+    optional: frozenset[str] = field(default_factory=frozenset)
+    sums_to_one: tuple[str, ...] = ()
+
+    def check(self, value, path: str, out: list[str]) -> None:
+        if not isinstance(value, dict):
+            out.append(f"{path}: an object is required")
+            return
+        for k, spec in self.fields.items():
+            if k in value:
+                spec.check(value[k], f"{path}.{k}" if path else k, out)
+            elif k not in self.optional:
+                out.append(f"{path}.{k}: required" if path else f"{k}: required")
+        for k in value:
+            if k not in self.fields:
+                out.append(f"{path}.{k}: unknown key" if path else f"{k}: unknown section")
+        if self.sums_to_one and all(
+            isinstance(value.get(k), int | float) for k in self.sums_to_one
+        ):
+            total = sum(value[k] for k in self.sums_to_one)
+            if abs(total - 1.0) > 1e-6:
+                out.append(
+                    f"{path}: {' + '.join(self.sums_to_one)} must sum to 1 (is {round(total, 6)})"
+                )
+
+
+# ---- building blocks -----------------------------------------------------------------
+
+WEIGHT = Num(-10.0, 10.0)
+COEF = Num(-10.0, 10.0)
+UNIT = Num(0.0, 1.0)
+HALF_LIFE_H = Num(0.0, 24 * 365, gt=True)
+COUNT = Int(0, 100_000)
+
+WINDOW = Map(Int(0, 5_000), keys=SOURCES)
+RETRIEVAL = Section(
+    {
+        "new_follow_hours": Int(1, 24 * 30),
+        "new_follow_days": Int(1, 365),
+        "capped_days": Int(1, 365),
+        "groups_days": Int(1, 365),
+        "max_duration_ms": Int(1_000, 3_600_000),
+        "require_portrait": Bool(),
+    },
+    optional=frozenset(
+        {
+            "new_follow_hours",
+            "new_follow_days",
+            "capped_days",
+            "groups_days",
+            "max_duration_ms",
+            "require_portrait",
+        }
+    ),
+)
+POOLS = Section({"window_days": Int(1, 180)})
+ELIGIBILITY = Section({"minor_allowed_topics": ListOf(Int(0, 32_767), max_len=500, unique=True)})
+MEDIA_QUALITY = Section(
+    {
+        "rungs": Map(UNIT, numeric_keys=True),
+        "no_poster_penalty": UNIT,
+        "no_audio_penalty": UNIT,
+    }
+)
+
+# Integrity (02 section 16). Multipliers are in (0, 1]: a demotion, never a removal.
+MULTIPLIER = Num(0.0, 1.0, gt=True)
+INTEGRITY = Section(
+    {
+        "pending_report_min_reporters": Int(1, 1_000),
+        "exclude_pending_from_discovery": Bool(),
+        "pending_report_multiplier": MULTIPLIER,
+        "duplicate_multiplier": MULTIPLIER,
+        "simhash_max_distance": Int(0, 16),
+        "simhash_author_window_days": Int(1, 365),
+        "simhash_public_window_hours": Int(1, 24 * 30),
+        "simhash_min_tokens": Int(1, 100),
+        "bait_multiplier": MULTIPLIER,
+        "bait_min_score": UNIT,
+        "spam_flag_multiplier": MULTIPLIER,
+        "spam_flag_rate_threshold": UNIT,
+        "spam_flag_min_flags": Int(1, 1_000),
+        "max_posts_24h": Int(1, 10_000),
+        # 0 turns the rule off (home@1: today's rates count every reaction).
+        "suspect_account_age_hours": Int(0, 24 * 30),
+        "suspect_burst_per_min": Int(0, 10_000),
+    },
+    optional=frozenset(
+        {
+            "pending_report_multiplier",
+            "duplicate_multiplier",
+            "simhash_max_distance",
+            "simhash_author_window_days",
+            "simhash_public_window_hours",
+            "simhash_min_tokens",
+            "bait_multiplier",
+            "bait_min_score",
+            "spam_flag_multiplier",
+            "spam_flag_rate_threshold",
+            "spam_flag_min_flags",
+            "max_posts_24h",
+            "suspect_account_age_hours",
+            "suspect_burst_per_min",
+        }
+    ),
+)
+
+# The ranked value model (02 section 6.4). Every term has a weight; a weight of 0
+# turns the term off (home@1 keeps only today's terms).
+WEIGHTS = Section(
+    {
+        "s_meaningful": WEIGHT,
+        "s_like": WEIGHT,
+        "s_comment": WEIGHT,
+        "s_share": WEIGHT,
+        "s_save": WEIGHT,
+        "s_complete": WEIGHT,
+        "exp_watch": WEIGHT,
+        "engagement": WEIGHT,
+        "interest": WEIGHT,
+        "explicit_multiplier": Num(0.0, 10.0),
+        "relationship": WEIGHT,
+        "freshness": WEIGHT,
+        "quality": WEIGHT,
+        "originality": WEIGHT,
+        "negative": WEIGHT,
+    }
+)
+# Today's raw engagement term: log1p(r·reactions + c·comments + s·shares) − f·log1p(flags).
+ENGAGEMENT = Section(
+    {
+        "reaction": Num(0.0, 100.0),
+        "comment": Num(0.0, 100.0),
+        "share": Num(0.0, 100.0),
+        "flag_weight": Num(0.0, 100.0),
+    }
+)
+PRIOR_KINDS = ("like", "comment", "share", "save", "hide")
+TYPE_PRIORS = Section(
+    {
+        **{k: Pair() for k in PRIOR_KINDS},
+        "complete_by_bucket_s": Map(Pair(), numeric_keys=True),
+    },
+    optional=frozenset({"complete_by_bucket_s"}),
+)
+PREDICTOR = Section(
+    {
+        "name": Str(("rules",)),
+        "c_aff": COEF,
+        "c_int": COEF,
+        "c_disc": COEF,
+        "c_conv": COEF,
+        "c_dis": COEF,
+        "c_neg": COEF,
+        "c_reason": Map(COEF, keys=REASONS),
+        # ``default`` applies to a type without its own priors.
+        "priors": Map(TYPE_PRIORS, keys=(*POST_TYPES, "default"), required=("default",)),
+    }
+)
+RELATIONSHIP = Section(
+    {
+        "reason_prior": Map(Num(-10.0, 10.0), keys=REASONS),
+        "favorite_bonus": WEIGHT,
+        "affinity_weight": WEIGHT,
+        "dislike_weight": WEIGHT,
+        "dislike_cap": Int(0, 100),
+        "shared_group_weight": WEIGHT,
+        "conversation_weight": WEIGHT,
+        "conversation_days": Int(1, 365),
+    }
+)
+FRESHNESS = Section({"half_life_hours": HALF_LIFE_H})
+ORIGINALITY = Section({"original": UNIT, "reshare": UNIT})
+DIVERSITY = Section(
+    {
+        "enabled": Bool(),
+        "max_per_author_page": Int(1, 100),
+        "author_gap": Int(0, 100),
+        "max_topic_share": UNIT,
+        "max_same_format_run": Int(1, 100),
+        "lambda": Num(0.0, 10.0),
+        "window_factor": Int(1, 10),
+        "page_size": Int(1, 100),
+        "sim_weights": Section(
+            {"author": UNIT, "topics": UNIT, "type": UNIT},
+            sums_to_one=("author", "topics", "type"),
+        ),
+    }
+)
+RANKING = Section({"sources": ListOf(Str(SOURCES), min_len=1, max_len=len(SOURCES), unique=True)})
+# The sources the Home ranker can retrieve (``intel.ranking.home.SOURCE_FUNCS``).
+HOME_SOURCES = ("connections", "follow_pull", "groups")
+HOME_RANKING = Section(
+    {"sources": ListOf(Str(HOME_SOURCES), min_len=1, max_len=len(HOME_SOURCES), unique=True)}
+)
+SESSION = Section({"ttl_s": Int(60, 24 * 3600)})
+FEEDBACK = Section({"snooze_days": Int(1, 365)})
+# Blocks owned by other WPs (4.6 modes, 4.7 peek, 4.8 why, 4.9 ads): validated here
+# so the one schema covers the whole version.
+MODES = Section({"recent_includes_groups": Fixed(False, "group rows join the recent mode")})
+PEEK = Section({"max_since_hours": Int(1, 24 * 30)})
+ADS = Section(
+    {
+        "slots": ListOf(Int(0, 1_000), max_len=10, unique=True),
+        "first_page_only": Fixed(True, "ads on later pages"),
+    },
+    optional=frozenset({"first_page_only"}),
+)
+WHY = Section({"max_factors": Int(1, 10), "interacted_min_interactions": Int(0, 1_000)})
+
+_HEADER = {
+    "schema_version": Int(1, SCHEMA_VERSION),
+    "surface": Str(SURFACES),
+    "version": Int(1, 10**6),
+}
+
+# The ranking blocks every surface may carry; home requires them (WP 4.3), the other
+# surfaces get their rankers in phase 5 and keep them optional until then.
+_RANKING_BLOCKS = {
+    "ranking": RANKING,
+    "weights": WEIGHTS,
+    "engagement": ENGAGEMENT,
+    "predictor": PREDICTOR,
+    "relationship": RELATIONSHIP,
+    "freshness": FRESHNESS,
+    "originality": ORIGINALITY,
+    "diversity": DIVERSITY,
+    "session": SESSION,
+}
+_COMMON = {
+    "window": WINDOW,
+    "retrieval": RETRIEVAL,
+    "pools": POOLS,
+    "integrity": INTEGRITY,
+    "eligibility": ELIGIBILITY,
+    **_RANKING_BLOCKS,
+}
+
+SCHEMAS: dict[str, Section] = {
+    "home": Section(
+        {
+            **_HEADER,
+            **_COMMON,
+            "ranking": HOME_RANKING,
+            "media_quality": MEDIA_QUALITY,
+            "feedback": FEEDBACK,
+            "modes": MODES,
+            "peek": PEEK,
+            "ads": ADS,
+            "why": WHY,
+        },
+        optional=frozenset({"retrieval", "pools", "modes", "peek", "ads", "why"}),
+    ),
+    **{
+        s: Section(
+            {**_HEADER, **_COMMON, "media_quality": MEDIA_QUALITY},
+            optional=frozenset({"retrieval", "pools", "media_quality", *_RANKING_BLOCKS}),
+        )
+        for s in ("reels", "video", "groups")
+    },
+}
+
+
+def validate(surface: str, params: Any) -> list[str]:
+    """Every problem with ``params`` as a version of ``surface`` (empty when valid)."""
+    if surface not in SCHEMAS:
+        return [f"unknown surface {surface!r}"]
+    out: list[str] = []
+    SCHEMAS[surface].check(params, "", out)
+    if isinstance(params, dict) and params.get("surface") not in (None, surface):
+        out.append(f"surface: {params.get('surface')!r} is not {surface!r}")
+    return out
+
+
+def check(surface: str, params: Any) -> None:
+    problems = validate(surface, params)
+    if problems:
+        raise ConfigInvalid(problems)

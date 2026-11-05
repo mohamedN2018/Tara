@@ -11,6 +11,8 @@ Writes go through ``intel.signals.store`` (``COPY`` for client batches, one
 
 from __future__ import annotations
 
+import uuid
+
 from django.contrib.postgres.fields import ArrayField
 from django.core.validators import RegexValidator
 from django.db import models
@@ -259,8 +261,11 @@ class ContentRef(models.Model):
     lang = models.CharField(max_length=5, default="und")
     hashtags = ArrayField(models.CharField(max_length=80), default=list, blank=True)
     media_ids = ArrayField(models.UUIDField(), default=list, blank=True)
-    simhash = models.BigIntegerField(null=True)  # duplicates (phase 7)
-    bait_score = models.FloatField(null=True)  # lexicon (phase 7)
+    # WP 4.4 integrity, from the excerpt at write time (``intel.integrity``): the
+    # 64-bit SimHash (signed), the oldest live near-copy it duplicates, the bait score.
+    simhash = models.BigIntegerField(null=True)
+    dup_of = models.UUIDField(null=True)
+    bait_score = models.FloatField(null=True)
     state = models.CharField(max_length=8, choices=State.choices, default=State.LIVE)
     # The author's account is deactivated (``post.hidden``): kept apart from
     # ``state`` so an edit or a moderation approval never shows a held post.
@@ -439,3 +444,121 @@ class FanoutCapped(models.Model):
     class Meta:
         db_table = "intel_fanout_capped"
         indexes = [models.Index(fields=["author_id", "-created_at"], name="intel_fcap_author_idx")]
+
+
+class FeedMode(models.TextChoices):
+    """The Home modes (02 section 9). ``recent`` is the strictly chronological one."""
+
+    FOR_YOU = "for_you", "For you"
+    FOLLOWING = "following", "Following"
+    FRIENDS = "friends", "Friends"
+    FAVORITES = "favorites", "Favorites"
+    RECENT = "recent", "Most recent"
+
+
+def _default_discovery_prefs() -> dict:
+    return {
+        "new_creators": True,
+        "trending": True,
+        "people_suggestions": True,
+        "page_suggestions": True,
+        "group_suggestions": True,
+        "other_languages": False,
+    }
+
+
+class UserPreference(models.Model):
+    """One row per account: My Algorithm settings (03 section 2.3).
+
+    WP 4.6 serves ``default_mode`` only (the remembered Home mode). The other
+    columns carry their documented defaults so later phases add behaviour, not
+    columns; nothing reads them before the phase that wires them. ``default_mode``
+    is empty until the viewer picks a mode: the server default then applies.
+    """
+
+    account_id = models.UUIDField(primary_key=True)
+    default_mode = models.CharField(max_length=10, choices=FeedMode.choices, blank=True, default="")
+    discovery_level = models.SmallIntegerField(default=2)
+    # Empty means "the account's own language" (plus ``und``), resolved at read time.
+    languages = ArrayField(models.CharField(max_length=5), default=list, blank=True)
+    formats = models.JSONField(default=dict, blank=True)
+    discovery_prefs = models.JSONField(default=_default_discovery_prefs, blank=True)
+    sensitive_inference = models.BooleanField(default=False)
+    onboarded_at = models.DateTimeField(null=True, blank=True)
+    personalization_off = models.BooleanField(default=False)
+    version = models.IntegerField(default=1)  # optimistic concurrency
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "intel_user_preference"
+
+
+# ---- Phase 4: the central ranking config (03 section 2.7; WP 4.1) -------------------
+
+
+class RankingConfig(models.Model):
+    """One version of a surface's ranking params. Immutable once it leaves ``draft``:
+    ``save()`` refuses a params change and a DB trigger (``intel/0004``) rejects any
+    ``UPDATE`` of ``params`` (or a ``DELETE``) of a non-draft row. Exactly one version
+    per surface is ``active`` (partial unique constraint)."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        ACTIVE = "active", "Active"
+        ARCHIVED = "archived", "Archived"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    surface = models.CharField(max_length=12, choices=Surface.choices)
+    version = models.IntegerField()
+    status = models.CharField(max_length=8, choices=Status.choices, default=Status.DRAFT)
+    params = models.JSONField()
+    schema_version = models.SmallIntegerField(default=1)
+    note = models.CharField(max_length=300, blank=True, default="")
+    created_by = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    activated_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "intel_ranking_config"
+        constraints = [
+            models.UniqueConstraint(fields=["surface", "version"], name="intel_rcfg_version_uniq"),
+            models.UniqueConstraint(
+                fields=["surface"],
+                condition=models.Q(status="active"),
+                name="intel_rcfg_one_active",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            stored = type(self).objects.filter(pk=self.pk).values_list("status", "params").first()
+            if stored and stored[0] != self.Status.DRAFT and stored[1] != self.params:
+                raise ValueError(f"{self.surface}@{self.version} is not a draft: params are frozen")
+        super().save(*args, **kwargs)
+
+
+class RankingConfigChange(models.Model):
+    """The change log: one row per create, activation, rollback (mirrored to admin's
+    ``AuditEntry`` by ``intel.config.changed``). The free-text reason stays here."""
+
+    class Action(models.TextChoices):
+        CREATED = "created", "Created"
+        ACTIVATED = "activated", "Activated"
+        ROLLED_BACK = "rolled_back", "Rolled back"
+        PAUSED = "paused", "Paused"
+        EXPERIMENT_STARTED = "experiment_started", "Experiment started"
+        EXPERIMENT_STOPPED = "experiment_stopped", "Experiment stopped"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    surface = models.CharField(max_length=12, choices=Surface.choices)
+    from_version = models.IntegerField(null=True, blank=True)
+    to_version = models.IntegerField()
+    action = models.CharField(max_length=20, choices=Action.choices)
+    diff = models.JSONField(default=list, blank=True)
+    reason = models.CharField(max_length=500, blank=True, default="")
+    actor_id = models.UUIDField(null=True, blank=True)  # null: the system
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "intel_ranking_config_change"
+        indexes = [models.Index(fields=["surface", "-created_at"], name="intel_rcfg_change_idx")]

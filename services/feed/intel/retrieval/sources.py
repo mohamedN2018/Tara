@@ -43,6 +43,10 @@ class Candidate:
     reason: str
     created_at: datetime | None
     type: str = ""
+    # Connections only: the viewer's ``FeedItem`` (its id breaks ranking ties exactly
+    # as ``feed/ranking.py`` did, its stored score is the engagement fallback).
+    item_id: str | None = None
+    stored_score: float | None = None
 
 
 def _rows(sql: str, params: dict) -> list[tuple]:
@@ -66,7 +70,14 @@ def connections(viewer_id, cfg: SurfaceConfig, types: tuple[str, ...] | None = N
     limit = cfg.get(f"window.{CONNECTIONS}" if types is None else f"window.{cfg.surface}")
     return [
         Candidate(
-            r["post_id"], r["author_id"], CONNECTIONS, r["reason"], r["post_created_at"], r["type"]
+            r["post_id"],
+            r["author_id"],
+            CONNECTIONS,
+            r["reason"],
+            r["post_created_at"],
+            r["type"],
+            item_id=r.get("id"),
+            stored_score=r.get("score"),
         )
         for r in ports.connection_rows(viewer_id, limit, types)
     ]

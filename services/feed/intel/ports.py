@@ -21,8 +21,8 @@ def post_ids_by_author(author_id) -> list[str]:
 
 def connection_rows(viewer_id, limit: int, types: tuple[str, ...] | None = None) -> list[dict]:
     """The viewer's newest ``limit`` visible feed rows (``feed_recipient_idx``):
-    ``[{post_id, author_id, reason, type, post_created_at}]``. ``types`` keeps only
-    rows whose snapshot has one of those post types (reels, videos)."""
+    ``[{id, post_id, author_id, reason, type, score, post_created_at}]``. ``types``
+    keeps only rows whose snapshot has one of those post types (reels, videos)."""
     from feed.ranking import visible_items
 
     rows = visible_items(viewer_id)
@@ -30,14 +30,16 @@ def connection_rows(viewer_id, limit: int, types: tuple[str, ...] | None = None)
         rows = rows.filter(snapshot__type__in=list(types))
     return [
         {
+            "id": str(r["id"]),
             "post_id": str(r["post_id"]),
             "author_id": str(r["author_id"]),
             "reason": r["reason"],
             "type": (r["snapshot"] or {}).get("type") or "",
+            "score": r["score"],
             "post_created_at": r["post_created_at"],
         }
         for r in rows.order_by("-post_created_at", "-id").values(
-            "post_id", "author_id", "reason", "snapshot", "post_created_at"
+            "id", "post_id", "author_id", "reason", "snapshot", "score", "post_created_at"
         )[:limit]
     ]
 
@@ -199,3 +201,15 @@ def visible_feed_rows(viewer_id) -> list[tuple]:
             "post_id", "author_id", "snapshot", "post_created_at"
         )
     ]
+
+
+def set_registered_at(account_id, when) -> None:
+    """``account.registered``: kept once (the first time seen wins; replays change nothing)."""
+    from feed.models import AuthorRef
+
+    from .readmodels import EPOCH
+
+    AuthorRef.objects.get_or_create(account_id=account_id, defaults={"occurred_at": EPOCH})
+    AuthorRef.objects.filter(account_id=account_id, registered_at__isnull=True).update(
+        registered_at=when
+    )

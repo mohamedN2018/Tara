@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/intel.config.changed.v1.json",
+  "title": "intel.config.changed v1 payload",
+  "description": "A ranking config version of one surface was created, activated or rolled back (feed, Tara Intelligence WP 4.1). Emitted in the transaction that writes the intel_ranking_config_change row. The actor is the envelope's actor_id (null: the system). Ids, enums and numbers only: the free-text reason stays in feed's change log, the payload says only whether one was given. subject_id is '<surface>@<to_version>'. Behind INTEL_EMIT_CONFIG_CHANGED (default on). Consumer: admin (AuditEntry).",
+  "type": "object",
+  "properties": {
+    "surface": {"type": "string", "enum": ["home", "reels", "video", "groups", "marketplace", "discovery"]},
+    "action": {
+      "type": "string",
+      "enum": ["created", "activated", "rolled_back", "paused", "experiment_started", "experiment_stopped"]
+    },
+    "from_version": {"type": ["integer", "null"], "minimum": 1},
+    "to_version": {"type": "integer", "minimum": 1},
+    "experiment": {"type": ["string", "null"], "maxLength": 60},
+    "reason_present": {"type": "boolean"}
+  },
+  "required": ["surface", "action", "from_version", "to_version", "experiment", "reason_present"],
+  "additionalProperties": false
+}

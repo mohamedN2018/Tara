@@ -169,3 +169,11 @@ def intel_rm_account_suspended(event: EventEnvelope) -> None:
 @on_event("account.unsuspended")
 def intel_rm_account_unsuspended(event: EventEnvelope) -> None:
     _lifecycle(event, "suspended", False)
+
+
+@on_event("account.registered")
+def intel_rm_account_registered(event: EventEnvelope) -> None:
+    """WP 4.4: the account's registration time (suspect engagement, ``integrity``)."""
+    account_id = readmodels.uid(event.subject_id)
+    if account_id is not None:
+        ports.set_registered_at(account_id, _when(event))

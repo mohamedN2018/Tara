@@ -24,6 +24,7 @@ x-feed-intel-env: &feed-intel-env
   INTEL_SYNTHETIC_IN_RANKING: ${INTEL_SYNTHETIC_IN_RANKING:-true}
   INTEL_SIGNAL_RETENTION_DAYS: ${INTEL_SIGNAL_RETENTION_DAYS:-90}
   INTEL_ENGAGEMENT_RETENTION_DAYS: ${INTEL_ENGAGEMENT_RETENTION_DAYS:-30}
+  INTEL_EMIT_CONFIG_CHANGED: ${INTEL_EMIT_CONFIG_CHANGED:-true}
 
 services:
   # ---- Backing services ----------------------------------------------------

@@ -25,7 +25,16 @@ import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
 import StoriesRail from "@/components/stories/StoriesRail.vue";
 import { itemKey, noteServed } from "@/lib/signals";
 import { realtime } from "@/lib/ws";
-import { FEED_MODES, type FeedMode, type FeedReason, feedService, type HideReason, hydrateFeed } from "@/services/feed";
+import {
+  DEFAULT_AD_SLOTS,
+  FEED_MODES,
+  type FeedMode,
+  type FeedReason,
+  feedService,
+  type HideReason,
+  hydrateFeed,
+  isFeedMode,
+} from "@/services/feed";
 import { graphService } from "@/services/graph";
 import { postService, REPORT_ERRORS } from "@/services/post";
 import { useDirectoryStore } from "@/stores/directory";
@@ -40,6 +49,16 @@ const router = useRouter();
 
 const posts = ref<Post[]>([]);
 const sponsored = ref<SponsoredSlot[]>([]);
+// Where ads go (WP 4.9): the server's `meta.ad_slots`, today `[4]`. Slot k shows
+// sponsored[k]; the first one moves to the right column when it is visible.
+const adSlots = ref<number[]>([...DEFAULT_AD_SLOTS]);
+function adAt(i: number): SponsoredSlot | null {
+  const k = adSlots.value.indexOf(i);
+  if (k < 0 || !sponsored.value[k]) return null;
+  return k === 0 && railVisible.value ? null : sponsored.value[k];
+}
+// Server time of the first page: the "new posts" peek asks for rows after it.
+const asOf = ref<string | undefined>(undefined);
 const cursor = ref<string | null>(null);
 const hasMore = ref(true);
 const loading = ref(true);
@@ -48,34 +67,45 @@ const error = ref(false);
 
 // Ranking mode (2A). The switcher shows once the server says it applied the
 // mode asked for; a server without modes ignores the parameter.
+// Precedence (WP 4.6): a `?mode=` link, then the mode the server remembers for
+// this account (`/feed/preferences/`), then this browser's copy, then the default.
 const MODE_KEY = "tara.feedMode";
-// Latest is the order Home always had (feed's own default); For you is one tap away.
+// Latest is the order Home always had (feed's own default, owner decision 5).
 const DEFAULT_MODE: FeedMode = "recent";
-function savedMode(): FeedMode {
+function storedMode(): FeedMode | undefined {
   try {
     const v = localStorage.getItem(MODE_KEY);
-    return (FEED_MODES as readonly string[]).includes(v ?? "") ? (v as FeedMode) : DEFAULT_MODE;
+    return isFeedMode(v) ? v : undefined;
   } catch {
-    return DEFAULT_MODE;
+    return undefined;
+  }
+}
+function storeMode(m: FeedMode) {
+  try {
+    localStorage.setItem(MODE_KEY, m);
+  } catch {
+    // Remembered on the server, or for this visit only.
   }
 }
 // A `?mode=` link (left rail "Feeds", feed preferences) wins over the remembered one.
 function queryMode(): FeedMode | null {
   const q = route.query.mode;
-  return typeof q === "string" && (FEED_MODES as readonly string[]).includes(q) ? (q as FeedMode) : null;
+  return isFeedMode(q) ? q : null;
 }
-const mode = ref<FeedMode>(queryMode() ?? savedMode());
+const mode = ref<FeedMode>(queryMode() ?? storedMode() ?? DEFAULT_MODE);
+// Until the first page answers, the server picks the mode (its remembered one).
+let modeResolved = queryMode() !== null;
 // Why each post reached this feed (feed's reason): "Why am I seeing this post?".
 const reasons = ref<Record<string, FeedReason>>({});
 const modesSupported = ref(false);
-function setMode(next: FeedMode) {
+// `remember`: a pick in the switcher is the viewer's default, kept for the account
+// so a new browser opens on it (WP 4.6); following a `?mode=` link is not.
+function setMode(next: FeedMode, remember = false) {
   if (next === mode.value) return;
   mode.value = next;
-  try {
-    localStorage.setItem(MODE_KEY, next);
-  } catch {
-    // Remembered for this visit only.
-  }
+  modeResolved = true;
+  storeMode(next);
+  if (remember) void feedService.setDefaultMode(next).catch(() => undefined);
   if (route.query.mode !== next) void router.replace({ query: { ...route.query, mode: next } });
   hidden.value = {};
   snoozedAuthors.value = new Set();
@@ -107,9 +137,16 @@ async function load(initial = false) {
   }
   const run = generation;
   try {
-    const page = await feedService.page(initial ? undefined : (cursor.value ?? undefined), mode.value);
+    const asked = modeResolved ? mode.value : undefined;
+    const page = await feedService.page(initial ? undefined : (cursor.value ?? undefined), asked, asked ? undefined : storedMode());
     if (run !== generation) return;
     if (page.modeApplied) modesSupported.value = true;
+    if (!modeResolved && page.mode) {
+      // The server's remembered mode (or this browser's copy) is the one served.
+      mode.value = page.mode;
+      storeMode(page.mode);
+    }
+    modeResolved = true;
     const known = new Set(initial ? [] : posts.value.map((p) => p.id));
     const fresh = page.posts.filter((p) => !known.has(p.id));
     const offset = initial ? 0 : posts.value.length;
@@ -119,6 +156,8 @@ async function load(initial = false) {
     reasons.value = initial ? { ...page.reasons } : { ...reasons.value, ...page.reasons };
     if (initial) {
       sponsored.value = page.sponsored;
+      adSlots.value = page.adSlots ?? [...DEFAULT_AD_SLOTS];
+      asOf.value = page.asOf;
       // On wide screens the first slot shows in the right column instead of the feed.
       setRailAd(page.sponsored[0]);
     }
@@ -329,12 +368,13 @@ let unsubs: Array<() => void> = [];
 const known = (id: string) => posts.value.some((p) => p.id === id) || pending.value.some((p) => p.id === id);
 
 // The push goes to every recipient, whatever their mode, snoozes or mutes: the
-// server's own top page for the current mode decides what the pill may offer.
+// server's peek for the current mode decides what the pill may offer. A peek
+// never replaces the ranking session nor asks for ads (D4, WP 4.7).
 // `only`: keep just these pushed ids; null keeps every new item (catch-up).
 async function addFromTop(only: Set<string> | null) {
   const run = generation;
   try {
-    const { data } = await feedService.home(undefined, mode.value);
+    const { data } = await feedService.peek(mode.value, asOf.value);
     if (run !== generation) return;
     const items = data.filter(
       (item) => (!only || only.has(item.post_id)) && !known(item.post_id) && !snoozedAuthors.value.has(item.author_id),
@@ -437,7 +477,7 @@ onUnmounted(() => {
               : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
           "
           :aria-pressed="mode === m"
-          @click="setMode(m)"
+          @click="setMode(m, true)"
         >
           {{ t(`homeFeed.modes.${m}`) }}
         </button>
@@ -527,10 +567,7 @@ onUnmounted(() => {
           <ReelsRail v-if="i === Math.min(3, posts.length - 1)" />
           <!-- Narrow screens have no right column: its "People you may know" comes into the feed as a strip. -->
           <PeopleYouMayKnowStrip v-if="!railVisible && i === Math.min(2, posts.length - 1)" />
-          <SponsoredCard
-            v-if="i % 5 === 4 && sponsored[Math.floor(i / 5)] && !(i === 4 && railVisible)"
-            :ad="sponsored[Math.floor(i / 5)]"
-          />
+          <SponsoredCard v-if="adAt(i)" :ad="adAt(i)!" />
         </template>
 
         <div v-if="hasMore" ref="sentinel" class="py-4 text-center">

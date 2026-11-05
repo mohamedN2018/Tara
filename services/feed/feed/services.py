@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from django.conf import settings
 from django.db import transaction
@@ -450,16 +450,21 @@ def relabel_friend_items_for(
     return changed
 
 
-MODES = ("for_you", "recent", "favorites", "following")
-DEFAULT_MODE = "recent"  # what the web client asked for before modes existed
+MODES = ("for_you", "recent", "favorites", "following", "friends")
+# What the web client asked for before modes existed, and the Home default until
+# the phase-4b rotation ships (owner decisions 5 and 25). A viewer's remembered
+# mode (``intel_user_preference.default_mode``, WP 4.6) wins over it.
+DEFAULT_MODE = "recent"
 
 
 def home_feed(recipient_id: str, mode: str = DEFAULT_MODE):
     """The chronological modes (``for_you`` is ranked: see ``ranking``).
 
     ``recent`` is the old order, ``favorites`` keeps authors the viewer favorites
-    in Graph, ``following`` keeps accounts and pages the viewer follows. Every
-    mode leaves out what the viewer hid, snoozed or muted.
+    in Graph, ``following`` keeps accounts and pages the viewer follows, and
+    ``friends`` keeps the rows that reached the viewer as a friend of the author
+    (``reason=friend``, WP 4.6). Every mode leaves out what the viewer hid,
+    snoozed or muted.
     """
     items = ranking.visible_items(recipient_id)
     if mode == "favorites":
@@ -470,4 +475,30 @@ def home_feed(recipient_id: str, mode: str = DEFAULT_MODE):
         items = items.filter(
             Q(reason=Reason.FOLLOW) | Q(author_id__in=readmodels.followed_ids(recipient_id))
         ).exclude(author_id=recipient_id)
+    elif mode == "friends":
+        items = items.filter(reason=Reason.FRIEND).exclude(author_id=recipient_id)
     return items.order_by("-post_created_at")
+
+
+# Realtime "new posts" peek (D4, WP 4.7): the newest rows above ``since``,
+# chronological for every mode, never ranked. It reads only: no ranking session
+# is written or replaced and no ads call is made.
+
+
+def peek(recipient_id: str, mode: str, since: datetime | None, size: int, max_since_hours):
+    """``(rows, new_count)`` for the pill. ``for_you`` peeks its own candidates,
+    the viewer's fan-out rows; the chronological modes peek themselves. ``since``
+    is clamped to ``max_since_hours`` ago (``peek.max_since_hours`` in the config)."""
+    if mode == "for_you":
+        items = ranking.visible_items(recipient_id)
+    else:
+        items = home_feed(recipient_id, mode)
+    floor = timezone.now() - timedelta(hours=max_since_hours)
+    if since is None or since < floor:
+        since = floor
+    # Rows that reached the viewer after ``since`` (fan-out time, not post time:
+    # a post written just before the first page but fanned out after it counts).
+    items = items.filter(created_at__gt=since, post_created_at__gt=floor)
+    rows = list(items.order_by("-post_created_at", "-id")[:size])
+    count = len(rows) if len(rows) < size else items.count()
+    return rows, count

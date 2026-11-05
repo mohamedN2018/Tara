@@ -1,0 +1,78 @@
+# Engagement-bait phrases, Arabic (MSA and Egyptian). One phrase per line; matched as
+# whole words after tara_common.text.normalize_ar (alef, yeh, teh marbuta folded,
+# diacritics removed), so spelling variants meet. A phrase asks for an action in
+# exchange for nothing but reach: share, like, comment, tag, follow. Changing this
+# file changes stored bait scores: bump intel.integrity.CLASSIFIER_VERSION and rerun
+# the content backfill. Gold set: intel/tests/fixtures/bait_gold.jsonl.
+اعمل شير
+اعملوا شير
+اعمل شير للبوست
+شير للبوست
+شير يا جماعه
+شير لو سمحت
+شيروا
+شير بسرعه
+لايك لو
+لايك واعمل شير
+اعمل لايك
+اعملوا لايك
+دوس لايك
+لايك للصفحه
+لايك وشير
+لايك وكومنت
+لايك و شير
+علق بكلمه
+اكتب تم
+اكتب في كومنت
+اكتب في الكومنت
+اكتب كلمه
+اكتب اسمك
+اكتب امين
+قول امين
+قولوا امين
+اكتب سبحان الله
+منشن صاحبك
+منشن لصاحبك
+منشن حد
+منشن اصحابك
+اعمل منشن
+اعمل تاج
+تاج لصاحبك
+لو انت معايا
+لو موافق اعمل
+لو انت مصري
+لو عاوز الحلقه
+لو عايز الحلقه
+عاوز الجزء التاني
+عايز الجزء التاني
+لو عايز الرابط
+لو عاوز الرابط
+الرابط في اول كومنت
+الرابط في التعليق الاول
+انشر تؤجر
+انشرها تؤجر
+انشر ولك الاجر
+لا تجعلها تقف عندك
+لا تدعها تقف عندك
+لا تخليها تقف عندك
+شاركها
+شاركوا المنشور
+شارك المنشور
+ساعدونا نوصل
+نفسي نوصل
+خلونا نوصل
+عاوزين نوصل
+تابع الصفحه
+تابعوا الصفحه
+تابع الصفحه وفعل
+فعل الجرس
+اعمل فولو
+فولو للصفحه
+ادعم الصفحه
+علق بنعم
+علق بتم
+اكتب نعم
+لو بتحبه اكتب
+لو بتحبها اكتب
+لو بتحب ربنا
+لو بتحب النبي

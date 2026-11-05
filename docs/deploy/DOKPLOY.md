@@ -995,6 +995,40 @@ it does not conflict.
   (`share_account_idx`, partial `post_type_published_idx`; both
   `CREATE INDEX CONCURRENTLY`, non-atomic, like `0012`).
 
+### Upgrading: Tara Intelligence ranking core (WP 4.1 to 4.5, 4.10)
+
+- **New variable, optional:** on feed `INTEL_EMIT_CONFIG_CHANGED` (default `true`).
+  Every create, activation or rollback of a ranking config version emits
+  `intel.config.changed`, which admin records as an `AuditEntry`. Admin's consumer
+  ships in the same release; on an existing install deploy admin first, or deploy
+  once with `false` and turn it on after (the change log in feed is written
+  either way).
+- **Migrations (feed, additive, run at boot):** `intel.0004_ranking_config` (the
+  versioned config store, an immutability trigger, and version 1 of `home`,
+  `reels`, `video`, `groups` loaded **active** from `intel/config/defaults/`, plus
+  `home@2` as a **draft**), `intel.0005_content_integrity` (`dup_of`) and
+  `feed.0010_integrity_signals` (`author_ref.registered_at`, `reaction_state.suspect`
+  and `reaction_state_reactor_idx`, `CREATE INDEX CONCURRENTLY`, non-atomic).
+- **Behaviour:** none by default. `home@1` (active) is today's "for you" formula
+  exactly (golden test). `home@2` (groups and follow pull in "for you", rule
+  predictions, quality, integrity demotions, diversity) is switched on and off by
+  staff only, with a reason:
+
+  ```bash
+  docker compose exec feed python manage.py intel_config show home
+  docker compose exec feed python manage.py intel_config activate home 2 --reason "..." --actor <staff uuid>
+  docker compose exec feed python manage.py intel_config rollback home --reason "..." --actor <staff uuid>
+  ```
+
+  Other processes pick up a new active version within 30 s.
+- **New consumer in `feed-consumer`:** `account.registered` (the registration time,
+  for the suspect-engagement rule, which `home@1` leaves off).
+- **Optional backfill:** rerun `intel_backfill_content` once to compute the
+  SimHash, duplicate links and bait scores of posts created before this release.
+- **Ranking sessions:** the Home session key becomes `feed:rank:home:{viewer}`
+  (24 bytes per item). Sessions from the old key are ignored, so a viewer in the
+  middle of a "for you" scroll at deploy time gets one latest-order fallback page.
+
 ### Backups
 
 `scripts/backup.sh` saves all databases, media and the JWT keys. Run it daily from

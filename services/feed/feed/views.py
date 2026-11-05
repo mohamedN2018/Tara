@@ -7,9 +7,13 @@ inverse row. Items carry ``st``, a serve token that attributes telemetry (WP 2.3
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
+from intel import config, preferences
 from intel.models import EventType, ItemType
 from intel.ranking import serve_tokens
 from intel.signals.server import record as menu_signal
@@ -42,10 +46,59 @@ class SnoozeCursorPagination(CursorPagination):
 
 
 def _mode(request) -> str:
-    mode = request.query_params.get("mode") or services.DEFAULT_MODE
-    if mode not in services.MODES:
+    """The mode to serve: ``?mode=``, else the remembered one, else ``mode_hint``
+    (the client's offline fallback), else the default (WP 4.6). Resolved once."""
+    cached = getattr(request, "_feed_mode", None)
+    if cached:
+        return cached
+    asked = request.query_params.get("mode") or None
+    if asked is not None and asked not in services.MODES:
         raise ValidationError({"mode": [f"Must be one of: {', '.join(services.MODES)}."]})
+    mode = preferences.resolve_mode(
+        request.user.account_id,
+        asked,
+        request.query_params.get("mode_hint"),
+        services.DEFAULT_MODE,
+    )
+    request._feed_mode = mode
     return mode
+
+
+def _since(request):
+    raw = request.query_params.get("since")
+    if not raw:
+        return None
+    when = parse_datetime(raw)
+    if when is None:
+        try:
+            when = datetime.fromtimestamp(float(raw), tz=UTC)
+        except (OverflowError, ValueError) as exc:
+            raise ValidationError({"since": ["An ISO 8601 time or epoch seconds."]}) from exc
+    if timezone.is_naive(when):
+        when = timezone.make_aware(when, UTC)
+    return when
+
+
+def ad_slots() -> list[int]:
+    """Home ad positions from the config (``ads.slots``, default ``[4]``, decision 14):
+    distinct, non-negative indexes, in order. They place ads; they never move organic items."""
+    slots = config.for_surface("home").get("ads.slots")
+    return sorted({int(i) for i in slots if isinstance(i, int) and i >= 0})
+
+
+def sponsored_for_slots(viewer, slots: list[int]) -> list[dict]:
+    """One sponsored object per slot at most, never the same creative twice."""
+    from .ads_client import feed_sponsored
+
+    picked: list[dict] = []
+    for _ in slots:
+        ad = feed_sponsored(viewer)
+        if not ad:
+            break
+        if any(p.get("creative_id") == ad.get("creative_id") for p in picked):
+            break
+        picked.append(ad)
+    return picked
 
 
 def _page_size(request) -> int:
@@ -65,13 +118,24 @@ class HomeFeedView(generics.ListAPIView):
         parameters=[
             OpenApiParameter(
                 "mode", OpenApiTypes.STR, enum=list(services.MODES), default=services.DEFAULT_MODE
-            )
+            ),
+            OpenApiParameter(
+                "mode_hint",
+                OpenApiTypes.STR,
+                enum=list(services.MODES),
+                description="The client's offline fallback, used only without `mode` "
+                "and without a remembered mode.",
+            ),
+            OpenApiParameter("peek", OpenApiTypes.BOOL, description="New rows only (D4)."),
+            OpenApiParameter("since", OpenApiTypes.STR, description="Peek: rows after this."),
         ],
         responses={200: FeedItemSerializer(many=True)},
         tags=["feed"],
     )
     def get(self, request, *args, **kwargs):
         mode = _mode(request)
+        if request.query_params.get("peek") in ("1", "true"):
+            return self._peek(request, mode)
         if mode == "for_you":
             response = self._ranked(request)
         else:
@@ -82,22 +146,45 @@ class HomeFeedView(generics.ListAPIView):
                     request.user.account_id, response.data["data"], mode, offset=None, ranked=False
                 )
             response.data["mode"] = mode
-            # Blend one sponsored slot into the first page; never block organic content.
+            # Ads go in after the organic page is complete (02 section 18), at the
+            # config's slots, on the first page only; they never block organic content.
             if request.query_params.get("cursor") is None:
-                from .ads_client import feed_sponsored
-
-                response.data["sponsored"] = feed_sponsored(request.user.account_id)
+                slots = ad_slots()
+                ads = sponsored_for_slots(request.user.account_id, slots)
+                response.data["sponsored"] = ads[0] if ads else None
+                response.data["sponsored_slots"] = ads
+                response.data["meta"] = {
+                    **response.data.get("meta", {}),
+                    "ad_slots": slots,
+                    "as_of": timezone.now().isoformat(),
+                }
         return response
+
+    def _peek(self, request, mode: str) -> Response:
+        """``?peek=1`` (D4, WP 4.7): new rows for the "new posts" pill. Read only:
+        it never writes or replaces the ranking session and never calls ads."""
+        viewer = request.user.account_id
+        rows, count = services.peek(
+            viewer,
+            mode,
+            _since(request),
+            _page_size(request),
+            config.for_surface("home").get("peek.max_since_hours"),
+        )
+        data = FeedItemSerializer(rows, many=True).data
+        serve_tokens.stamp_home_items(viewer, data, mode, offset=None, ranked=False)
+        return Response({"data": data, "mode": mode, "peek": True, "new_count": count})
 
     def _ranked(self, request) -> Response:
         viewer, size = request.user.account_id, _page_size(request)
         token = request.query_params.get("cursor")
+        claims = getattr(request.user, "claims", None)  # age claims for eligibility
         try:
             if token is None:
-                page, offset = ranking.first_page(viewer, size, timezone.now()), 0
+                page, offset = ranking.first_page(viewer, size, timezone.now(), claims), 0
             else:
                 cursor = ranking.decode_cursor(token)
-                page = ranking.next_page(viewer, token, size)
+                page = ranking.next_page(viewer, token, size, claims)
                 offset = int(cursor.get("o", 0)) if cursor.get("k") == "r" else None
         except ranking.InvalidCursor as exc:
             raise NotFound("Invalid cursor.") from exc
@@ -105,8 +192,18 @@ class HomeFeedView(generics.ListAPIView):
         # page is ranked only while it reads the session (not the latest-order fallback).
         ranked = offset is not None and (token is None or not page.fallback)
         data = FeedItemSerializer(page.items, many=True).data
+        if ranked and page.sources:
+            # Additive (WP 4.3): the candidate source, which the web passes to post's
+            # /posts/batch/ as the ``src`` hint.
+            for item, source in zip(data, page.sources, strict=True):
+                item["source"] = source
         serve_tokens.stamp_home_items(
-            viewer, data, "for_you", offset=offset if ranked else None, ranked=ranked
+            viewer,
+            data,
+            "for_you",
+            offset=offset if ranked else None,
+            ranked=ranked,
+            cfg_version=page.cfg_version if ranked else None,
         )
         return Response(
             {

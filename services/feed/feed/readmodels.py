@@ -121,10 +121,20 @@ def set_reaction(post_id, reactor_id, author_id, active: bool, when: datetime) -
         delta = 1 if active else -1
         bump_stats(post_id, reactions=delta)
         return delta
+    from intel import integrity
+
     with transaction.atomic():
-        delta, _ = _flip(
+        # WP 4.4: a reaction from a brand-new account or inside a burst is excluded
+        # from the rates (never penalized); thresholds in the home config.
+        suspect = integrity.suspect_reaction(reactor, when) if active else None
+        delta, row = _flip(
             ReactionState, {"post_id": post_id, "reactor_id": reactor}, when, active, {}
         )
+        if delta == 1 and row.suspect != bool(suspect):
+            row.suspect = bool(suspect)
+            row.save(update_fields=["suspect"])
+        if delta and row.suspect:
+            return 0  # stored, never counted: its unreact subtracts nothing either
         if delta:
             bump_stats(post_id, reactions=delta)
             bump_affinity(reactor, author_id, delta)

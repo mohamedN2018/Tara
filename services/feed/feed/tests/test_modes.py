@@ -1,0 +1,221 @@
+"""WP 4.6: the five Home modes, the new ``friends`` mode and the remembered mode.
+
+Precedence for a first page without ``?mode=``: the remembered
+``intel_user_preference.default_mode``, then the client's ``mode_hint`` (its
+``localStorage`` fallback), then the default, "Most recent" (owner decisions 5, 25).
+"""
+
+import uuid
+from datetime import timedelta
+
+import pytest
+from django.urls import reverse
+from django.utils import timezone
+from intel import preferences
+from intel.models import UserPreference
+
+from feed import services
+from feed.models import FeedItem, FollowEdge, RelationshipFlag
+
+pytestmark = pytest.mark.django_db
+
+ALL_MODES = ("for_you", "following", "friends", "favorites", "recent")
+
+
+def _acct() -> str:
+    return str(uuid.uuid4())
+
+
+def _item(viewer, author, *, minutes_ago=0, reason="follow"):
+    post_id = str(uuid.uuid4())
+    return FeedItem.objects.create(
+        recipient_id=viewer,
+        post_id=post_id,
+        author_id=author,
+        reason=reason,
+        snapshot={"post_id": post_id, "author_id": author, "audience": "public", "excerpt": "x"},
+        post_created_at=timezone.now() - timedelta(minutes=minutes_ago),
+    )
+
+
+@pytest.fixture(autouse=True)
+def no_ads(monkeypatch):
+    monkeypatch.setattr("feed.ads_client.feed_sponsored", lambda v: None)
+
+
+@pytest.fixture
+def world():
+    """A viewer with own, friend, followed and favorite authors' rows."""
+    viewer, friend, followed, fav = _acct(), _acct(), _acct(), _acct()
+    rows = {
+        "self": [_item(viewer, viewer, minutes_ago=1, reason="self")],
+        "friend": [_item(viewer, friend, minutes_ago=m, reason="friend") for m in (2, 5, 9)],
+        "follow": [_item(viewer, followed, minutes_ago=m) for m in (3, 7)],
+        "fav": [_item(viewer, fav, minutes_ago=4)],
+    }
+    FollowEdge.objects.create(follower_id=viewer, target_id=followed, occurred_at=timezone.now())
+    FollowEdge.objects.create(follower_id=viewer, target_id=fav, occurred_at=timezone.now())
+    RelationshipFlag.objects.create(
+        actor_id=viewer, target_id=fav, kind="favorite", occurred_at=timezone.now()
+    )
+    return viewer, friend, rows
+
+
+def _ids(rows):
+    return [str(r.post_id) for r in rows]
+
+
+def _get(client, **params):
+    resp = client.get(reverse("feed:home-feed"), params)
+    assert resp.status_code == 200, resp.content
+    return resp.json()
+
+
+def test_every_mode_is_served_and_echoed(client_for, world):
+    viewer, _, _ = world
+    client = client_for(viewer)
+    assert set(services.MODES) == set(ALL_MODES)
+    for mode in ALL_MODES:
+        body = _get(client, mode=mode)
+        assert body["mode"] == mode
+        assert body["data"], mode
+
+
+def test_friends_mode_keeps_only_friend_rows_newest_first(client_for, world):
+    viewer, friend, rows = world
+    body = _get(client_for(viewer), mode="friends")
+    assert [i["post_id"] for i in body["data"]] == _ids(rows["friend"])
+    assert {i["author_id"] for i in body["data"]} == {friend}
+    assert all(i["reason"] == "friend" for i in body["data"])
+
+
+def test_friends_mode_paginates_without_repeats(client_for, world):
+    viewer, friend, _ = world
+    for m in range(10, 30):
+        _item(viewer, friend, minutes_ago=m, reason="friend")
+    client, seen, cursor = client_for(viewer), [], None
+    for _ in range(10):
+        params = {"mode": "friends", "limit": 4}
+        if cursor:
+            params["cursor"] = cursor
+        body = _get(client, **params)
+        seen += [i["post_id"] for i in body["data"]]
+        cursor = body["page"]["next_cursor"]
+        if not cursor:
+            break
+    assert len(seen) == len(set(seen)) == 23
+
+
+def test_friends_mode_skips_hidden_and_snoozed(client_for, world):
+    viewer, friend, rows = world
+    client = client_for(viewer)
+    first = str(rows["friend"][0].post_id)
+    assert (
+        client.post(
+            reverse("feed:hide"), {"post_id": first, "reason": "not_interested"}
+        ).status_code
+        == 201
+    )
+    assert first not in [i["post_id"] for i in _get(client, mode="friends")["data"]]
+    assert client.post(reverse("feed:snooze"), {"author_id": friend}).status_code == 201
+    assert _get(client, mode="friends")["data"] == []
+
+
+def test_recent_mode_unchanged(client_for, world):
+    viewer, _, rows = world
+    every = sorted(
+        (r for group in rows.values() for r in group), key=lambda r: r.post_created_at, reverse=True
+    )
+    body = _get(client_for(viewer), mode="recent")
+    assert [i["post_id"] for i in body["data"]] == _ids(every)
+
+
+def test_unknown_mode_is_rejected(client_for, world):
+    viewer, _, _ = world
+    resp = client_for(viewer).get(reverse("feed:home-feed"), {"mode": "popular"})
+    assert resp.status_code == 400
+
+
+# ---- the remembered mode ------------------------------------------------------------
+
+
+def test_default_is_most_recent_without_preference_or_hint(client_for, world):
+    viewer, _, _ = world
+    assert services.DEFAULT_MODE == "recent"
+    assert _get(client_for(viewer))["mode"] == "recent"
+
+
+def test_preferences_get_before_any_choice(client_for):
+    resp = client_for(_acct()).get(reverse("intel:preferences"))
+    assert resp.status_code == 200
+    assert resp.json()["data"] == {"default_mode": None, "version": 0}
+
+
+def test_patch_remembers_the_mode_and_a_new_browser_gets_it(client_for, world):
+    viewer, _, _ = world
+    resp = client_for(viewer).patch(
+        reverse("intel:preferences"), {"default_mode": "friends"}, format="json"
+    )
+    assert resp.status_code == 200, resp.content
+    assert resp.json()["data"]["default_mode"] == "friends"
+    # A new browser: a new client, no ?mode= and no local fallback.
+    assert _get(client_for(viewer))["mode"] == "friends"
+    assert UserPreference.objects.get(account_id=viewer).default_mode == "friends"
+
+
+def test_explicit_mode_beats_remembered_and_remembered_beats_hint(client_for, world):
+    viewer, _, _ = world
+    client = client_for(viewer)
+    assert _get(client, mode_hint="favorites")["mode"] == "favorites"  # nothing remembered
+    preferences.set_default_mode(viewer, "following")
+    assert _get(client, mode_hint="favorites")["mode"] == "following"
+    assert _get(client, mode="for_you", mode_hint="favorites")["mode"] == "for_you"
+
+
+def test_bad_hint_falls_back_to_default(client_for, world):
+    viewer, _, _ = world
+    assert _get(client_for(viewer), mode_hint="nope")["mode"] == "recent"
+
+
+def test_patch_validates_and_versions(client_for):
+    viewer = _acct()
+    client = client_for(viewer)
+    url = reverse("intel:preferences")
+    assert client.patch(url, {"default_mode": "popular"}, format="json").status_code == 400
+    assert client.patch(url, {}, format="json").status_code == 400
+    first = client.patch(url, {"default_mode": "for_you"}, format="json").json()["data"]
+    second = client.patch(
+        url, {"default_mode": "recent", "version": first["version"]}, format="json"
+    ).json()["data"]
+    assert second == {"default_mode": "recent", "version": first["version"] + 1}
+    stale = client.patch(
+        url, {"default_mode": "friends", "version": first["version"]}, format="json"
+    )
+    assert stale.status_code == 409
+    assert UserPreference.objects.get(account_id=viewer).default_mode == "recent"
+    same = client.patch(url, {"default_mode": "recent"}, format="json").json()["data"]
+    assert same["version"] == second["version"]  # no change, no new version
+
+
+def test_preferences_are_per_account(client_for):
+    a, b = _acct(), _acct()
+    client_for(a).patch(reverse("intel:preferences"), {"default_mode": "friends"}, format="json")
+    assert client_for(b).get(reverse("intel:preferences")).json()["data"]["default_mode"] is None
+
+
+def test_preferences_need_authentication():
+    from rest_framework.test import APIClient
+
+    assert APIClient().get(reverse("intel:preferences")).status_code == 401
+    assert APIClient().get(reverse("feed:home-feed")).status_code == 401
+
+
+def test_account_deletion_erases_the_preference():
+    from intel import deletion
+
+    gone, kept = _acct(), _acct()
+    preferences.set_default_mode(gone, "friends")
+    preferences.set_default_mode(kept, "friends")
+    deletion.erase_account(gone)
+    assert not UserPreference.objects.filter(account_id=gone).exists()
+    assert UserPreference.objects.filter(account_id=kept).exists()

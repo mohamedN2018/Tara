@@ -433,6 +433,7 @@ def load_context(viewer: Viewer, candidates: list[Candidate], cfg: SurfaceConfig
 class Result:
     kept: list[Candidate]
     dropped: Counter = field(default_factory=Counter)  # {rule: n}
+    content: dict = field(default_factory=dict)  # recheck: the content rows it read
 
 
 def evaluate(c: Candidate, ctx: Context) -> str | None:
@@ -456,6 +457,152 @@ def filter(  # noqa: A001 - the stage's name in 02 section 6
     result = Result([])
     for c in items:
         rule = evaluate(c, ctx)
+        if rule is None:
+            result.kept.append(c)
+        else:
+            result.dropped[rule] += 1
+    for rule, n in result.dropped.items():
+        metrics.eligibility_dropped(rule, n)
+    return result
+
+
+# ---- later pages: the re-check (WP 4.10) ---------------------------------------------
+
+# A later page re-runs the rules that can change between pages (02 section 22):
+# deletion and moderation, group approval, reel playability, audience, group access,
+# blocks, the viewer's hides, snoozes and mutes, and page status.
+RECHECK = frozenset({"E1", "E1b", "E1c", "E2", "E2b", "E3", "E4", "E5", "E6b"})
+
+_RECHECK_CONTENT_SQL = """
+SELECT c.post_id, c.author_id, c.author_type, c.type, c.audience, c.group_id,
+       c.approval_state, c.reel_state, c.lang, c.state, c.moderation_state,
+       c.pending_reports, c.moderation_open, c.created_at,
+       g.privacy AS g_privacy, g.status AS g_status, m.state AS m_state,
+       p.page_id AS p_page_id, p.owner_id AS p_owner_id, p.status AS p_status,
+       p.deleted AS p_deleted
+FROM intel_content_ref c
+LEFT JOIN intel_group_ref g ON g.group_id = c.group_id
+LEFT JOIN intel_group_membership m ON m.group_id = c.group_id AND m.account_id = %(v)s
+LEFT JOIN intel_page_ref p ON p.page_id = c.author_id
+WHERE c.post_id = ANY(%(posts)s::uuid[])
+"""
+# Everything else the rules read, in one round trip: group owners, blocks either way
+# (with authors, the pages' owners and the groups' owners), friends, follows, hides,
+# snoozes, mutes, and the authors' kind. Rows are (kind, key, value).
+_RECHECK_RELATIONS_SQL = """
+WITH owners AS (
+    SELECT group_id, account_id FROM intel_group_membership
+    WHERE group_id = ANY(%(groups)s::uuid[]) AND role = 'owner' AND state = 'active'),
+others AS (
+    SELECT unnest(%(authors)s::uuid[]) AS id
+    UNION SELECT account_id FROM owners
+    UNION SELECT owner_id FROM intel_page_ref
+          WHERE page_id = ANY(%(authors)s::uuid[]) AND owner_id IS NOT NULL)
+SELECT 'owner', group_id::text, account_id::text FROM owners
+UNION ALL
+SELECT 'blocked', (CASE WHEN low = %(v)s THEN high ELSE low END)::text, NULL
+FROM intel_block_pair
+WHERE (low_blocks OR high_blocks)
+  AND ((low = %(v)s AND high IN (SELECT id FROM others))
+    OR (high = %(v)s AND low IN (SELECT id FROM others)))
+UNION ALL
+SELECT 'friend', friend_id::text, NULL FROM intel_friend_edge
+WHERE account_id = %(v)s AND active AND friend_id = ANY(%(authors)s::uuid[])
+UNION ALL
+SELECT 'follow', target_id::text, NULL FROM follow_edge
+WHERE follower_id = %(v)s AND active AND target_id = ANY(%(authors)s::uuid[])
+UNION ALL
+SELECT 'hidden', post_id::text, NULL FROM post_hide
+WHERE account_id = %(v)s AND post_id = ANY(%(posts)s::uuid[])
+UNION ALL
+SELECT 'snoozed', author_id::text, NULL FROM author_snooze
+WHERE account_id = %(v)s AND until > now() AND author_id = ANY(%(authors)s::uuid[])
+UNION ALL
+SELECT 'muted', target_id::text, NULL FROM relationship_flag
+WHERE actor_id = %(v)s AND kind = 'mute' AND active AND target_id = ANY(%(authors)s::uuid[])
+UNION ALL
+SELECT 'author', account_id::text, kind FROM author_ref
+WHERE account_id = ANY(%(authors)s::uuid[])
+"""
+
+
+def recheck_context(viewer: Viewer, candidates: list[Candidate], cfg: SurfaceConfig) -> Context:
+    """The data ``RECHECK`` needs, in two queries (a next page's budget is 3 to 5)."""
+    posts = sorted({c.post_id for c in candidates})
+    rows = _fetch(_RECHECK_CONTENT_SQL, {"v": viewer.id, "posts": posts})
+    content, groups, memberships, pages = {}, {}, {}, {}
+    for r in rows:
+        content[_s(r["post_id"])] = r
+        if r["group_id"] and r["g_privacy"] is not None:
+            groups[_s(r["group_id"])] = {"privacy": r["g_privacy"], "status": r["g_status"]}
+        if r["group_id"] and r["m_state"] is not None:
+            memberships[_s(r["group_id"])] = {"state": r["m_state"]}
+        if r["p_page_id"] is not None:
+            pages[_s(r["p_page_id"])] = {
+                "owner_id": r["p_owner_id"],
+                "status": r["p_status"],
+                "deleted": r["p_deleted"],
+            }
+    authors = sorted(
+        {_s(r["author_id"]) for r in content.values() if r["author_id"]}
+        | {c.author_id for c in candidates if c.author_id}
+    )
+    group_ids = sorted({_s(r["group_id"]) for r in content.values() if r["group_id"]})
+    group_owners: dict[str, set[str]] = {}
+    sets: dict[str, set[str]] = {
+        k: set() for k in ("blocked", "friend", "follow", "hidden", "snoozed", "muted")
+    }
+    kinds: dict[str, dict] = {}
+    with connection.cursor() as cur:
+        cur.execute(
+            _RECHECK_RELATIONS_SQL,
+            {"v": viewer.id, "authors": authors, "groups": group_ids, "posts": posts},
+        )
+        for kind, key, value in cur.fetchall():
+            if kind == "owner":
+                group_owners.setdefault(key, set()).add(value)
+            elif kind == "author":
+                kinds[key] = {"kind": value, "active": True, "searchable": True}
+            else:
+                sets[kind].add(key)
+    return Context(
+        viewer=viewer,
+        cfg=cfg,
+        content=content,
+        pages=pages,
+        groups=groups,
+        memberships=memberships,
+        group_owners=group_owners,
+        blocked=sets["blocked"],
+        friends=sets["friend"],
+        follows=sets["follow"],
+        authors=kinds,
+        restricted=set(),  # E11 is a discovery rule: not re-checked
+        exclusions={
+            "hidden": sets["hidden"],
+            "snoozed": sets["snoozed"],
+            "muted": sets["muted"],
+            "disliked": set(),
+        },
+    )
+
+
+def recheck(viewer: Viewer, candidates: Iterable[Candidate], cfg: SurfaceConfig) -> Result:
+    """``RECHECK`` on a later page's items (fail closed like ``filter``)."""
+    items = list(candidates)
+    if not items:
+        return Result([])
+    ctx = recheck_context(viewer, items, cfg)
+    result = Result([], content=ctx.content)
+    for c in items:
+        rule = None
+        if c.source not in ALL:
+            rule = "E0"
+        else:
+            for name, applies, fn in RULES:
+                if name in RECHECK and c.source in applies and not fn(c, ctx):
+                    rule = name
+                    break
         if rule is None:
             result.kept.append(c)
         else:

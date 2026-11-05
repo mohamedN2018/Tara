@@ -344,7 +344,7 @@ def test_item_shape_is_unchanged_in_every_mode(client_for, world):
             # Tara Intelligence WP 2.3 (additive): the serve token that attributes
             # this item's telemetry (intel/ranking/serve_tokens.py).
             "st",
-        }
+        } | ({"source"} if mode == "for_you" else set())  # WP 4.3 (additive): src hint
         assert {"next_cursor", "has_more"} <= set(body["page"])
 
 
@@ -575,8 +575,13 @@ def test_redis_hot_down_still_serves_for_you(client_for, world, monkeypatch):
     assert len(set(seen)) == 12  # repeats are possible, a missing post is not
 
 
-def test_rows_beyond_the_window_follow_in_latest_order(client_for, settings):
-    settings.FEED_RANK_WINDOW = 5
+def test_rows_beyond_the_window_follow_in_latest_order(client_for):
+    # The window is ranking config since WP 4.1: a new home version with a window of 5.
+    from intel.config import store
+
+    params = store.defaults("home")
+    params["window"]["connections"] = 5
+    store.activate("home", store.create("home", params), reason="test window")
     viewer, author = _acct(), _acct()
     items = [_item(viewer, author, minutes_ago=i) for i in range(12)]
     pages, _ = _pages(client_for(viewer), "for_you", limit=3)

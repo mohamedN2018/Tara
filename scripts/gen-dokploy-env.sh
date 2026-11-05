@@ -273,6 +273,8 @@ ADS_SERVING_ENABLED=false
 IDENTITY_EMIT_AUDIT_EVENTS=true
 MODERATION_EMIT_AUDIT_EVENTS=true
 MODERATION_EMIT_REINSTATE=true
+# Feed: ranking config changes to admin's audit log (Tara Intelligence WP 4.1).
+INTEL_EMIT_CONFIG_CHANGED=true
 # MODERATION_INTERNAL_URL is fixed in docker-compose.dokploy.yml (WP 3.3 backfills).
 IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS=true
 PROFILE_EMIT_PAGE_UPDATED=true

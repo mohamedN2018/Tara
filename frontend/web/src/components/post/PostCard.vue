@@ -1016,6 +1016,8 @@ const iconCls = "h-5 w-5 shrink-0 text-gray-600 dark:text-gray-300";
       :name="authorDisplay"
       :page="!isUserAuthor"
       :mode="feedMode"
+      :post-id="post.id"
+      :author-id="post.author_id"
       @close="showWhy = false"
     />
     <SaveToCollection v-if="savingTo" :post-id="post.id" @close="savingTo = false" @done="isSaved = true" />

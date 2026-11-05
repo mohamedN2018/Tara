@@ -87,7 +87,7 @@ Events are **never** published directly inside the business transaction. Instead
 ### Identity
 | Event | Subject | Key payload | Main consumers |
 |-------|---------|-------------|----------------|
-| `account.registered` | account | handle?, email_verified=false | Profile (create profile), Notification |
+| `account.registered` | account | handle?, email_verified=false | Profile (create profile), Notification, Feed (registration time in `author_ref.registered_at`, for the suspect-engagement rule, Tara Intelligence WP 4.4) |
 | `account.verified` | account | — | Profile, Notification |
 | `account.suspended` | account | account_id, until (ISO datetime or null: until staff lift it), suspension_id, source (`admin`/`moderation`). **No reason text**: it stays in identity's `account_suspension` row. `actor_id` = the staff member. Emitted in the transaction that suspends the account and revokes its sessions and refresh tokens; behind `IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS` (8.4, 8.6) | Admin (audit log), graph (Tara Intelligence WP 3.3: the account leaves people suggestions and the fan-out audience until `account.unsuspended`; newest event wins). **Open (8.5):** search (hide the owner's documents), chat, ads (pause campaigns), realtime (close sockets, 4403), post/profile |
 | `account.unsuspended` | account | account_id, suspension_id, expired (true: the end date passed and the beat task or a sign-in lifted it; `actor_id` is then null) | Admin (audit log), graph (active again unless still deactivated). Open (8.5): the same consumers as `account.suspended` |
@@ -213,6 +213,7 @@ Profile consumes `moderation.actioned` with `target_type=group` (`remove` suspen
 | Event | Subject | Key payload | Consumers |
 |-------|---------|-------------|-----------|
 | `feed.item.added` | post | recipients[], post_id, author_id (one summary event per fan-out) | Realtime (new-post indicator) |
+| `intel.config.changed` | ranking config | surface, action (`created`, `activated`, `rolled_back`; `paused`, `experiment_started`, `experiment_stopped` reserved for WP 5.4/12.x), from_version (null for a first version), to_version, experiment (null until WP 5.4), reason_present. Tara Intelligence WP 4.1: emitted in the transaction that writes the `intel_ranking_config_change` row; the actor is the envelope's `actor_id` (null = system); the free-text reason never leaves feed. `subject_id` = `<surface>@<to_version>`, `partition_key` = `intel.config:<surface>`. Behind `INTEL_EMIT_CONFIG_CHANGED` (default on). Schema `intel.config.changed.v1.json` | Admin (`AuditEntry`, action `intel.config.<action>`) |
 
 ### Media
 | Event | Subject | Key payload | Consumers |

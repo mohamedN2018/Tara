@@ -4,7 +4,8 @@ A hide takes the post out of every mode and every page for that viewer, and its
 reason feeds the ranking: ``dislike_creator`` and ``annoying`` push the author
 down in the viewer's "for you" feed (``ranking.author_penalties``), ``spam`` and
 ``sexual`` also count against the post for everyone (``PostStats.flags``). A
-snooze keeps an author out of the viewer's feed for ``SNOOZE_DAYS``.
+snooze keeps an author out of the viewer's feed for ``feedback.snooze_days`` days
+(home config, 30 in ``home@1``; Tara Intelligence WP 4.1).
 """
 
 from __future__ import annotations
@@ -20,9 +21,14 @@ from tara_common.exceptions import TaraAPIError
 from . import readmodels, tasks
 from .models import AuthorSnooze, FeedItem, PostHide, PostState
 
-SNOOZE_DAYS = 30
 FLAG_REASONS = frozenset({PostHide.Reason.SPAM, PostHide.Reason.SEXUAL})
 AUTHOR_DOWNWEIGHT_REASONS = frozenset({PostHide.Reason.DISLIKE_CREATOR, PostHide.Reason.ANNOYING})
+
+
+def _snooze_days() -> int:
+    from intel import config
+
+    return config.for_surface("home").get("feedback.snooze_days")
 
 
 def _not_found() -> TaraAPIError:
@@ -107,7 +113,7 @@ def snooze_author(viewer_id, author_id) -> AuthorSnooze:
     snooze, _ = AuthorSnooze.objects.update_or_create(
         account_id=viewer_id,
         author_id=author_id,
-        defaults={"until": now + timedelta(days=SNOOZE_DAYS), "snoozed_at": now},
+        defaults={"until": now + timedelta(days=_snooze_days()), "snoozed_at": now},
     )
     return snooze
 

@@ -102,6 +102,21 @@ def audit_appeal_resolved(env: EventEnvelope) -> None:
     )
 
 
+@on_event("intel.config.changed")
+def audit_intel_config_changed(env: EventEnvelope) -> None:
+    """Tara Intelligence WP 4.1: a ranking config was created, activated or rolled
+    back in feed. The reason text stays in feed's change log (no free text here)."""
+    payload = _payload(env)
+    action = str(payload.get("action") or "changed")[:40]
+    _record(
+        env,
+        f"intel.config.{action}",
+        target_type="ranking_config",
+        target_id=f"{payload.get('surface') or ''}@{payload.get('to_version') or ''}",
+        detail_keys=("surface", "from_version", "to_version", "experiment", "reason_present"),
+    )
+
+
 @on_event("ad.review.decided")
 def audit_ad_review_decided(env: EventEnvelope) -> None:
     _record(

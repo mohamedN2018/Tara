@@ -1,15 +1,9 @@
-"""Feed ranking v1 (roadmap 1.7): a heuristic over freshness, affinity and engagement.
+"""The ranked "for you" mode: pages over a ranking session (1.7; Tara Intelligence 4.3, 4.10).
 
-The "for you" mode ranks the viewer's newest ``FEED_RANK_WINDOW`` feed rows once,
-on the first page, and keeps the ranked ids as a session in ``redis-hot``. Later
-pages read their slice of that list through a signed opaque cursor, so posts that
-arrive meanwhile never shift a page or repeat one. When the window runs out the
-cursor continues in latest order below the window's oldest row. When the session
-is gone (expired, replaced by a newer first page, or ``redis-hot`` down), the
-cursor falls back to latest order from the session's start time and the page
-says ``fallback: true`` (the client drops posts it already shows).
-
-Score, for one row:
+Ranking itself lives in ``intel.ranking`` and reads every weight from the active
+home config (``intel.config``): ``rank_items`` and ``first_page`` always delegate
+to ``intel.ranking.home.rank``. With ``home@1`` (active by default) that is
+today's formula exactly, over the viewer's newest ``window.connections`` feed rows:
 
     3 * freshness                   2 ** -(age in hours / 24)
   + reason affinity                 self 0.3, friend 1.0, follow 0.6
@@ -18,18 +12,27 @@ Score, for one row:
   - 0.75 * dislikes (at most 3)     ``dislike_creator`` / ``annoying`` hides of the author
   + 0.5 * engagement                the post's ``PostStats`` (``readmodels.engagement_score``)
 
-With no engagement yet (every post before 1.7) this is close to chronological.
-Candidates are the viewer's own fan-out rows (self, friend, follow): nothing is
-recommended from outside the viewer's connections, and a row from anywhere else
-whose author is ``searchable=false`` is dropped.
+``home@2`` adds the group and follow-pull sources, the rule predictions, quality,
+integrity demotions and the diversity re-ranker (``intel/config/defaults/home.v2.json``).
+
+The first page stores the ranked list in ``redis-hot`` (session v2,
+``intel.ranking.session``: 24 bytes per item, one key per surface). Later pages
+read their slice through a signed opaque cursor that names its surface, reload
+connection items from ``FeedItem`` and every other item from ``intel_content_ref``,
+and re-run the eligibility rules that can change between pages, so posts that
+arrive meanwhile never shift a page or repeat one, and posts deleted, hidden or
+blocked since page 1 are not returned. When the connections window was full, the
+cursor continues in latest order below its oldest row. When the session is gone
+(expired, replaced by a newer first page, or ``redis-hot`` down), the cursor falls
+back to latest order from the session's start time and the page says
+``fallback: true`` (the client drops posts it already shows).
 """
 
 from __future__ import annotations
 
 import logging
-import math
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from django.conf import settings
@@ -37,23 +40,21 @@ from django.core import signing
 from django.core.cache import caches
 from django.db.models import Count, Q
 from django.utils.dateparse import parse_datetime
+from intel import config
+from intel.eligibility import Viewer, recheck
+from intel.models import ContentRef
+from intel.ranking import home as home_ranker
+from intel.ranking import session as rank_session
+from intel.retrieval.sources import CONNECTIONS, Candidate
 
 from . import feedback, readmodels
-from .models import Affinity, FeedItem, PostHide, PostState, PostStats, RelationshipFlag
+from .models import FeedItem, PostHide, PostState, RelationshipFlag
 
 logger = logging.getLogger("tara.feed.ranking")
 
 Reason = FeedItem.Reason
 CONNECTED = (Reason.SELF, Reason.FRIEND, Reason.FOLLOW)
-REASON_AFFINITY = {Reason.SELF: 0.3, Reason.FRIEND: 1.0, Reason.FOLLOW: 0.6}
-
-FRESHNESS_WEIGHT = 3.0
-HALF_LIFE_HOURS = 24.0
-FAVORITE_BONUS = 1.5
-INTERACTION_WEIGHT = 0.25
-DISLIKE_WEIGHT = 0.75
-DISLIKE_CAP = 3
-ENGAGEMENT_WEIGHT = 0.5
+SURFACE = "home"
 
 _SALT = "tara.feed.cursor.v1"
 _MAX_ID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
@@ -94,48 +95,75 @@ def author_penalties(viewer_id, author_ids) -> dict[str, int]:
     return {str(r["author_id"]): r["n"] for r in rows}
 
 
-def _sort_key(item: FeedItem, rank: float):
-    return (-rank, -item.post_created_at.timestamp(), str(item.id))
+def home_config(window: int | None = None):
+    """The active home config (``window`` overrides ``window.connections``)."""
+    if window is None:
+        return config.for_surface(SURFACE)
+    return config.for_surface(SURFACE, {"window": {CONNECTIONS: window}})
 
 
-def rank_items(viewer_id, now: datetime, window: int | None = None) -> list[FeedItem]:
-    """The viewer's newest ``window`` rows, best first. Same rows and ``now``, same order."""
-    window = window or settings.FEED_RANK_WINDOW
-    items = list(_candidates(viewer_id).order_by("-post_created_at", "-id")[:window])
-    authors = {i.author_id for i in items}
-    favorites = {
-        str(t)
-        for t in readmodels.flagged_ids(viewer_id, RelationshipFlag.Kind.FAVORITE).values_list(
-            "target_id", flat=True
-        )
-    }
-    interactions = {
-        str(a): n
-        for a, n in Affinity.objects.filter(
-            account_id=viewer_id, author_id__in=authors
-        ).values_list("author_id", "interactions")
-    }
-    dislikes = author_penalties(viewer_id, authors)
-    # Live engagement: a flag counted a moment ago weighs in before its feed rows'
-    # stored score is refreshed (``feed.tasks.refresh_post_score``).
-    engagement = {
-        str(s.post_id): readmodels.engagement_score(s)
-        for s in PostStats.objects.filter(post_id__in={i.post_id for i in items})
-    }
+def _viewer(viewer_id, claims: dict | None = None) -> Viewer:
+    if claims:
+        return Viewer.from_claims({**claims, "sub": str(viewer_id)})
+    return Viewer(id=str(viewer_id))
 
-    def score(item: FeedItem) -> float:
-        author = str(item.author_id)
-        age_h = max((now - item.post_created_at).total_seconds() / 3600.0, 0.0)
-        value = FRESHNESS_WEIGHT * math.pow(2.0, -age_h / HALF_LIFE_HOURS)
-        value += REASON_AFFINITY.get(item.reason, 0.0)
-        if author in favorites:
-            value += FAVORITE_BONUS
-        value += INTERACTION_WEIGHT * math.log1p(interactions.get(author, 0))
-        value -= DISLIKE_WEIGHT * min(dislikes.get(author, 0), DISLIKE_CAP)
-        value += ENGAGEMENT_WEIGHT * engagement.get(str(item.post_id), item.score or 0.0)
-        return value
 
-    return sorted(items, key=lambda i: _sort_key(i, score(i)))
+# ---- items -----------------------------------------------------------------------
+
+
+_SNAPSHOT_KEYS = ("author_type", "type", "audience")
+
+
+def _pulled_item(viewer_id, ref: dict, reason: str) -> FeedItem:
+    """An unsaved ``FeedItem`` for a non-connection candidate: ids and enums only
+    (the client hydrates every item through post's ``/posts/batch/``)."""
+    post_id = str(ref["post_id"])
+    created = ref["created_at"]
+    snapshot = {"post_id": post_id, "author_id": str(ref["author_id"])}
+    snapshot.update({k: ref[k] for k in _SNAPSHOT_KEYS if ref.get(k)})
+    if created is not None:
+        snapshot["created_at"] = created.isoformat()
+    return FeedItem(
+        id=uuid.UUID(post_id),
+        recipient_id=viewer_id,
+        post_id=post_id,
+        author_id=ref["author_id"],
+        reason=reason,
+        score=0.0,
+        snapshot=snapshot,
+        post_created_at=created,
+    )
+
+
+def _materialize(viewer_id, entries: list[tuple[str, str, str]], refs: dict | None = None):
+    """``[(post_id, source, reason)]`` as items, in order; a post no longer visible is
+    left out. Connections come from ``FeedItem`` (one query), the rest from
+    ``intel_content_ref`` (``refs`` when the caller already read them)."""
+    conn = [p for p, s, _ in entries if s == CONNECTIONS]
+    rows = {str(i.post_id): i for i in visible_items(viewer_id).filter(post_id__in=conn)}
+    others = [p for p, s, _ in entries if s != CONNECTIONS]
+    if others and refs is None:
+        refs = {
+            str(r["post_id"]): r
+            for r in ContentRef.objects.filter(post_id__in=others).values(
+                "post_id", "author_id", "created_at", *_SNAPSHOT_KEYS
+            )
+        }
+    out = []
+    for post_id, source, reason in entries:
+        if source == CONNECTIONS:
+            if post_id in rows:
+                out.append((rows[post_id], source))
+        elif refs and post_id in refs and refs[post_id]["author_id"]:
+            out.append((_pulled_item(viewer_id, refs[post_id], reason), source))
+    return out
+
+
+def rank_items(viewer_id, now: datetime, window: int | None = None, claims=None) -> list[FeedItem]:
+    """The viewer's ranked items, best first. Same rows and ``now``, same order."""
+    ranking = home_ranker.rank(_viewer(viewer_id, claims), now, home_config(window))
+    entries = [(s.feats.post_id, s.feats.source, s.feats.reason) for s in ranking.items]
+    return [item for item, _ in _materialize(viewer_id, entries)]
 
 
 # ---- cursor and session --------------------------------------------------------
@@ -152,44 +180,22 @@ def decode_cursor(token: str) -> dict:
         raise InvalidCursor from exc
     if not isinstance(data, dict) or data.get("k") not in ("r", "l"):
         raise InvalidCursor
+    if data["k"] == "r" and data.get("f", SURFACE) != SURFACE:
+        raise InvalidCursor  # a cursor of another surface's session
     return data
 
 
 def _session_key(viewer_id) -> str:
-    return f"feed:rank:{viewer_id}"
+    return rank_session.key(SURFACE, viewer_id)
 
 
 def _hot():
     return caches[settings.FEED_HOT_CACHE]
 
 
-def save_session(viewer_id, session: dict) -> bool:
-    """One session per viewer (a new first page replaces it). False if redis-hot refused."""
-    try:
-        _hot().set(_session_key(viewer_id), session, timeout=settings.FEED_RANK_SESSION_TTL)
-        return True
-    except Exception:  # noqa: BLE001 - a full or down redis-hot only costs the ranking
-        logger.warning("ranking session not stored; latest fallback", exc_info=True)
-        return False
-
-
-def load_session(viewer_id, sid: str) -> dict | None:
-    try:
-        session = _hot().get(_session_key(viewer_id))
-    except Exception:  # noqa: BLE001
-        logger.warning("ranking session unreadable; latest fallback", exc_info=True)
-        return None
-    if not isinstance(session, dict) or session.get("sid") != sid:
-        return None
-    return session
-
-
-def _pack(ids) -> str:
-    return "".join(uuid.UUID(str(i)).hex for i in ids)
-
-
-def _unpack(packed: str) -> list[str]:
-    return [str(uuid.UUID(packed[i : i + 32])) for i in range(0, len(packed), 32)]
+def session_entry(viewer_id, post_id):
+    """The post's entry in the viewer's current Home session, or None (WP 4.8)."""
+    return rank_session.contains(SURFACE, viewer_id, post_id, _hot())
 
 
 # ---- pages ---------------------------------------------------------------------
@@ -200,6 +206,9 @@ class Page:
     items: list[FeedItem]
     next_cursor: str | None
     fallback: bool = False
+    # Ranked pages: each item's candidate source and the config version that ranked it.
+    sources: list[str] = field(default_factory=list)
+    cfg_version: str | None = None
 
     @property
     def has_more(self) -> bool:
@@ -229,7 +238,7 @@ def _latest_page(viewer_id, at: str, ident: str, size: int, *, fallback: bool) -
 
 
 def _ranked_cursor(sid: str, offset: int, as_of: str) -> str:
-    return encode_cursor({"k": "r", "s": sid, "o": offset, "a": as_of})
+    return encode_cursor({"k": "r", "s": sid, "o": offset, "a": as_of, "f": SURFACE})
 
 
 def _after_slice(session: dict, sid: str, end: int, as_of: str) -> str | None:
@@ -240,32 +249,78 @@ def _after_slice(session: dict, sid: str, end: int, as_of: str) -> str | None:
     return None
 
 
-def first_page(viewer_id, size: int, now: datetime) -> Page:
-    ranked = rank_items(viewer_id, now)
+def first_page(viewer_id, size: int, now: datetime, claims: dict | None = None) -> Page:
+    cfg = home_config()
+    ranking = home_ranker.rank(_viewer(viewer_id, claims), now, cfg)
     sid, as_of = uuid.uuid4().hex, now.isoformat()
-    edge = None
-    if len(ranked) >= settings.FEED_RANK_WINDOW:
-        oldest = min(ranked, key=lambda i: (i.post_created_at, str(i.id)))
-        edge = [oldest.post_created_at.isoformat(), str(oldest.id)]
-    session = {"sid": sid, "ids": _pack(i.id for i in ranked), "n": len(ranked), "edge": edge}
-    page = ranked[:size]
-    if save_session(viewer_id, session):
-        return Page(page, _after_slice(session, sid, len(page), as_of))
+    entries = [
+        rank_session.Entry(
+            s.feats.post_id, s.feats.source, s.feats.reason, tuple(ranking.factors(s))
+        )
+        for s in ranking.items
+    ]
+    session = {
+        "sid": sid,
+        "surface": SURFACE,
+        "cfg": cfg.version,
+        "items": rank_session.pack(entries),
+        "n": len(entries),
+        "edge": list(ranking.edge) if ranking.edge else None,
+    }
+    head = _materialize(viewer_id, [(e.post_id, e.source, e.reason) for e in entries[:size]])
+    items, sources = [i for i, _ in head], [s for _, s in head]
+    if rank_session.save(SURFACE, viewer_id, session, cfg.get("session.ttl_s"), _hot()):
+        return Page(items, _after_slice(session, sid, size, as_of), False, sources, cfg.version)
     # No session: later pages go on in latest order from now (the client drops repeats).
-    more = len(ranked) > size or edge is not None
-    return Page(page, _latest_cursor((as_of, _MAX_ID)) if more else None, fallback=True)
+    more = len(entries) > size or session["edge"] is not None
+    return Page(
+        items,
+        _latest_cursor((as_of, _MAX_ID)) if more else None,
+        True,
+        sources,
+        cfg.version,
+    )
 
 
-def next_page(viewer_id, token: str, size: int) -> Page:
+def next_page(viewer_id, token: str, size: int, claims: dict | None = None) -> Page:
     data = decode_cursor(token)
     if data["k"] == "l":
         return _latest_page(viewer_id, data["t"], data["i"], size, fallback=False)
     sid, offset, as_of = data.get("s"), int(data.get("o", 0)), data.get("a", "")
-    session = load_session(viewer_id, sid)
+    session = rank_session.load(SURFACE, viewer_id, sid, _hot())
     if session is None:
         return _latest_page(viewer_id, as_of, _MAX_ID, size, fallback=True)
-    ids = _unpack(session["ids"])[offset : offset + size]
-    rows = {str(i.id): i for i in _candidates(viewer_id).filter(id__in=ids)}
+    entries = rank_session.unpack(session["items"], offset, offset + size)
+    cfg = config.for_surface(SURFACE)
+    viewer = _viewer(viewer_id, claims)
+    conn = [e.post_id for e in entries if e.source == CONNECTIONS]
+    rows = {str(i.post_id): i for i in visible_items(viewer_id).filter(post_id__in=conn)}
+    candidates = []
+    for e in entries:
+        if e.source != CONNECTIONS:
+            candidates.append(Candidate(e.post_id, None, e.source, e.reason, None))
+        elif e.post_id in rows:  # gone from the viewer's visible rows: not served
+            row = rows[e.post_id]
+            kind = (row.snapshot or {}).get("type") or ""
+            candidates.append(
+                Candidate(e.post_id, str(row.author_id), CONNECTIONS, e.reason, None, kind)
+            )
+    # Fail closed between pages: E1 to E5, E1b, E1c and E6b again (WP 4.10).
+    checked = recheck(viewer, candidates, cfg)
+    items, sources = [], []
+    for c in checked.kept:
+        if c.source == CONNECTIONS:
+            items.append(rows[c.post_id])
+        else:
+            ref = checked.content.get(c.post_id)
+            if not ref or not ref["author_id"]:
+                continue
+            items.append(_pulled_item(viewer_id, ref, c.reason))
+        sources.append(c.source)
     return Page(
-        [rows[i] for i in ids if i in rows], _after_slice(session, sid, offset + len(ids), as_of)
+        items,
+        _after_slice(session, sid, offset + len(entries), as_of),
+        False,
+        sources,
+        session.get("cfg"),
     )

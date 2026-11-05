@@ -79,8 +79,8 @@ CACHES = {
     },
 }
 FEED_HOT_CACHE = "hot"
-FEED_RANK_WINDOW = 500  # newest rows ranked per session; older ones follow in latest order
-FEED_RANK_SESSION_TTL = 1800  # seconds
+# The ranked window and the session TTL are ranking config since Tara Intelligence
+# WP 4.1 (``window.connections``, ``session.ttl_s`` of the active home version).
 
 _THROTTLING = api_throttling()
 # Telemetry batches (Tara Intelligence, 02 section 12.2): 60 per minute per account.
@@ -160,6 +160,9 @@ INTEL_SIGNAL_RETENTION_DAYS = max(1, int(os.getenv("INTEL_SIGNAL_RETENTION_DAYS"
 INTEL_ENGAGEMENT_RETENTION_DAYS = min(
     30, max(7, int(os.getenv("INTEL_ENGAGEMENT_RETENTION_DAYS", "30")))
 )
+# Emit intel.config.changed (admin's audit log) on every ranking config change
+# (WP 4.1). Default on; off only while admin's consumer is not deployed yet.
+INTEL_EMIT_CONFIG_CHANGED = env_bool("INTEL_EMIT_CONFIG_CHANGED", True)
 
 CORS_ALLOWED_ORIGINS = env_list("FEED_CORS_ORIGINS", "http://localhost:5173")
 CORS_ALLOW_CREDENTIALS = True

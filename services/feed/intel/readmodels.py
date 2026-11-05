@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 
 from django.db import connection, transaction
 
-from . import config, ports
+from . import config, integrity, ports
 from .models import (
     AccountRestriction,
     BlockPair,
@@ -142,9 +142,16 @@ def _apply_content(row: ContentRef, p: dict, when: datetime, *, live: bool) -> b
     if "media_ids" in p:
         row.media_ids = _uuids(p.get("media_ids"))
     if "excerpt" in p:
-        row.lang = language.detect(p.get("excerpt"))
+        excerpt = p.get("excerpt")
+        row.lang = language.detect(excerpt)
+        # WP 4.4: the integrity signals of the text (the text itself is not stored).
+        block = config.for_surface("home").section("integrity")
+        row.simhash = integrity.simhash(excerpt, block["simhash_min_tokens"])
+        row.bait_score = integrity.bait_score(excerpt)
     row.event_at = when
     row.state = _visible_state(row, deleted=not live)
+    if "excerpt" in p:
+        integrity.link_duplicates(row)
     return True
 
 

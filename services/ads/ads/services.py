@@ -232,12 +232,18 @@ def _cap_for(ad_set: AdSet) -> int:
 
 
 def eligible_creatives(placement: str):
-    """Approved creatives in active, in-schedule, in-budget campaigns for a placement."""
+    """Approved creatives in active, in-schedule, in-budget campaigns for a placement.
+
+    The advertiser must be in good standing too (D13, WP 4.11): a suspended,
+    unfunded or otherwise non-``active`` billing status never serves, whatever the
+    campaign's own state. Anything but the exact ``active`` value fails closed.
+    """
     now = timezone.now()
     return (
         AdCreative.objects.select_related("ad_set__campaign")
         .filter(
             review_status=AdCreative.Review.APPROVED,
+            ad_set__campaign__advertiser__billing_status=AdvertiserAccount.BILLING_ACTIVE,
             ad_set__placement=placement,
             ad_set__campaign__status=Campaign.Status.ACTIVE,
             ad_set__campaign__spent__lt=F("ad_set__campaign__budget"),
@@ -331,7 +337,13 @@ def record_event(kind: str, creative_id: str, viewer_id: str) -> None:
         )
         # Checked again under the lock: a concurrent event may have spent the
         # last of the budget (or the owner paused it) since the read above.
-        if locked.status != Campaign.Status.ACTIVE or locked.budget_remaining <= 0:
+        # An advertiser whose billing is not ``active`` is never billed either (WP
+        # 4.11): an ad rendered before a suspension records no impression or click.
+        if (
+            locked.status != Campaign.Status.ACTIVE
+            or locked.budget_remaining <= 0
+            or locked.advertiser.billing_status != AdvertiserAccount.BILLING_ACTIVE
+        ):
             raise TaraAPIError("This ad is not running.", code="conflict", http_status_code=409)
         if kind == "impression":
             AdImpressionEvent.objects.create(

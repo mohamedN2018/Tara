@@ -10,7 +10,7 @@ import { api } from "@/lib/api";
 import { insertAt } from "@/lib/emojis";
 import { hiddenAds } from "@/lib/hiddenAds";
 import { realtime } from "@/lib/ws";
-import { feedService, type FeedResponse, type HydratedFeedPage } from "@/services/feed";
+import { feedService, type FeedPeek, type FeedResponse, type HydratedFeedPage } from "@/services/feed";
 import { postService } from "@/services/post";
 import { useAuthStore } from "@/stores/auth";
 import { useToastStore } from "@/stores/toasts";
@@ -54,7 +54,7 @@ async function flush() {
   for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0));
 }
 
-async function mount(component: Component, props: Record<string, unknown> = {}) {
+async function mount(component: Component, props: Record<string, unknown> = {}, path = "/home") {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -63,7 +63,7 @@ async function mount(component: Component, props: Record<string, unknown> = {}) 
       { path: "/:rest(.*)*", component: Blank },
     ],
   });
-  await router.push("/home");
+  await router.push(path);
   await router.isReady();
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -230,11 +230,7 @@ describe("new posts pill", () => {
     snapshot: {},
     post_created_at: "2026-11-03T10:00:00Z",
   });
-  const top = (...items: ReturnType<typeof feedItem>[]): FeedResponse => ({
-    data: items,
-    sponsored: null,
-    page: { next_cursor: null, has_more: false },
-  });
+  const peekOf = (...items: ReturnType<typeof feedItem>[]): FeedPeek => ({ data: items, mode: "recent", peek: true, new_count: items.length });
   function captureFrames() {
     const handlers = new Map<string, Array<(f: Record<string, unknown>) => void>>();
     vi.spyOn(realtime, "on").mockImplementation((type, handler) => {
@@ -251,14 +247,17 @@ describe("new posts pill", () => {
   it("offers only pushed posts the current mode's feed contains", async () => {
     localStorage.setItem("tara.feedMode", "favorites");
     const play = captureFrames();
-    vi.spyOn(feedService, "page").mockResolvedValue(hydrated([post("a")]));
+    vi.spyOn(feedService, "page").mockResolvedValue({ ...hydrated([post("a")]), asOf: "2026-11-05T10:00:00+00:00" });
     // The favorites feed has the favorite's post, not the other friend's.
-    const home = vi.spyOn(feedService, "home").mockResolvedValue(top(feedItem("fav"), feedItem("a")));
+    const home = vi.spyOn(feedService, "home");
+    const peek = vi.spyOn(feedService, "peek").mockResolvedValue(peekOf(feedItem("fav"), feedItem("a")));
     vi.spyOn(postService, "batch").mockImplementation(async (ids) => ids.map((id) => post(id)));
     const el = await mount(HomeView);
 
     await play("feed.item.added", { post_id: "other" });
-    expect(home).toHaveBeenLastCalledWith(undefined, "favorites");
+    // A peek, never a first page: the ranking session and the ads stay as they are (WP 4.7).
+    expect(peek).toHaveBeenLastCalledWith("favorites", "2026-11-05T10:00:00+00:00");
+    expect(home).not.toHaveBeenCalled();
     expect(pill(el)).toBeUndefined();
 
     await play("feed.item.added", { post_id: "fav" });
@@ -272,19 +271,20 @@ describe("new posts pill", () => {
   it("catches up with the current mode after a reconnect", async () => {
     localStorage.setItem("tara.feedMode", "following");
     const play = captureFrames();
-    vi.spyOn(feedService, "page").mockResolvedValue(hydrated([post("a")]));
-    const home = vi.spyOn(feedService, "home").mockResolvedValue(top(feedItem("n1"), feedItem("a")));
+    vi.spyOn(feedService, "page").mockResolvedValue({ ...hydrated([post("a")]), asOf: "2026-11-05T10:00:00+00:00" });
+    const peek = vi.spyOn(feedService, "peek").mockResolvedValue(peekOf(feedItem("n1"), feedItem("a")));
     vi.spyOn(postService, "batch").mockImplementation(async (ids) => ids.map((id) => post(id)));
     const el = await mount(HomeView);
     await play("_reconnected");
-    expect(home).toHaveBeenCalledWith(undefined, "following");
+    expect(peek).toHaveBeenCalledWith("following", "2026-11-05T10:00:00+00:00");
     expect(pill(el)?.textContent).toContain("1 new post");
   });
 
   it("drops posts found for the old mode when the mode changes", async () => {
     const play = captureFrames();
     vi.spyOn(feedService, "page").mockResolvedValue(hydrated([post("a")]));
-    vi.spyOn(feedService, "home").mockResolvedValue(top(feedItem("n1")));
+    vi.spyOn(feedService, "peek").mockResolvedValue(peekOf(feedItem("n1")));
+    vi.spyOn(feedService, "setDefaultMode").mockResolvedValue({ default_mode: "favorites", version: 1 });
     vi.spyOn(postService, "batch").mockImplementation(async (ids) => ids.map((id) => post(id)));
     const el = await mount(HomeView);
     await play("feed.item.added", { post_id: "n1" });
@@ -299,7 +299,7 @@ describe("new posts pill", () => {
     vi.spyOn(feedService, "page").mockResolvedValue(hydrated([post("a", "sam")]));
     vi.spyOn(feedService, "hide").mockResolvedValue();
     vi.spyOn(feedService, "snooze").mockResolvedValue();
-    vi.spyOn(feedService, "home").mockResolvedValue(top(feedItem("n1", "sam")));
+    vi.spyOn(feedService, "peek").mockResolvedValue(peekOf(feedItem("n1", "sam")));
     vi.spyOn(postService, "batch").mockImplementation(async (ids) => ids.map((id) => post(id, "sam")));
     const el = await mount(HomeView);
     const first = el.querySelector<HTMLElement>('[data-feed-item="a"]')!;
@@ -316,15 +316,17 @@ describe("feed modes", () => {
   it("stay hidden while the server ignores `mode`", async () => {
     const page = vi.spyOn(feedService, "page").mockResolvedValue(hydrated([post("a")], false));
     const el = await mount(HomeView);
-    expect(page).toHaveBeenCalledWith(undefined, "recent");
+    // No `?mode=` and nothing stored: the server picks (its remembered mode, else Latest).
+    expect(page).toHaveBeenCalledWith(undefined, undefined, undefined);
     expect(el.querySelector('[data-testid="feed-modes"]')).toBeNull();
   });
 
   it("switch the feed and remember the choice", async () => {
     const page = vi
       .spyOn(feedService, "page")
-      .mockResolvedValueOnce(hydrated([post("a")]))
+      .mockResolvedValueOnce({ ...hydrated([post("a")]), mode: "recent" })
       .mockResolvedValueOnce(hydrated([post("z")]));
+    const remember = vi.spyOn(feedService, "setDefaultMode").mockResolvedValue({ default_mode: "for_you", version: 1 });
     const el = await mount(HomeView);
     const modes = el.querySelector<HTMLElement>('[data-testid="feed-modes"]')!;
     expect([...modes.querySelectorAll("button")].map((b) => b.textContent?.trim())).toEqual([
@@ -332,16 +334,53 @@ describe("feed modes", () => {
       "Latest",
       "Favorites",
       "Following",
+      "Friends",
     ]);
     expect(button(modes, "Latest")!.getAttribute("aria-pressed")).toBe("true");
 
     button(modes, "For you")!.click();
     await flush();
-    expect(page).toHaveBeenLastCalledWith(undefined, "for_you");
+    expect(page).toHaveBeenLastCalledWith(undefined, "for_you", undefined);
     expect(order(el)).toEqual(["z"]);
     expect(button(modes, "For you")!.getAttribute("aria-pressed")).toBe("true");
     expect(button(modes, "Latest")!.getAttribute("aria-pressed")).toBe("false");
     expect(localStorage.getItem("tara.feedMode")).toBe("for_you");
+    // Remembered for the account, so a new browser opens on it (WP 4.6).
+    expect(remember).toHaveBeenCalledWith("for_you");
+  });
+
+  it("open on the mode the server remembers, sending this browser's copy only as a hint", async () => {
+    localStorage.setItem("tara.feedMode", "favorites");
+    const page = vi.spyOn(feedService, "page").mockResolvedValue({ ...hydrated([post("a")]), mode: "friends" });
+    const el = await mount(HomeView);
+    expect(page).toHaveBeenCalledWith(undefined, undefined, "favorites");
+    const modes = el.querySelector<HTMLElement>('[data-testid="feed-modes"]')!;
+    expect(button(modes, "Friends")!.getAttribute("aria-pressed")).toBe("true");
+    expect(localStorage.getItem("tara.feedMode")).toBe("friends");
+  });
+
+  it("a `?mode=` link wins over the remembered mode", async () => {
+    const page = vi.spyOn(feedService, "page").mockResolvedValue({ ...hydrated([post("a")]), mode: "following" });
+    await mount(HomeView, {}, "/home?mode=following");
+    expect(page).toHaveBeenCalledWith(undefined, "following", undefined);
+  });
+
+  it("feedService remembers the mode and asks the server's choice with a hint", async () => {
+    const patch = vi.spyOn(api, "patch").mockResolvedValue({ data: { data: { default_mode: "friends", version: 2 } } });
+    expect(await feedService.setDefaultMode("friends")).toEqual({ default_mode: "friends", version: 2 });
+    expect(patch).toHaveBeenCalledWith("/feed/preferences/", { default_mode: "friends" });
+    const get = vi.spyOn(api, "get").mockResolvedValueOnce({
+      data: { data: [], sponsored: null, page: { next_cursor: null, has_more: false }, mode: "friends", meta: { ad_slots: [4], as_of: "t0" } },
+    });
+    const page = await feedService.page(undefined, undefined, "recent");
+    expect(get).toHaveBeenLastCalledWith("/feed/", { params: { cursor: undefined, mode_hint: "recent" } });
+    expect([page.mode, page.modeApplied, page.adSlots, page.asOf]).toEqual(["friends", true, [4], "t0"]);
+  });
+
+  it("feedService peeks without a cursor and with the first page's time", async () => {
+    const get = vi.spyOn(api, "get").mockResolvedValueOnce({ data: { data: [], mode: "recent", peek: true, new_count: 0 } });
+    await feedService.peek("recent", "t0");
+    expect(get).toHaveBeenLastCalledWith("/feed/", { params: { mode: "recent", peek: 1, since: "t0" } });
   });
 
   it("feedService sends the mode and trusts it only when echoed", async () => {
@@ -410,6 +449,51 @@ describe("sponsored card", () => {
     await flush();
     expect(el.querySelector('[data-testid="sponsored"]')?.textContent).toContain("Fresh bread");
     expect(JSON.parse(sessionStorage.getItem("tara.hiddenAds")!)).toEqual([]);
+  });
+});
+
+describe("ad slots from the server's config (WP 4.9)", () => {
+  const ad = (id: string) => ({ creative_id: id, headline: `Ad ${id}`, token: `tok-${id}`, sponsored: true });
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => `p${i}`);
+  // The list as rendered: post ids, and `ad:<id>` where a sponsored card sits.
+  const layout = (el: HTMLElement) =>
+    [...el.querySelectorAll<HTMLElement>("[data-feed-item], [data-testid='sponsored']")].map((n) =>
+      n.dataset.feedItem ?? `ad:${n.textContent?.includes("Ad a1") ? "a1" : n.textContent?.includes("Ad a2") ? "a2" : "?"}`,
+    );
+  const organic = (el: HTMLElement) => order(el);
+  async function rendered(page: Partial<HydratedFeedPage>) {
+    vi.spyOn(feedService, "page").mockResolvedValue({ ...hydrated(ids(20).map((i) => post(i))), ...page });
+    return mount(HomeView);
+  }
+
+  it("puts the one default ad after the fifth post, as before", async () => {
+    const el = await rendered({ sponsored: [ad("a1")], adSlots: [4] });
+    const seen = layout(el);
+    expect(seen.indexOf("ad:a1")).toBe(5);
+    expect(seen.filter((s) => s.startsWith("ad:"))).toEqual(["ad:a1"]);
+  });
+
+  it("falls back to slot 4 when the server sends no slots", async () => {
+    const el = await rendered({ sponsored: [ad("a1")] });
+    expect(layout(el).indexOf("ad:a1")).toBe(5);
+  });
+
+  it("shows a second ad only where a second slot is configured", async () => {
+    const el = await rendered({ sponsored: [ad("a1"), ad("a2")], adSlots: [4, 14] });
+    const seen = layout(el);
+    expect(seen.indexOf("ad:a1")).toBe(5);
+    expect(seen.indexOf("ad:a2")).toBe(16);
+  });
+
+  it("never shows an ad beyond the ads served, nor moves an organic post", async () => {
+    const withAds = await rendered({ sponsored: [ad("a1")], adSlots: [4, 14] });
+    const on = organic(withAds);
+    expect(layout(withAds).filter((s) => s.startsWith("ad:"))).toEqual(["ad:a1"]);
+    app?.unmount();
+    host?.remove();
+    const without = await rendered({ sponsored: [], adSlots: [4, 14] });
+    expect(organic(without)).toEqual(on);
+    expect(layout(without).some((s) => s.startsWith("ad:"))).toBe(false);
   });
 });
 

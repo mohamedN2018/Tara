@@ -17,8 +17,13 @@ try:
         "Candidates removed by an eligibility rule (02 section 11), by rule.",
         ["rule"],
     )
+    SUSPECT_ENGAGEMENT = Counter(
+        "intel_suspect_engagement_total",
+        "Reactions excluded from rates as suspect (02 section 16), by reason.",
+        ["reason"],
+    )
 except ImportError:  # pragma: no cover - metrics are optional
-    SIGNALS_ACCEPTED = SIGNALS_REJECTED = ELIGIBILITY_DROPS = None
+    SIGNALS_ACCEPTED = SIGNALS_REJECTED = ELIGIBILITY_DROPS = SUSPECT_ENGAGEMENT = None
 
 
 def accepted(origin: str, n: int) -> None:
@@ -34,3 +39,8 @@ def rejected(reason: str, n: int = 1) -> None:
 def eligibility_dropped(rule: str, n: int = 1) -> None:
     if ELIGIBILITY_DROPS is not None and n:
         ELIGIBILITY_DROPS.labels(rule=rule).inc(n)
+
+
+def suspect_engagement(reason: str, n: int = 1) -> None:
+    if SUSPECT_ENGAGEMENT is not None and n:
+        SUSPECT_ENGAGEMENT.labels(reason=reason).inc(n)

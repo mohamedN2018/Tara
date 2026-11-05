@@ -51,6 +51,9 @@ def _isolated_settings(settings):
 
     origin.clear_cache()
     partitions.forget_known()
+    from intel.config import store
+
+    store.clear_cache()  # the active-version pointer (WP 4.1)
     return settings
 
 

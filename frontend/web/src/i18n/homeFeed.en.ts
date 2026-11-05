@@ -7,6 +7,7 @@ export default {
     recent: "Latest",
     favorites: "Favorites",
     following: "Following",
+    friends: "Friends",
   },
   hide: {
     action: "Hide post",

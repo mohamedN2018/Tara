@@ -234,28 +234,42 @@ def verify(
     return claims
 
 
-# The Home config version that today's ``feed/ranking.py`` constants are (04 WP 4.1:
-# ``home@1`` is a params file of exactly those constants).
+# The Home config version a ranked page carried before the versioned store (WP 4.1).
+# A ranked page now names the version that actually ranked it (``cfg_version``).
 HOME_RANKED_CFG = "home@1"
 
 
-def stamp_home_items(viewer, items: list[dict], mode: str, *, offset: int | None, ranked: bool):
+def stamp_home_items(
+    viewer,
+    items: list[dict],
+    mode: str,
+    *,
+    offset: int | None,
+    ranked: bool,
+    cfg_version: str | None = None,
+):
     """Give each Home item its serve token ``st`` (in place).
 
     ``offset`` is the absolute position of the first item when it is known (ranked
-    pages), else positions stay unset. ``ranked`` pages carry ``home@1``; the
-    chronological modes and the latest-order fallback carry no config version.
+    pages), else positions stay unset. ``ranked`` pages carry the config version
+    that ranked them (``cfg_version``, else ``home@1``); the chronological modes and
+    the latest-order fallback carry none. The token's source is the item's
+    candidate ``source`` for a pulled item (``follow_pull``, ``groups``), else the
+    connection's fan-out reason (``self``, ``friend``, ``follow``), as before.
     """
     now = time.time()
     for i, item in enumerate(items):
+        source = item.get("source")
+        if source in (None, "", "connections"):
+            source = item.get("reason") or None
         item["st"] = issue(
             viewer,
             ItemType.POST,
             item["post_id"],
             Surface.HOME,
             position=None if offset is None else offset + i,
-            cfg_version=HOME_RANKED_CFG if ranked else None,
-            source=item.get("reason") or None,
+            cfg_version=(cfg_version or HOME_RANKED_CFG) if ranked else None,
+            source=source,
             reason=mode,
             now=now,
         )

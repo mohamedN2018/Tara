@@ -1,0 +1,75 @@
+# Engagement-bait phrases, English. One phrase per line; matched as whole words after
+# lower-casing (tara_common.text.normalize_ar casefolds Latin too). A phrase asks for
+# an action in exchange for nothing but reach. Changing this file changes stored
+# bait scores: bump intel.integrity.CLASSIFIER_VERSION and rerun the content
+# backfill. Gold set: intel/tests/fixtures/bait_gold.jsonl.
+like if you
+like and share
+like share
+like and comment
+like this post if
+smash that like
+hit like
+hit the like button
+share if you
+share this post
+share this with
+please share
+pls share
+plz share
+share before
+type yes
+type amen
+say amen
+comment yes
+comment amen
+comment below if
+comment if you
+comment your
+tag a friend
+tag someone
+tag your
+tag 3
+tag three
+tag a person
+tag the person
+tag someone who
+mention a friend
+follow for more
+follow me for
+follow and share
+follow back
+f4f
+l4l
+like for like
+sub for sub
+link in bio
+link in the first comment
+link in comments
+want part 2
+part 2 if
+if you agree
+if you agree like
+only 1 percent
+only 1 can
+99 percent can t
+99 can t
+i bet you can t
+bet you won t
+don t scroll
+don t scroll past
+scroll past without
+1 like
+1 share
+1 like 1 prayer
+like 1 prayer
+ignore if
+let s see how many
+how many likes
+let s get this to
+help me reach
+help us reach
+make this viral
+drop a comment
+drop a heart
+drop a like

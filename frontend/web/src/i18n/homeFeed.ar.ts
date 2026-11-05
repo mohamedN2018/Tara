@@ -7,6 +7,7 @@ export default {
     recent: "الأحدث",
     favorites: "المفضلة",
     following: "المتابَعون",
+    friends: "الأصدقاء",
   },
   hide: {
     action: "إخفاء المنشور",

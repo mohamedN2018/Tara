@@ -216,11 +216,19 @@ class ReactionState(models.Model):
     reactor_id = models.UUIDField()
     active = models.BooleanField(default=True)
     occurred_at = models.DateTimeField()
+    # Tara Intelligence WP 4.4: a reaction from a brand-new account or inside a
+    # reaction burst is kept here but never counted in ``PostStats`` or ``Affinity``
+    # (excluded from rates, not penalized); its later unreact subtracts nothing.
+    suspect = models.BooleanField(default=False)
 
     class Meta:
         db_table = "reaction_state"
         constraints = [
             models.UniqueConstraint(fields=["post_id", "reactor_id"], name="reaction_state_uniq"),
+        ]
+        indexes = [
+            # The burst rule counts one reactor's reactions in the last minute.
+            models.Index(fields=["reactor_id", "-occurred_at"], name="reaction_state_reactor_idx"),
         ]
 
 
@@ -260,6 +268,9 @@ class AuthorRef(models.Model):
     deactivated_at = models.DateTimeField(null=True, blank=True)
     suspended = models.BooleanField(default=False)
     suspended_at = models.DateTimeField(null=True, blank=True)
+    # ``account.registered`` time (WP 4.4, suspect engagement). Null for accounts
+    # that registered before feed consumed the event: never treated as new.
+    registered_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "author_ref"

@@ -154,6 +154,12 @@ export function noteServed(item: string, served: Served) {
   remember(state.served, id, { ...served, st }, SIGNAL_LIMITS.maxServed);
 }
 
+/** The serve token an item was served with, if any ("Why am I seeing this?", WP 4.8). */
+export function servedToken(item: string): string | undefined {
+  const id = itemId(item);
+  return id ? state.served.get(id)?.st : undefined;
+}
+
 /** The served position of an item, when a ranked surface served it. */
 export function servedPosition(item: string): number | undefined {
   const id = itemId(item);

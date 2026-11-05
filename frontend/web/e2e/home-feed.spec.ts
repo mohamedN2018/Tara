@@ -33,6 +33,10 @@ for (const lang of ["ar", "en"] as const) {
     expect(created.ok()).toBe(true);
     const postId = (await created.json()).data.id as string;
     await author.dispose();
+    // The Home mode is remembered per account (WP 4.6): start this shared account on Latest.
+    const prefs = await apiAs(a);
+    expect((await prefs.patch(`${API}/feed/preferences/`, { data: { default_mode: "recent" } })).ok()).toBe(true);
+    await prefs.dispose();
 
     const l = LABELS[lang];
     const page = await pageAs(browser, a);

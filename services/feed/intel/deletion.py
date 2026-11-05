@@ -39,6 +39,8 @@ ACCOUNT_TABLES: tuple[tuple[str, str], ...] = (
     ("intel_group_membership", "account_id = %(a)s"),
     ("intel_block_pair", "low = %(a)s OR high = %(a)s"),
     ("intel_account_restriction", "account_id = %(a)s"),
+    # My Algorithm settings (WP 4.6).
+    ("intel_user_preference", "account_id = %(a)s"),
 )
 # Rows that name the account but belong to something else: the id is cleared, the
 # row stays. A page is not its owner's (graph keeps its page refs too); with no
@@ -47,7 +49,11 @@ ACCOUNT_SCRUBS: tuple[tuple[str, str], ...] = (
     ("intel_page_ref", "UPDATE intel_page_ref SET owner_id = NULL WHERE owner_id = %(a)s"),
 )
 # Intel tables that hold no account data (configs, topics, aggregates without ids).
-NOT_ACCOUNT_KEYED: frozenset[str] = frozenset({"intel_media_ref", "intel_group_ref"})
+# The ranking config and its change log (WP 4.1) name only the staff member who made
+# a change: an audit record kept forever (03 section 2.7), like admin's AuditEntry.
+NOT_ACCOUNT_KEYED: frozenset[str] = frozenset(
+    {"intel_media_ref", "intel_group_ref", "intel_ranking_config", "intel_ranking_config_change"}
+)
 
 
 def erase_account(account_id) -> dict:

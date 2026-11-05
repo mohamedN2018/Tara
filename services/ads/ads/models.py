@@ -14,6 +14,9 @@ from tara_resilience.idempotency import AbstractIdempotencyRecord
 
 
 class AdvertiserAccount(models.Model):
+    # The only billing status that serves (WP 4.11); every other value is refused.
+    BILLING_ACTIVE = "active"
+
     id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
     owner_account_id = models.UUIDField(unique=True)
     name = models.CharField(max_length=160)
