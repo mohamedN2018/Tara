@@ -42,11 +42,12 @@ _FALLBACK_ACTIONS = frozenset({"dismiss"})
 APPEALABLE_ACTIONS = frozenset({"remove", "restrict", "shadow", "warn"})
 
 # What an overturned appeal sends to the owning service: the inverse of the
-# original decision on that target type. Only a content removal has one in the
-# shared vocabulary (``approve`` restores it). A warning never touched the
-# content, and users and pages have no reinstate action yet, so overturning
-# those is recorded in the audit log and emits nothing: an ``approve`` there
-# would restore content that another case removed.
+# original decision on that target type. A content removal is undone by
+# ``approve``; an account's (or page's) ``restrict`` or ``shadow`` by
+# ``reinstate`` (intelligence WP 3.3b), which means "no restriction stands on
+# this account any more". A warning never touched anything, and a page removal
+# has no inverse, so overturning those is recorded in the audit log and emits
+# nothing: an ``approve`` there would restore content that another case removed.
 REVERSALS: dict[tuple[str, str], str] = {
     (target_type, "remove"): "approve"
     for target_type in (
@@ -59,6 +60,18 @@ REVERSALS: dict[tuple[str, str], str] = {
         "group",
         "story",
     )
+} | {
+    ("user", "restrict"): "reinstate",
+    ("user", "shadow"): "reinstate",
+    ("page", "restrict"): "reinstate",
+}
+
+# Decisions with the same effect for a reversal: while another case's
+# ``shadow`` stands, overturning a ``restrict`` must not reinstate the account
+# (consumers drop every restriction of the account on ``reinstate``).
+_SAME_EFFECT: dict[str, frozenset[str]] = {
+    "restrict": frozenset({"restrict", "shadow"}),
+    "shadow": frozenset({"restrict", "shadow"}),
 }
 
 
@@ -272,22 +285,23 @@ def _reversal(case: ModerationCase) -> tuple[str | None, uuid.UUID | None]:
     """
     decision = _decision(case)
     inverse = REVERSALS.get((case.target_type, decision))
-    if inverse is None:
+    if inverse is None or (inverse == "reinstate" and not settings.MODERATION_EMIT_REINSTATE):
         return None, None
-    # The latest content decision of the target's other cases is what stands
-    # once this one is undone. Decisions overturned on appeal no longer count.
+    same = _SAME_EFFECT.get(decision, frozenset({decision}))
+    # The latest decision of the target's other cases is what stands once this
+    # one is undone. Decisions overturned on appeal no longer count.
     standing = (
         ModerationAction.objects.filter(
             case__target_type=case.target_type,
             case__target_id=case.target_id,
-            action__in=(decision, inverse),
+            action__in=(*same, inverse),
         )
         .exclude(case_id=case.id)
         .exclude(case__appeals__status=Appeal.Status.OVERTURNED)
         .order_by("-created_at", "-id")
         .first()
     )
-    if standing is not None and standing.action == decision:
+    if standing is not None and standing.action in same:
         return None, standing.case_id
     return inverse, None
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 from django.db import transaction
 from django.utils.decorators import method_decorator
 from drf_spectacular.utils import OpenApiParameter, extend_schema
+from posts import hydration
 from posts.models import IdempotencyRecord
 from posts.serializers import PostSerializer
 from posts.services import viewer_state
@@ -24,7 +25,7 @@ from tara_common.responses import data_response
 from tara_resilience.idempotency import idempotent
 
 from . import services
-from .serializers import ReelCreateSerializer, ReelEligibilitySerializer
+from .serializers import ReelBatchSerializer, ReelCreateSerializer, ReelEligibilitySerializer
 
 
 def _me(request: Request) -> str:
@@ -130,6 +131,28 @@ class ReelEligibilityView(APIView):
         return data_response(
             services.eligibility(_me(request), serializer.validated_data["media_id"])
         )
+
+
+@method_decorator(transaction.non_atomic_requests, name="dispatch")  # calls graph
+class ReelBatchView(APIView):
+    """Live reels for up to 50 ids, in the requested order (intelligence WP 3.6).
+
+    The hydration step for feed's reels surface: any id the viewer may not see,
+    or that is not a live reel, is left out (the same answer as a 404 from
+    ``/reels/<id>/``). The optional ``surface`` and ``src`` hints only label
+    the server-side drop counter ``post_batch_dropped_total``.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=ReelBatchSerializer, tags=["reels"])
+    def post(self, request: Request) -> Response:
+        serializer = ReelBatchSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        ids = serializer.validated_data["ids"]
+        reels = services.reels_by_ids(_me(request), ids)
+        hydration.record_drops(ids, [r.post_id for r in reels], serializer.validated_data)
+        return data_response(serialize(_me(request), reels))
 
 
 @method_decorator(transaction.non_atomic_requests, name="dispatch")  # calls graph

@@ -154,6 +154,13 @@ class Post(models.Model):
                 name="post_drafts_idx",
                 condition=~models.Q(state="published"),
             ),
+            # The video listing (``video_posts_queryset``) and intelligence's
+            # per-type candidate reads (D11, WP 3.7; built CONCURRENTLY).
+            models.Index(
+                fields=["type", "-created_at"],
+                name="post_type_published_idx",
+                condition=models.Q(state="published", group_id__isnull=True),
+            ),
         ]
 
     @property
@@ -326,6 +333,11 @@ class Share(models.Model):
 
     class Meta:
         db_table = "share"
+        indexes = [
+            # An account's shares, newest first: interest-profile backfill and
+            # account deletion (D11, intelligence WP 3.7; built CONCURRENTLY).
+            models.Index(fields=["account_id", "-created_at"], name="share_account_idx"),
+        ]
 
 
 class Hashtag(models.Model):

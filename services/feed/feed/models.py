@@ -243,11 +243,23 @@ class CommentState(models.Model):
 
 
 class AuthorRef(models.Model):
-    """An author's discoverability (``UserProfile.searchable`` via ``profile.updated``)."""
+    """An author's discoverability (``UserProfile.searchable`` via ``profile.updated``).
+
+    Tara Intelligence (WP 3.1, rule E6) adds the author's kind (a page id is an
+    author too) and whether it is active: identity's deactivation and suspension
+    each keep their own flag and newest-wins time, so lifting one never lifts the
+    other, and neither is ordered against ``profile.updated``.
+    """
 
     account_id = models.UUIDField(primary_key=True)
     searchable = models.BooleanField(default=True)
     occurred_at = models.DateTimeField()
+    kind = models.CharField(max_length=8, default="user")  # user | page
+    active = models.BooleanField(default=True)
+    deactivated = models.BooleanField(default=False)
+    deactivated_at = models.DateTimeField(null=True, blank=True)
+    suspended = models.BooleanField(default=False)
+    suspended_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "author_ref"

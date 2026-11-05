@@ -11,6 +11,7 @@ Writes go through ``intel.signals.store`` (``COPY`` for client batches, one
 
 from __future__ import annotations
 
+from django.contrib.postgres.fields import ArrayField
 from django.core.validators import RegexValidator
 from django.db import models
 
@@ -221,3 +222,220 @@ class UserItemEngagement(models.Model):
     class Meta:
         managed = False
         db_table = "intel_user_item_engagement"
+
+
+# ---- Phase 3: read models built from events (03 sections 2.1 and 2.2) ---------------
+# Every writer is newest-wins on its own ``*_at`` guard and safe to replay
+# (``intel.readmodels``). None of these tables holds body text or names.
+
+
+class ContentRef(models.Model):
+    """One post, reel or video, kept apart from fan-out (03 section 2.1).
+
+    Fields an event did not carry yet stay empty, and the eligibility rules treat an
+    empty field as "not allowed" (fail closed): a row first created by a late
+    ``post.approved`` has no audience or author until its ``post.created`` arrives.
+    """
+
+    class State(models.TextChoices):
+        LIVE = "live", "Live"
+        DELETED = "deleted", "Deleted"
+        HIDDEN = "hidden", "Hidden (author deactivated)"
+
+    class Moderation(models.TextChoices):
+        OK = "ok", "OK"
+        PENDING = "pending", "Pending review"
+        REMOVED = "removed", "Removed"
+
+    post_id = models.UUIDField(primary_key=True)
+    author_id = models.UUIDField(null=True)
+    author_type = models.CharField(max_length=8, blank=True, default="")
+    type = models.CharField(max_length=8, blank=True, default="")
+    audience = models.CharField(max_length=12, blank=True, default="")
+    group_id = models.UUIDField(null=True)
+    approval_state = models.CharField(max_length=10, blank=True, default="")
+    reel_state = models.CharField(max_length=16, blank=True, default="")
+    shared_post_id = models.UUIDField(null=True)
+    lang = models.CharField(max_length=5, default="und")
+    hashtags = ArrayField(models.CharField(max_length=80), default=list, blank=True)
+    media_ids = ArrayField(models.UUIDField(), default=list, blank=True)
+    simhash = models.BigIntegerField(null=True)  # duplicates (phase 7)
+    bait_score = models.FloatField(null=True)  # lexicon (phase 7)
+    state = models.CharField(max_length=8, choices=State.choices, default=State.LIVE)
+    # The author's account is deactivated (``post.hidden``): kept apart from
+    # ``state`` so an edit or a moderation approval never shows a held post.
+    held = models.BooleanField(default=False)
+    moderation_state = models.CharField(
+        max_length=8, choices=Moderation.choices, default=Moderation.OK
+    )
+    pending_reports = models.IntegerField(default=0)
+    moderation_open = models.BooleanField(default=False)
+    created_at = models.DateTimeField(null=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    # Newest-wins guards: content and lifecycle (created, updated, deleted), the
+    # deactivation hold (hidden, unhidden), the reel's playability, moderation.
+    event_at = models.DateTimeField()
+    hidden_at = models.DateTimeField(null=True)
+    reel_state_at = models.DateTimeField(null=True)
+    moderation_at = models.DateTimeField(null=True)
+
+    class Meta:
+        db_table = "intel_content_ref"
+        indexes = [
+            models.Index(fields=["author_id", "-created_at"], name="intel_cref_author_idx"),
+            models.Index(
+                fields=["group_id", "-created_at"],
+                name="intel_cref_group_idx",
+                condition=models.Q(group_id__isnull=False, state="live"),
+            ),
+            models.Index(
+                fields=["type", "-created_at"],
+                name="intel_cref_public_idx",
+                condition=models.Q(audience="public", group_id__isnull=True, state="live"),
+            ),
+            models.Index(
+                fields=["-created_at"], name="intel_cref_live_idx", condition=models.Q(state="live")
+            ),
+        ]
+
+
+class MediaRef(models.Model):
+    """A processed video (``media.processed`` with ``kind=video``)."""
+
+    media_id = models.UUIDField(primary_key=True)
+    duration_ms = models.IntegerField(null=True)
+    width = models.IntegerField(null=True)
+    height = models.IntegerField(null=True)
+    top_rung = models.SmallIntegerField(null=True)
+    has_poster = models.BooleanField(default=False)
+    has_audio = models.BooleanField(null=True)
+    quality = models.FloatField(default=0.0)
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "intel_media_ref"
+
+
+class FriendEdge(models.Model):
+    """An accepted friendship, stored in both directions. ``active=False`` is the
+    tombstone of a removal, so a replayed older ``friendship.accepted`` changes nothing."""
+
+    pk = models.CompositePrimaryKey("account_id", "friend_id")
+    account_id = models.UUIDField()
+    friend_id = models.UUIDField()
+    active = models.BooleanField(default=True)
+    since = models.DateTimeField()
+    event_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "intel_friend_edge"
+
+
+class GroupRef(models.Model):
+    """A group's privacy and status. No name or handle (hidden groups stay out of feed_db)."""
+
+    group_id = models.UUIDField(primary_key=True)
+    privacy = models.CharField(max_length=8, default="hidden")
+    status = models.CharField(max_length=10, default="active")
+    category = models.CharField(max_length=20, blank=True, default="")
+    topic_id = models.SmallIntegerField(null=True)  # topics (phase 6)
+    member_count = models.IntegerField(default=0)
+    event_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "intel_group_ref"
+        indexes = [models.Index(fields=["privacy", "status"], name="intel_gref_priv_idx")]
+
+
+class GroupMembership(models.Model):
+    """The account's place in a group. ``state=none`` is the tombstone of a leave."""
+
+    pk = models.CompositePrimaryKey("account_id", "group_id")
+    account_id = models.UUIDField()
+    group_id = models.UUIDField()
+    state = models.CharField(max_length=10)  # active, requested, invited, banned, none
+    role = models.CharField(max_length=10, blank=True, default="")
+    notify_posts = models.BooleanField(default=False)
+    joined_at = models.DateTimeField(null=True)
+    event_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "intel_group_membership"
+        indexes = [
+            models.Index(
+                fields=["group_id"],
+                name="intel_gmem_active_idx",
+                condition=models.Q(state="active"),
+            ),
+        ]
+
+
+class BlockPair(models.Model):
+    """A block between two accounts, either way (``low`` is the smaller id).
+
+    Each direction keeps its own flag and newest-wins time, so one side lifting its
+    block never lifts the other side's. The row goes when both flags are off.
+    """
+
+    pk = models.CompositePrimaryKey("low", "high")
+    low = models.UUIDField()
+    high = models.UUIDField()
+    low_blocks = models.BooleanField(default=False)
+    high_blocks = models.BooleanField(default=False)
+    low_at = models.DateTimeField(null=True)
+    high_at = models.DateTimeField(null=True)
+    since = models.DateTimeField()
+
+    class Meta:
+        db_table = "intel_block_pair"
+
+
+class PageRef(models.Model):
+    """A page's status and owner (``page.created`` / ``page.updated``). Rule E6b."""
+
+    page_id = models.UUIDField(primary_key=True)
+    owner_id = models.UUIDField(null=True)
+    status = models.CharField(max_length=10, default="draft")
+    deleted = models.BooleanField(default=False)
+    event_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "intel_page_ref"
+        indexes = [
+            models.Index(
+                fields=["status"],
+                name="intel_pref_status_idx",
+                condition=~models.Q(status="published") | models.Q(deleted=True),
+            ),
+        ]
+
+
+class AccountRestriction(models.Model):
+    """A moderation ``restrict`` or ``shadow`` on an account (rule E11). Sensitive:
+    never shown to its subject. ``active=False`` is the tombstone of a ``reinstate``."""
+
+    account_id = models.UUIDField(primary_key=True)
+    kind = models.CharField(max_length=8)  # restrict | shadow
+    case_id = models.UUIDField(null=True)
+    active = models.BooleanField(default=True)
+    since = models.DateTimeField()
+    event_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "intel_account_restriction"
+
+
+class FanoutCapped(models.Model):
+    """A post whose fan-out was cut at ``FANOUT_MAX_RECIPIENTS``. ``follow_pull``
+    reaches the followers the cap left out."""
+
+    post_id = models.UUIDField(primary_key=True)
+    author_id = models.UUIDField()
+    audience = models.CharField(max_length=12)
+    total = models.IntegerField()
+    cap = models.IntegerField()
+    created_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "intel_fanout_capped"
+        indexes = [models.Index(fields=["author_id", "-created_at"], name="intel_fcap_author_idx")]

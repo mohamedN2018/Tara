@@ -9,7 +9,9 @@ requests from everyone.
 
 Never suggested: the viewer, their friends, anyone with a pending request
 either way, anyone with a block either way, accounts with
-``searchable=false``, and anything the viewer dismissed.
+``searchable=false``, inactive accounts (deactivated or suspended, D5),
+accounts under a moderation ``restrict`` or ``shadow`` (rule E11, D14), and
+anything the viewer dismissed.
 
 Pages: published, live pages the viewer neither follows, owns nor dismissed,
 whose owner has no block with the viewer, most followed first.
@@ -130,9 +132,9 @@ def people(viewer_id: str, limit: int = 10) -> list[dict]:
     if candidates:
         undiscoverable = {
             str(x)
-            for x in AccountRef.objects.filter(
-                account_id__in=list(candidates), searchable=False
-            ).values_list("account_id", flat=True)
+            for x in AccountRef.objects.filter(account_id__in=list(candidates))
+            .filter(Q(searchable=False) | Q(active=False) | ~Q(restriction=""))
+            .values_list("account_id", flat=True)
         }
     else:
         undiscoverable = set()

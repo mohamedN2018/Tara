@@ -54,6 +54,12 @@ def _count(table, column, value) -> int:
         return cur.fetchone()[0]
 
 
+def _count_where(table, where, account) -> int:
+    with connection.cursor() as cur:
+        cur.execute(f"SELECT count(*) FROM {table} WHERE {where}", {"a": account})  # noqa: S608
+        return cur.fetchone()[0]
+
+
 def _populate(account):
     _signal(account)
     _signal(account, received_at=timezone.now() - timedelta(days=3))  # an older partition
@@ -65,7 +71,11 @@ def _populate(account):
 
 
 def test_every_intel_table_is_covered():
-    covered = {t for t, _ in deletion.ACCOUNT_TABLES} | set(deletion.NOT_ACCOUNT_KEYED)
+    covered = (
+        {t for t, _ in deletion.ACCOUNT_TABLES}
+        | {t for t, _ in deletion.ACCOUNT_SCRUBS}
+        | set(deletion.NOT_ACCOUNT_KEYED)
+    )
     tables = {m._meta.db_table for m in apps.get_app_config("intel").get_models()}
     assert tables <= covered, tables - covered
 
@@ -80,8 +90,8 @@ def test_account_deleted_erases_every_intel_row_of_the_account():
 
     deliver(event("account.deleted", {"account_id": gone}), times=2)
 
-    for table, _ in deletion.ACCOUNT_TABLES:
-        assert _count(table, "account_id", gone) == 0, table
+    for table, where in deletion.ACCOUNT_TABLES:
+        assert _count_where(table, where, gone) == 0, table
     assert _count("intel_signal_event", "item_id", gone) == 0
     assert _count("intel_user_item_engagement", "item_id", gone) == 0
     # The other account keeps its own rows.

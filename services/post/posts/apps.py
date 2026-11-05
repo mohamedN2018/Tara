@@ -24,3 +24,11 @@ class PostsConfig(AppConfig):
             install_outbox_gauge()
         except Exception:  # noqa: S110,BLE001 - never block boot on check wiring
             pass
+
+        # post_batch_dropped_total (intelligence WP 3.6), read from the shared cache.
+        try:
+            from .hydration import register
+
+            register()
+        except Exception:  # noqa: S110,BLE001 - metrics must never block boot
+            pass

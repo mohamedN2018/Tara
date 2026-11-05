@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import include, path
 
 from tara_common.stats import InternalStatsView
 
@@ -61,4 +61,6 @@ urlpatterns = [
         name="internal-account-verification",
     ),
     path("stats/", InternalStatsView.as_view(counters=COUNTERS), name="internal-stats"),
+    # feed's and graph's account lifecycle backfill (intelligence WP 3.2 / 3.3).
+    path("intel/", include("identity.intel_export")),
 ]

@@ -15,7 +15,7 @@ from tara_common.pagination import CursorPagination
 from tara_common.responses import data_response
 from tara_resilience.idempotency import idempotent
 
-from . import composer, saved, services
+from . import composer, hydration, saved, services
 from .models import IdempotencyRecord, PostState
 from .serializers import (
     CommentCreateSerializer,
@@ -157,7 +157,9 @@ class PostBatchView(APIView):
     """Current content, counts and viewer state for a batch of posts.
 
     The feed stores snapshots; clients use this to show live data, and any id
-    missing from the response was deleted or is no longer visible.
+    missing from the response was deleted or is no longer visible. The optional
+    ``surface`` and ``src`` hints (copied from feed's response) only label the
+    server-side drop counter ``post_batch_dropped_total`` (intelligence WP 3.6).
     """
 
     permission_classes = [IsAuthenticated]
@@ -168,7 +170,9 @@ class PostBatchView(APIView):
     def post(self, request: Request) -> Response:
         serializer = PostBatchSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        posts = services.posts_by_ids(_me(request), serializer.validated_data["ids"])
+        ids = serializer.validated_data["ids"]
+        posts = services.posts_by_ids(_me(request), ids)
+        hydration.record_drops(ids, [p.id for p in posts], serializer.validated_data)
         return data_response(_serialize(_me(request), posts))
 
 

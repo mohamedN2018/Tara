@@ -260,3 +260,8 @@ def intel_on_account_deleted(event: EventEnvelope) -> None:
     account_id = event.payload.get("account_id") or event.subject_id
     counts = deletion.erase_account(account_id)
     logger.info("intel erased account", extra={"account_id": str(account_id), **counts})
+
+
+# Phase 3 read models (WP 3.1): registered with this module, so the consumer's
+# ``import intel.handlers`` binds their event types too.
+from . import readmodel_handlers  # noqa: E402, F401

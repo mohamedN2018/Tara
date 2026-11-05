@@ -105,6 +105,10 @@ TARA_EVENT_QUEUE = "moderation.events"
 # Emit appeal.resolved for admin's audit log. Roadmap 3.3 deploy order: ship
 # admin-consumer first with this off, then turn it on.
 MODERATION_EMIT_AUDIT_EVENTS = env_bool("MODERATION_EMIT_AUDIT_EVENTS", True)
+# Emit moderation.actioned with action=reinstate when an appeal overturns a
+# user's or page's restrict/shadow (intelligence WP 3.3b). Two-release rule:
+# graph and feed consume it first; off = the overturn is audited only.
+MODERATION_EMIT_REINSTATE = env_bool("MODERATION_EMIT_REINSTATE", True)
 
 CELERY_BROKER_URL = RABBITMQ_URL or "memory://"
 CELERY_TASK_DEFAULT_QUEUE = f"{SERVICE_NAME}.tasks"

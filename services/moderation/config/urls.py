@@ -21,6 +21,8 @@ urlpatterns = [
         "internal/v1/stats/accounts/<uuid:account_id>/",
         InternalAccountStatsView.as_view(counters=ACCOUNT_COUNTERS),
     ),
+    # Not routed by the edge: feed's and graph's restriction backfill (intelligence WP 3.3).
+    path("internal/v1/intel/", include("moderation.intel_export")),
     path("api/v1/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/v1/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
 ]

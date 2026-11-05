@@ -107,6 +107,11 @@ GRAPH_EMIT_MUTE_FAVORITE_EVENTS = env_bool("GRAPH_EMIT_MUTE_FAVORITE_EVENTS", Tr
 GRAPH_EMIT_RESTRICT_EVENTS = env_bool("GRAPH_EMIT_RESTRICT_EVENTS", True)
 # Profile's page export, for `manage.py backfill_page_refs`.
 PROFILE_INTERNAL_URL = os.getenv("PROFILE_INTERNAL_URL", "http://profile:8000")
+# Identity's account lifecycle export, for `manage.py intel_backfill_accounts`
+# (already in every environment's shared env).
+IDENTITY_INTERNAL_URL = os.getenv("IDENTITY_INTERNAL_URL", "http://identity:8000")
+# Moderation's standing restrictions, for `manage.py intel_backfill_restrictions`.
+MODERATION_INTERNAL_URL = os.getenv("MODERATION_INTERNAL_URL", "http://moderation:8000")
 
 CELERY_BROKER_URL = RABBITMQ_URL or "memory://"
 CELERY_TASK_DEFAULT_QUEUE = f"{SERVICE_NAME}.tasks"

@@ -9,4 +9,5 @@ urlpatterns = [
         name="internal-post-visibility",
     ),
     path("search/", include("posts.search_urls")),  # search v2 (1.15)
+    path("intel/", include("posts.intel_export")),  # feed intel backfill (WP 3.2)
 ]

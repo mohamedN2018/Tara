@@ -3,6 +3,7 @@ from __future__ import annotations
 from django.utils import timezone
 from rest_framework import serializers
 
+from .hydration import BatchHintsMixin
 from .models import (
     FEELINGS,
     REACTION_TYPES,
@@ -201,7 +202,7 @@ class PostSerializer(serializers.ModelSerializer):
         }
 
 
-class PostBatchSerializer(serializers.Serializer):
+class PostBatchSerializer(BatchHintsMixin):
     ids = serializers.ListField(child=serializers.UUIDField(), max_length=50)
 
 

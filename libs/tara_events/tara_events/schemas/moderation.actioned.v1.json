@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tara.local/events/moderation.actioned.v1.json",
   "title": "moderation.actioned v1 payload",
-  "description": "A moderator decided a case (or an overturned appeal reverses one); the owning content service enforces it. owner_id and reason were added additively.",
+  "description": "A moderator decided a case (or an overturned appeal reverses one: approve for content, reinstate for a user or page); the owning content service enforces it. owner_id and reason were added additively.",
   "type": "object",
   "properties": {
     "case_id": {
@@ -25,8 +25,10 @@
         "warn",
         "shadow",
         "dismiss",
-        "approve"
-      ]
+        "approve",
+        "reinstate"
+      ],
+      "description": "reinstate (additive, intelligence WP 3.3b): an appeal overturned a user's or page's restrict/shadow and no other case's restrict/shadow on that target stands, so every restriction of the account (or page) is lifted. Only emitted for target_type user and page; consumers that do not know it ignore it."
     },
     "owner_id": {
       "type": [

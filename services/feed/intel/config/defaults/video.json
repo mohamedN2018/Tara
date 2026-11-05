@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "surface": "video",
+  "version": 1,
+  "window": {"video": 300},
+  "pools": {"window_days": 7},
+  "integrity": {"pending_report_min_reporters": 3, "exclude_pending_from_discovery": true},
+  "eligibility": {"minor_allowed_topics": []}
+}

@@ -20,6 +20,7 @@ from tara_common.exceptions import Conflict, TaraAPIError
 
 from . import events
 from .models import (
+    AccountRef,
     BlockRelation,
     FollowRelation,
     Friendship,
@@ -393,6 +394,25 @@ def _end_follow(
 def unfollow(actor_id: str, target_id: str, target_type: str = "user") -> None:
     with transaction.atomic():
         _end_follow(actor_id, target_id, target_type, actor_id=actor_id, reason="unfollow")
+
+
+#: Ids per ``IN`` query when looking up inactive accounts.
+_INACTIVE_CHUNK = 5000
+
+
+def inactive_among(account_ids) -> set[str]:
+    """The subset of ``account_ids`` that is deactivated or suspended (D5).
+    An account graph never heard about counts as active."""
+    ids = sorted({str(x) for x in account_ids})
+    out: set[str] = set()
+    for start in range(0, len(ids), _INACTIVE_CHUNK):
+        out.update(
+            str(x)
+            for x in AccountRef.objects.filter(
+                account_id__in=ids[start : start + _INACTIVE_CHUNK], active=False
+            ).values_list("account_id", flat=True)
+        )
+    return out
 
 
 def follower_ids(

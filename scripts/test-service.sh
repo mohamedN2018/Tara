@@ -25,7 +25,7 @@ FROM tara/${service}:dev
 USER root
 ENV PIP_CONSTRAINT=
 RUN pip install -q --timeout 20 --retries 5 --root-user-action=ignore \
-    "pytest>=8" "pytest-django>=4.8" pytest-cov pytest-asyncio httpx
+    "pytest>=8" "pytest-django>=4.8" pytest-cov pytest-asyncio httpx "hypothesis>=6.100"
 EOF
 
 # shellcheck disable=SC2086

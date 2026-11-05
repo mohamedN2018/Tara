@@ -31,6 +31,7 @@ from django.db import transaction
 from django.db.models import F, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+from intel import readmodels as intel_readmodels
 
 from . import events, ranking, readmodels
 from .clients import GraphUnavailable, Relationship, fanout_audience, relationship
@@ -193,11 +194,9 @@ def fan_out_post(payload: dict) -> int:
 
     recipients = _recipients(author_id, audience, payload.get("author_type") or "user")
     cap = max(settings.FANOUT_MAX_RECIPIENTS, 1)  # the author's own item always fits
-    if len(recipients) > cap:
-        logger.warning(
-            "fan-out capped",
-            extra={"post_id": post_id, "total": len(recipients), "cap": cap},
-        )
+    total = len(recipients)
+    if total > cap:
+        logger.warning("fan-out capped", extra={"post_id": post_id, "total": total, "cap": cap})
         recipients = recipients[:cap]  # the author is first, so it is always kept
 
     existing = {
@@ -228,6 +227,11 @@ def fan_out_post(payload: dict) -> int:
             ],
             ignore_conflicts=True,
         )
+        if total > cap:
+            # Tara Intelligence follow_pull (WP 3.4) reaches the followers left out.
+            intel_readmodels.record_fanout_capped(
+                post_id, author_id, audience, total, cap, created_at
+            )
         # One summary event: only the realtime bridge consumes it, and it pushes
         # to each recipient's socket itself.
         events.emit(

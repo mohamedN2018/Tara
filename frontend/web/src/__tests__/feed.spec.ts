@@ -52,6 +52,12 @@ describe("hydrateFeed", () => {
     expect(p).toMatchObject({ id: "a", body: "excerpt a", audience: "friends", partial: true });
   });
 
+  it("sends the Home surface and each item's source as hydration hints (WP 3.6)", async () => {
+    const batch = vi.spyOn(postService, "batch").mockResolvedValue([post("a")]);
+    await hydrateFeed([item("a"), { ...item("b"), reason: "friend", source: "follow_pull" }]);
+    expect(batch).toHaveBeenCalledWith(["a", "b"], { surface: "home", src: ["follow", "follow_pull"] });
+  });
+
   it("makes no request for an empty page", async () => {
     const batch = vi.spyOn(postService, "batch");
     await expect(hydrateFeed([])).resolves.toEqual([]);
@@ -80,6 +86,23 @@ describe("postService.batch", () => {
     const spy = vi.spyOn(api, "post").mockResolvedValue({ data: { data: [] } });
     await postService.batch(Array.from({ length: 120 }, (_, i) => `p${i}`));
     expect(spy.mock.calls.map((c) => (c[1] as { ids: string[] }).ids.length)).toEqual([50, 50, 20]);
+  });
+
+  it("splits the per-id sources with their chunk, and drops hints that do not match the ids", async () => {
+    const { api } = await import("@/lib/api");
+    const spy = vi.spyOn(api, "post").mockResolvedValue({ data: { data: [] } });
+    spy.mockClear();
+    const ids = Array.from({ length: 60 }, (_, i) => `p${i}`);
+    await postService.batch(ids, { surface: "home", src: ids.map((_, i) => (i < 50 ? "friend" : "follow")) });
+    const bodies = spy.mock.calls.map((c) => c[1] as { ids: string[]; surface?: string; src?: string[] });
+    expect(bodies.map((b) => [b.surface, b.src?.length, b.src?.[0]])).toEqual([
+      ["home", 50, "friend"],
+      ["home", 10, "follow"],
+    ]);
+
+    spy.mockClear();
+    await postService.batch(["a", "b"], { surface: "home", src: ["friend"] });
+    expect(spy.mock.calls[0][1]).toEqual({ ids: ["a", "b"] });
   });
 });
 

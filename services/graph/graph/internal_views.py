@@ -58,8 +58,10 @@ class FanoutAudienceView(APIView):
 
     Returns followers + friends of the author (deduped), never an account with a
     block toward the author in either direction (even if a stale edge survived a
-    race with block()). The Feed service decides which subset applies per post
-    audience.
+    race with block()), and never an inactive (deactivated or suspended)
+    account (D5). An account under a moderation restriction keeps both its
+    fan-out and its place in others' (rule E11 only touches suggestions). The
+    Feed service decides which subset applies per post audience.
     """
 
     permission_classes = [AllowAny]
@@ -73,6 +75,9 @@ class FanoutAudienceView(APIView):
         else:
             followers = set(services.follower_ids(account_id))
             friends = set(services.list_friend_ids(account_id))
+        inactive = services.inactive_among(followers | friends)
+        followers -= inactive
+        friends -= inactive
         return data_response(
             {
                 "account_id": str(account_id),

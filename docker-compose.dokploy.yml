@@ -59,6 +59,7 @@ x-common-env: &common-env
   POST_INTERNAL_URL: http://post:8000
   CHAT_INTERNAL_URL: http://chat:8000
   MARKETPLACE_INTERNAL_URL: http://marketplace:8000
+  MODERATION_INTERNAL_URL: http://moderation:8000
 
 x-backing: &backing
   restart: unless-stopped
@@ -384,6 +385,8 @@ x-moderation-env: &moderation-env
   MODERATION_SECRET_KEY: ${MODERATION_SECRET_KEY:?}
   # appeal.resolved for admin's audit log (8.1, deploy note).
   MODERATION_EMIT_AUDIT_EVENTS: ${MODERATION_EMIT_AUDIT_EVENTS:-true}
+  # moderation.actioned reinstate (Tara Intelligence WP 3.3b, deploy note).
+  MODERATION_EMIT_REINSTATE: ${MODERATION_EMIT_REINSTATE:-true}
   MODERATION_REPORT_RATE: ${MODERATION_REPORT_RATE:-20/hour}
 
 x-admin-env: &admin-env

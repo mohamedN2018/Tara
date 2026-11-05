@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "surface": "reels",
+  "version": 1,
+  "window": {"reels": 400},
+  "retrieval": {"max_duration_ms": 90000, "require_portrait": true},
+  "pools": {"window_days": 7},
+  "integrity": {"pending_report_min_reporters": 3, "exclude_pending_from_discovery": true},
+  "eligibility": {"minor_allowed_topics": []}
+}

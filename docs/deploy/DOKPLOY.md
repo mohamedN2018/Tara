@@ -945,6 +945,56 @@ it does not conflict.
   sessions and its posts from discovery pools). Consumers ship before producers:
   deploy feed before turning on `POST_EMIT_SAVE_EVENTS`.
 
+### Upgrading: Tara Intelligence eligibility in graph, moderation and post (WP 3.3, 3.3b, 3.6, 3.7)
+
+- **New variable, optional:** on moderation `MODERATION_EMIT_REINSTATE` (default
+  `true`). When an appeal overturns a user's or page's `restrict` or `shadow`
+  and no other case's `restrict`/`shadow` on that target still stands,
+  moderation emits `moderation.actioned` with the new action `reinstate`
+  (also recorded as `reversal: "reinstate"` in `appeal.resolved`). Off, the
+  overturn is only audited, as before.
+- **Order:** graph's consumer ships in the same release. On an existing install
+  deploy graph first, or deploy once with `MODERATION_EMIT_REINSTATE=false` and
+  turn it on after. Consumers that do not know `reinstate` ignore it.
+- **New consumers in `graph-consumer`:** `account.deactivated` / `reactivated`
+  and `account.suspended` / `unsuspended` (an inactive account leaves people
+  suggestions and the fan-out audience), and `moderation.actioned` with
+  `target_type=user` (`restrict` / `shadow` leave people suggestions only,
+  `reinstate` lifts it). Accounts deactivated, suspended or restricted before
+  this release are not known to graph or feed until their next such event, so
+  run the backfills below once after the deploy.
+- **One-off backfills after the deploy** (each safe to re-run, throttled to 20
+  requests/s, internal network only; they print one summary line per kind):
+
+  ```bash
+  # feed: Tara Intelligence read models (posts, edges, groups, pages, then
+  # account lifecycle from identity and standing restrictions from moderation)
+  docker compose exec feed python manage.py intel_backfill_content
+  docker compose exec feed python manage.py intel_backfill_edges
+  docker compose exec feed python manage.py intel_backfill_groups
+  docker compose exec feed python manage.py intel_backfill_pages
+  docker compose exec feed python manage.py intel_backfill_accounts
+  # graph: inactive accounts (D5) and restricted accounts (rule E11)
+  docker compose exec graph python manage.py intel_backfill_accounts
+  docker compose exec graph python manage.py intel_backfill_restrictions
+  ```
+
+  They read new internal-only exports: post `/internal/v1/intel/export/posts/`,
+  graph `.../friendships|follows|blocks/`, profile `.../groups|group-members|pages/`,
+  identity `.../accounts/` (only the accounts that are not active) and moderation
+  `.../restrictions/` (standing user `restrict`/`shadow`). None is routed by the
+  edge. `MODERATION_INTERNAL_URL` is set to `http://moderation:8000` in the
+  compose's shared env, like the other service addresses.
+- **New public route, no edge change:** `POST /api/v1/reels/batch/` (post; already
+  under `/api/v1/reels`). `/posts/batch/` and `/reels/batch/` accept optional
+  `surface` / `src` hints and export `post_batch_dropped_total{caller,surface,src}`
+  on post's `/metrics` (the counts live in post's Redis cache, keys
+  `post:batch_dropped:*`, so every gunicorn worker reports the same values).
+- **Migrations (additive, run at boot):** `graph.0003_account_ref_state` (new
+  columns with database defaults) and `posts.0013_intel_indexes`
+  (`share_account_idx`, partial `post_type_published_idx`; both
+  `CREATE INDEX CONCURRENTLY`, non-atomic, like `0012`).
+
 ### Backups
 
 `scripts/backup.sh` saves all databases, media and the JWT keys. Run it daily from

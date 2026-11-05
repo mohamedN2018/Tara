@@ -62,11 +62,16 @@ export function snapshotToPost(item: FeedItem): Post {
   };
 }
 
-/** Live posts for feed items, in feed order. A post the batch omits is gone. */
+/**
+ * Live posts for feed items, in feed order. A post the batch omits is gone.
+ * The batch carries the Home surface and each item's source as hints, so post
+ * can count what it drops (WP 3.6).
+ */
 export async function hydrateFeed(items: FeedItem[]): Promise<Post[]> {
   if (!items.length) return [];
   try {
-    const live = new Map((await postService.batch(items.map((i) => i.post_id))).map((p) => [p.id, p]));
+    const hints = { surface: "home", src: items.map((i) => i.source ?? i.reason ?? "") };
+    const live = new Map((await postService.batch(items.map((i) => i.post_id), hints)).map((p) => [p.id, p]));
     return items.flatMap((i) => live.get(i.post_id) ?? []);
   } catch {
     return items.map(snapshotToPost);

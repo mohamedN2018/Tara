@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "surface": "groups",
+  "version": 1,
+  "window": {"groups": 150},
+  "retrieval": {"groups_days": 30},
+  "integrity": {"pending_report_min_reporters": 3, "exclude_pending_from_discovery": true},
+  "eligibility": {"minor_allowed_topics": []}
+}

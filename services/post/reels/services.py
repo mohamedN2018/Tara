@@ -406,6 +406,16 @@ def visible_reels(viewer_id: str, reels: list[Reel]) -> list[Reel]:
     return [r for r in reels if r.post_id in seen]
 
 
+def reels_by_ids(viewer_id: str, reel_ids: list) -> list[Reel]:
+    """The reels the viewer may see, in the order requested (hydration for
+    feed's reels surface, intelligence WP 3.6). Anything else (not a reel, not
+    published, deleted, removed, in a group, or not visible to the viewer under
+    the post rule) is left out, exactly as ``get_reel`` would answer 404."""
+    reels = list(_live().filter(post_id__in=reel_ids))
+    by_id = {r.post_id: r for r in visible_reels(viewer_id, reels)}
+    return [by_id[i] for i in dict.fromkeys(reel_ids) if i in by_id]
+
+
 def get_reel(viewer_id: str, reel_id) -> Reel:
     """One reel the viewer may see; anything else (hidden, deleted, not a reel) is 404."""
     reel = _live().filter(post_id=_uuid(reel_id, "reel_id")).first()

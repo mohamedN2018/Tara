@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from posts.hydration import BatchHintsMixin
 from posts.models import CommentPolicy
 from rest_framework import serializers
 
@@ -18,6 +19,10 @@ class ReelCreateSerializer(serializers.Serializer):
         choices=CommentPolicy.choices, default=CommentPolicy.EVERYONE
     )
     page_id = serializers.UUIDField(required=False, allow_null=True)
+
+
+class ReelBatchSerializer(BatchHintsMixin):
+    ids = serializers.ListField(child=serializers.UUIDField(), max_length=50)
 
 
 class ReelEligibilitySerializer(serializers.Serializer):

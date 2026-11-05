@@ -633,15 +633,13 @@ def test_overturning_a_content_removal_emits_approve(target_type):
         ("post", "warn"),
         ("listing", "warn"),
         ("user", "warn"),
-        ("user", "restrict"),
-        ("user", "shadow"),
         ("page", "remove"),
-        ("page", "restrict"),
     ],
 )
 def test_overturning_a_decision_without_an_inverse_emits_nothing(target_type, action):
     # Approve is not an inverse of these: on a post it would restore content
     # another case removed, and users and pages do not understand it at all.
+    # (A user's or page's restrict/shadow is reinstated: test_reinstate.py.)
     owner = _acct()
     case = _resolved_case(owner, action=action, target_type=target_type)
     appeal = _overturn(case, owner)

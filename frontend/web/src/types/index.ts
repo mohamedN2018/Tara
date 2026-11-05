@@ -149,6 +149,8 @@ export interface FeedItem {
   post_created_at: string;
   /** Tara Intelligence serve token (WP 2.3): sent back with this item's signals, never read. */
   st?: string;
+  /** Candidate source, when feed names one (Tara Intelligence retrieval); else `reason` is it. */
+  source?: string;
 }
 
 export interface SponsoredSlot {

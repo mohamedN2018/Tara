@@ -23,4 +23,5 @@ urlpatterns = [
     path("pages/<uuid:page_id>/access/", PageAccessView.as_view(), name="page-access"),
     path("pages/<uuid:page_id>/team/", PageTeamView.as_view(), name="page-team"),
     path("search/", include("profiles.search_urls")),  # search's backfill (1.15)
+    path("intel/", include("profiles.intel_export")),  # feed intel backfill (WP 3.2)
 ]

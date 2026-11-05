@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "surface": "home",
+  "version": 1,
+  "window": {"connections": 500, "groups": 150, "follow_pull": 100},
+  "retrieval": {"new_follow_hours": 24, "new_follow_days": 7, "capped_days": 7, "groups_days": 30},
+  "pools": {"window_days": 7},
+  "integrity": {"pending_report_min_reporters": 3, "exclude_pending_from_discovery": true},
+  "eligibility": {"minor_allowed_topics": []},
+  "media_quality": {"rungs": {"720": 1.0, "480": 0.7, "360": 0.5}, "no_poster_penalty": 0.1, "no_audio_penalty": 0.1}
+}

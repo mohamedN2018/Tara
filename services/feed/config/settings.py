@@ -112,6 +112,12 @@ TARA_INTERNAL_JWT_SECRET = os.getenv("INTERNAL_JWT_SECRET", "dev-only-internal-s
 
 GRAPH_INTERNAL_URL = os.getenv("GRAPH_INTERNAL_URL", "http://graph:8000")
 GRAPH_CALL_TIMEOUT = float(os.getenv("GRAPH_CALL_TIMEOUT", "3.0"))
+# Tara Intelligence backfills (WP 3.2) read post's and profile's internal exports.
+# Both names already exist in every environment's shared env (*common-env).
+POST_INTERNAL_URL = os.getenv("POST_INTERNAL_URL", "http://post:8000")
+PROFILE_INTERNAL_URL = os.getenv("PROFILE_INTERNAL_URL", "http://profile:8000")
+IDENTITY_INTERNAL_URL = os.getenv("IDENTITY_INTERNAL_URL", "http://identity:8000")
+MODERATION_INTERNAL_URL = os.getenv("MODERATION_INTERNAL_URL", "http://moderation:8000")
 
 # Ads service for sponsored feed slots (optional; feed degrades to organic).
 ADS_INTERNAL_URL = os.getenv("ADS_INTERNAL_URL", "http://ads:8000")

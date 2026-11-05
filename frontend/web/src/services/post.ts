@@ -65,6 +65,17 @@ export interface SavedCollection {
 }
 
 const BATCH_LIMIT = 50;
+
+/**
+ * Where a batch's ids were served (WP 3.6): `surface` and the candidate
+ * source of each id, copied from feed's response. Post only uses them to
+ * label its own count of the ids it does not return; they never change the answer.
+ */
+export interface BatchHints {
+  surface: string;
+  /** One source per id, parallel to `ids`. */
+  src: string[];
+}
 // Upper bound on empty pages followed in a row, so one call can't run away.
 const MAX_EMPTY_PAGES = 25;
 const MAX_HASHTAG_PAGES = 3;
@@ -170,11 +181,17 @@ export const postService = {
   },
 
   /** Current posts in requested order; missing ids were deleted or are no longer visible. */
-  async batch(ids: string[]): Promise<Post[]> {
-    const chunks: string[][] = [];
-    for (let i = 0; i < ids.length; i += BATCH_LIMIT) chunks.push(ids.slice(i, i + BATCH_LIMIT));
+  async batch(ids: string[], hints?: BatchHints): Promise<Post[]> {
+    const starts: number[] = [];
+    for (let i = 0; i < ids.length; i += BATCH_LIMIT) starts.push(i);
+    const useHints = !!hints && hints.src.length === ids.length;
     const pages = await Promise.all(
-      chunks.map((chunk) => api.post<{ data: Post[] }>("/posts/batch/", { ids: chunk })),
+      starts.map((i) =>
+        api.post<{ data: Post[] }>("/posts/batch/", {
+          ids: ids.slice(i, i + BATCH_LIMIT),
+          ...(useHints ? { surface: hints.surface, src: hints.src.slice(i, i + BATCH_LIMIT) } : {}),
+        }),
+      ),
     );
     return pages.flatMap((p) => p.data.data);
   },

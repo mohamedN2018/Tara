@@ -28,6 +28,24 @@ class AccountRef(models.Model):
     # ``profile.updated``). ``False`` keeps the account out of suggestions.
     searchable = models.BooleanField(default=True, db_default=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    # Lifecycle (intelligence WP 3.3, D5): ``account.deactivated`` /
+    # ``reactivated`` and ``account.suspended`` / ``unsuspended`` set the two
+    # flags independently (newest event wins per flag); ``active`` is
+    # ``not (deactivated or suspended)``, kept in the row so readers filter on
+    # one column. An inactive account is left out of suggestions and fan-out.
+    deactivated = models.BooleanField(default=False, db_default=False)
+    deactivated_event_at = models.DateTimeField(null=True, blank=True)
+    suspended = models.BooleanField(default=False, db_default=False)
+    suspended_event_at = models.DateTimeField(null=True, blank=True)
+    active = models.BooleanField(default=True, db_default=True)
+    # Account moderation (rule E11, D14): ``moderation.actioned`` with
+    # target_type=user and ``restrict`` / ``shadow`` sets it, ``reinstate``
+    # clears it (the timestamp stays so an older redelivery cannot re-apply
+    # it). Sensitive: a shadow is never shown to anyone, the account included.
+    # A restricted account keeps its fan-out; it only leaves suggestions.
+    restriction = models.CharField(max_length=8, blank=True, default="", db_default="")
+    restriction_case_id = models.UUIDField(null=True, blank=True)
+    restriction_event_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "account_ref"

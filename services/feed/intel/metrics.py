@@ -1,4 +1,5 @@
-"""Prometheus counters for telemetry ingestion (scraped from feed and feed-signals)."""
+"""Prometheus counters for telemetry ingestion and eligibility (scraped from feed and
+feed-signals)."""
 
 from __future__ import annotations
 
@@ -11,8 +12,13 @@ try:
     SIGNALS_REJECTED = Counter(
         "intel_signal_rejected_total", "Telemetry events dropped, by reason.", ["reason"]
     )
+    ELIGIBILITY_DROPS = Counter(
+        "intel_eligibility_drop_total",
+        "Candidates removed by an eligibility rule (02 section 11), by rule.",
+        ["rule"],
+    )
 except ImportError:  # pragma: no cover - metrics are optional
-    SIGNALS_ACCEPTED = SIGNALS_REJECTED = None
+    SIGNALS_ACCEPTED = SIGNALS_REJECTED = ELIGIBILITY_DROPS = None
 
 
 def accepted(origin: str, n: int) -> None:
@@ -23,3 +29,8 @@ def accepted(origin: str, n: int) -> None:
 def rejected(reason: str, n: int = 1) -> None:
     if SIGNALS_REJECTED is not None and n:
         SIGNALS_REJECTED.labels(reason=reason).inc(n)
+
+
+def eligibility_dropped(rule: str, n: int = 1) -> None:
+    if ELIGIBILITY_DROPS is not None and n:
+        ELIGIBILITY_DROPS.labels(rule=rule).inc(n)

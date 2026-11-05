@@ -52,6 +52,101 @@ def on_profile_updated(event: EventEnvelope) -> None:
         AccountRef.objects.update_or_create(account_id=event.subject_id, defaults=defaults)
 
 
+def _occurred(event: EventEnvelope) -> datetime | None:
+    return parse_datetime(event.occurred_at or "") if event.occurred_at else None
+
+
+def _set_flag(event: EventEnvelope, flag: str, value: bool) -> bool:
+    """Set ``deactivated`` or ``suspended`` on the account ref, newest event
+    wins (an older redelivery never undoes a newer state), and recompute
+    ``active``. Returns whether the row changed."""
+    try:
+        account_id = uuid.UUID(str(event.payload.get("account_id") or event.subject_id))
+    except ValueError:
+        logger.warning("lifecycle event without a valid account id", extra={"flag": flag})
+        return False
+    return set_lifecycle(account_id, flag, value, _occurred(event))
+
+
+def set_lifecycle(account_id, flag: str, value: bool, at: datetime | None) -> bool:
+    """The writer behind the lifecycle events and identity's backfill
+    (``intel_backfill_accounts``, which passes the export's ``as_of``)."""
+    if flag not in ("deactivated", "suspended"):
+        raise ValueError(flag)
+    stamp = f"{flag}_event_at"
+    with transaction.atomic():
+        row, _ = AccountRef.objects.select_for_update().get_or_create(account_id=account_id)
+        seen = getattr(row, stamp)
+        if seen is not None and at is not None and at <= seen:
+            return False
+        setattr(row, flag, value)
+        setattr(row, stamp, at or seen)
+        row.active = not (row.deactivated or row.suspended)
+        row.save(update_fields=[flag, stamp, "active"])
+    return True
+
+
+@on_event("account.deactivated")
+def on_account_deactivated(event: EventEnvelope) -> None:
+    """D5: a deactivated account leaves people suggestions and fan-out."""
+    _set_flag(event, "deactivated", True)
+
+
+@on_event("account.reactivated")
+def on_account_reactivated(event: EventEnvelope) -> None:
+    _set_flag(event, "deactivated", False)
+
+
+@on_event("account.suspended")
+def on_account_suspended(event: EventEnvelope) -> None:
+    _set_flag(event, "suspended", True)
+
+
+@on_event("account.unsuspended")
+def on_account_unsuspended(event: EventEnvelope) -> None:
+    _set_flag(event, "suspended", False)
+
+
+#: ``moderation.actioned`` actions on a user that graph applies (rule E11).
+RESTRICTING_ACTIONS = frozenset({"restrict", "shadow"})
+
+
+@on_event("moderation.actioned")
+def on_moderation_actioned(event: EventEnvelope) -> None:
+    """Rule E11 (D14): an account under ``restrict`` or ``shadow`` leaves people
+    suggestions; ``reinstate`` (moderation WP 3.3b, an overturned appeal with
+    no other restriction standing) lifts it. ``warn`` and ``dismiss`` change
+    nothing, and other target types are not graph's. Newest event wins."""
+    p = event.payload if isinstance(event.payload, dict) else {}
+    action = p.get("action")
+    if p.get("target_type") != "user" or action not in (RESTRICTING_ACTIONS | {"reinstate"}):
+        return
+    try:
+        account_id = uuid.UUID(str(p.get("target_id") or ""))
+    except ValueError:
+        return
+    if set_restriction(account_id, action, p.get("case_id"), _occurred(event)):
+        logger.info("account restriction applied", extra={"action": action})
+
+
+def set_restriction(account_id, action: str, case_id, at: datetime | None) -> bool:
+    """The writer behind ``moderation.actioned`` and moderation's backfill
+    (``intel_backfill_restrictions``, which passes the export's ``as_of``):
+    ``restrict`` / ``shadow`` set it, ``reinstate`` clears it, newest wins."""
+    if action not in (RESTRICTING_ACTIONS | {"reinstate"}):
+        raise ValueError(action)
+    with transaction.atomic():
+        row, _ = AccountRef.objects.select_for_update().get_or_create(account_id=account_id)
+        seen = row.restriction_event_at
+        if seen is not None and at is not None and at <= seen:
+            return False
+        row.restriction = "" if action == "reinstate" else action
+        row.restriction_case_id = _uuid_or_none(case_id)
+        row.restriction_event_at = at or seen
+        row.save(update_fields=["restriction", "restriction_case_id", "restriction_event_at"])
+    return True
+
+
 def _uuid_or_none(value) -> uuid.UUID | None:
     try:
         return uuid.UUID(str(value)) if value else None

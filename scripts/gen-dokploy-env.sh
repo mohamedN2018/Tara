@@ -272,6 +272,8 @@ ADS_SERVING_ENABLED=false
 # consumers bind first, then set it true (docs/deploy/DOKPLOY.md).
 IDENTITY_EMIT_AUDIT_EVENTS=true
 MODERATION_EMIT_AUDIT_EVENTS=true
+MODERATION_EMIT_REINSTATE=true
+# MODERATION_INTERNAL_URL is fixed in docker-compose.dokploy.yml (WP 3.3 backfills).
 IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS=true
 PROFILE_EMIT_PAGE_UPDATED=true
 PROFILE_EMIT_GROUP_EVENTS=true
