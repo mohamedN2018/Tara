@@ -1039,6 +1039,12 @@ networks:
     ipam:
       config:
         - subnet: ${TARA_NETWORK_SUBNET:-10.213.13.0/24}
+  # Dokploy attaches the web service to "default" when it rewrites the file;
+  # pin its subnet too, or the exhausted address pools fail the deploy.
+  default:
+    ipam:
+      config:
+        - subnet: ${TARA_DEFAULT_NETWORK_SUBNET:-10.213.14.0/24}
   dokploy-network:
     external: true
 
