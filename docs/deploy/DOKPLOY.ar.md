@@ -186,3 +186,15 @@ Error pull access denied for tara/feed, repository does not exist or may require
 للتأكد على جهازك من غير ما تلمس السيرفر، استخدم env تجريبي (مش `.env_prod`) واعمل
 `config -q` و`pull --ignore-buildable`؛ الأوامر في `DOKPLOY.md` (القسم 10). كل images تارا
 هتطلع `Skipped`. استخدم `config -q` دايمًا، لأن `config` من غير `-q` بيطبع كل الأسرار.
+
+
+## حل مشكلة: «Error occurred» بعد نسخ الكود على طول، ومن غير تفاصيل
+
+Dokploy (v0.31) بيعيد كتابة ملف الـ compose، وبيبعته هو وملف الـ env بصيغة base64 جوه argument واحد في سكربت shell. Linux مش بيقبل argument أكبر من 128KB، فلو الملف كبر بعد فك الـ merge keys، العملية بتقع قبل ما أي سطر يتكتب في اللوج.
+
+عشان كده:
+- الـ workers والـ consumers بيستخدموا env الخدمة بالـ alias (`environment: *post-env`) مش بالـ merge.
+- الـ migrations بتشتغل في السيرفر بتاع الويب بس، يعني لما الأمر يكون `gunicorn`.
+- حجم الملف بعد إعادة الكتابة دلوقتي حوالي 51KB (68KB بالـ base64).
+
+ومتضيفش دومين من تبويب Domains في Dokploy، لأن الـ labels بتاعة خدمة `web` هي اللي بتوجّه `DOMAIN` بشهادة Let's Encrypt.

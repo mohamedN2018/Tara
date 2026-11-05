@@ -992,3 +992,17 @@ about quiet active calls).
 2. Start a call between two accounts. The browser opens a WebSocket to
    `wss://<domain>/rtc`.
 3. If signalling connects but there is no audio, the media ports are closed.
+
+
+## Troubleshooting: "Error occurred" right after the clone, with no details
+
+Dokploy (v0.31) rewrites the compose file and passes it, with the env file,
+base64-encoded inside one shell script argument. Linux caps a single argument
+at 128 KiB, so a compose file that expands too much (YAML merge keys are
+expanded on rewrite) fails before any build output is logged. Keep it small:
+workers and consumers alias their service env (`environment: *post-env`)
+instead of merging it, and only the web server migrates (the entrypoints run
+migrations when `RUN_MIGRATIONS=true` and the command is `gunicorn`). The
+rewritten file is about 51 KB today (68 KB in base64). A domain added in
+Dokploy's Domains tab is not needed: the `web` service's Traefik labels route
+`DOMAIN` with a Let's Encrypt certificate.

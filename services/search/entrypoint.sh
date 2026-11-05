@@ -8,7 +8,9 @@ if [ "${TARA_ENV:-}" = "production" ]; then
   python manage.py check --deploy --fail-level ERROR
 fi
 
-if [ "${RUN_MIGRATIONS:-false}" = "true" ]; then
+# Only the web server migrates: workers share the env (and its RUN_MIGRATIONS)
+# but run celery or manage.py commands, so they never race the migration.
+if [ "${RUN_MIGRATIONS:-false}" = "true" ] && [ "${1:-}" = "gunicorn" ]; then
   echo "[search] migrate"
   python manage.py migrate --noinput
 fi

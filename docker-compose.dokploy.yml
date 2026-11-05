@@ -83,6 +83,8 @@ x-healthcheck: &healthcheck
 
 x-identity-env: &identity-env
   <<: *common-env
+  # The web service migrates (entrypoint: only when it runs gunicorn).
+  RUN_MIGRATIONS: "true"
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/0
   ACCESS_TOKEN_TTL_SECONDS: ${ACCESS_TOKEN_TTL_SECONDS:-900}
   # Allowed hosts: the public domain, the service name (internal calls) and
@@ -145,6 +147,8 @@ x-identity-env: &identity-env
 
 x-profile-env: &profile-env
   <<: *common-env
+  # The web service migrates (entrypoint: only when it runs gunicorn).
+  RUN_MIGRATIONS: "true"
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/1
   PROFILE_ALLOWED_HOSTS: ${PROFILE_ALLOWED_HOSTS:-${DOMAIN:?},profile,localhost,127.0.0.1}
   PROFILE_CORS_ORIGINS: ${PROFILE_CORS_ORIGINS:-https://${DOMAIN:?}}
@@ -162,6 +166,8 @@ x-profile-env: &profile-env
 
 x-graph-env: &graph-env
   <<: *common-env
+  # The web service migrates (entrypoint: only when it runs gunicorn).
+  RUN_MIGRATIONS: "true"
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/2
   GRAPH_ALLOWED_HOSTS: ${GRAPH_ALLOWED_HOSTS:-${DOMAIN:?},graph,localhost,127.0.0.1}
   GRAPH_CORS_ORIGINS: ${GRAPH_CORS_ORIGINS:-https://${DOMAIN:?}}
@@ -176,6 +182,8 @@ x-graph-env: &graph-env
 
 x-media-env: &media-env
   <<: *common-env
+  # The web service migrates (entrypoint: only when it runs gunicorn).
+  RUN_MIGRATIONS: "true"
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/3
   MEDIA_ALLOWED_HOSTS: ${MEDIA_ALLOWED_HOSTS:-${DOMAIN:?},media,localhost,127.0.0.1}
   MEDIA_CORS_ORIGINS: ${MEDIA_CORS_ORIGINS:-https://${DOMAIN:?}}
@@ -242,6 +250,8 @@ x-media-transcoder-env: &media-transcoder-env
 
 x-post-env: &post-env
   <<: *common-env
+  # The web service migrates (entrypoint: only when it runs gunicorn).
+  RUN_MIGRATIONS: "true"
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/4
   POST_ALLOWED_HOSTS: ${POST_ALLOWED_HOSTS:-${DOMAIN:?},post,localhost,127.0.0.1}
   POST_CORS_ORIGINS: ${POST_CORS_ORIGINS:-https://${DOMAIN:?}}
@@ -261,6 +271,8 @@ x-post-env: &post-env
 
 x-feed-env: &feed-env
   <<: *common-env
+  # The web service migrates (entrypoint: only when it runs gunicorn).
+  RUN_MIGRATIONS: "true"
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/5
   # Ranking sessions (1.7): their own Redis; feed falls back to latest order without it.
   REDIS_HOT_URL: ${REDIS_HOT_URL:-redis://:${REDIS_PASSWORD:?}@redis-hot:6379/0}
@@ -274,6 +286,8 @@ x-feed-env: &feed-env
 
 x-chat-env: &chat-env
   <<: *common-env
+  # The web service migrates (entrypoint: only when it runs gunicorn).
+  RUN_MIGRATIONS: "true"
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/6
   CHAT_ALLOWED_HOSTS: ${CHAT_ALLOWED_HOSTS:-${DOMAIN:?},chat,localhost,127.0.0.1}
   CHAT_CORS_ORIGINS: ${CHAT_CORS_ORIGINS:-https://${DOMAIN:?}}
@@ -304,6 +318,8 @@ x-chat-env: &chat-env
 
 x-marketplace-env: &marketplace-env
   <<: *common-env
+  # The web service migrates (entrypoint: only when it runs gunicorn).
+  RUN_MIGRATIONS: "true"
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/8
   MARKETPLACE_ALLOWED_HOSTS: ${MARKETPLACE_ALLOWED_HOSTS:-${DOMAIN:?},marketplace,localhost,127.0.0.1}
   MARKETPLACE_CORS_ORIGINS: ${MARKETPLACE_CORS_ORIGINS:-https://${DOMAIN:?}}
@@ -318,6 +334,8 @@ x-marketplace-env: &marketplace-env
 
 x-notification-env: &notification-env
   <<: *common-env
+  # The web service migrates (entrypoint: only when it runs gunicorn).
+  RUN_MIGRATIONS: "true"
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/9
   NOTIFICATION_ALLOWED_HOSTS: ${NOTIFICATION_ALLOWED_HOSTS:-${DOMAIN:?},notification,localhost,127.0.0.1}
   NOTIFICATION_CORS_ORIGINS: ${NOTIFICATION_CORS_ORIGINS:-https://${DOMAIN:?}}
@@ -332,6 +350,8 @@ x-notification-env: &notification-env
 
 x-search-env: &search-env
   <<: *common-env
+  # The web service migrates (entrypoint: only when it runs gunicorn).
+  RUN_MIGRATIONS: "true"
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/10
   SEARCH_ALLOWED_HOSTS: ${SEARCH_ALLOWED_HOSTS:-${DOMAIN:?},search,localhost,127.0.0.1}
   SEARCH_CORS_ORIGINS: ${SEARCH_CORS_ORIGINS:-https://${DOMAIN:?}}
@@ -344,6 +364,8 @@ x-search-env: &search-env
 
 x-moderation-env: &moderation-env
   <<: *common-env
+  # The web service migrates (entrypoint: only when it runs gunicorn).
+  RUN_MIGRATIONS: "true"
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/11
   MODERATION_ALLOWED_HOSTS: ${MODERATION_ALLOWED_HOSTS:-${DOMAIN:?},moderation,localhost,127.0.0.1}
   MODERATION_CORS_ORIGINS: ${MODERATION_CORS_ORIGINS:-https://${DOMAIN:?}}
@@ -358,6 +380,8 @@ x-moderation-env: &moderation-env
 
 x-admin-env: &admin-env
   <<: *common-env
+  # The web service migrates (entrypoint: only when it runs gunicorn).
+  RUN_MIGRATIONS: "true"
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/12
   ADMIN_ALLOWED_HOSTS: ${ADMIN_ALLOWED_HOSTS:-${DOMAIN:?},admin,localhost,127.0.0.1}
   ADMIN_CORS_ORIGINS: ${ADMIN_CORS_ORIGINS:-https://${DOMAIN:?}}
@@ -384,6 +408,8 @@ x-admin-env: &admin-env
 
 x-ads-env: &ads-env
   <<: *common-env
+  # The web service migrates (entrypoint: only when it runs gunicorn).
+  RUN_MIGRATIONS: "true"
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/13
   ADS_ALLOWED_HOSTS: ${ADS_ALLOWED_HOSTS:-${DOMAIN:?},ads,localhost,127.0.0.1}
   ADS_CORS_ORIGINS: ${ADS_CORS_ORIGINS:-https://${DOMAIN:?}}
@@ -398,6 +424,8 @@ x-ads-env: &ads-env
 
 x-realtime-env: &realtime-env
   <<: *common-env
+  # The web service migrates (entrypoint: only when it runs gunicorn).
+  RUN_MIGRATIONS: "true"
   REDIS_URL: redis://:${REDIS_PASSWORD:?}@redis:6379/7
   REALTIME_ALLOWED_HOSTS: ${REALTIME_ALLOWED_HOSTS:-${DOMAIN:?},realtime,localhost,127.0.0.1}
   REALTIME_DEBUG: ${REALTIME_DEBUG:-false}
@@ -528,7 +556,7 @@ services:
     build: {context: ., dockerfile: services/identity/Dockerfile}
     image: tara/identity
     pull_policy: build
-    environment: {<<: *identity-env, RUN_MIGRATIONS: "true"}
+    environment: *identity-env
     volumes: [identity-keys:/app/.keys]
     mem_limit: 384m
     healthcheck: *healthcheck
@@ -538,7 +566,7 @@ services:
     build: {context: ., dockerfile: services/profile/Dockerfile}
     image: tara/profile
     pull_policy: build
-    environment: {<<: *profile-env, RUN_MIGRATIONS: "true"}
+    environment: *profile-env
     mem_limit: 384m
     healthcheck: *healthcheck
 
@@ -547,7 +575,7 @@ services:
     build: {context: ., dockerfile: services/graph/Dockerfile}
     image: tara/graph
     pull_policy: build
-    environment: {<<: *graph-env, RUN_MIGRATIONS: "true"}
+    environment: *graph-env
     mem_limit: 384m
     healthcheck: *healthcheck
 
@@ -556,7 +584,7 @@ services:
     build: {context: ., dockerfile: services/media/Dockerfile}
     image: tara/media
     pull_policy: build
-    environment: {<<: *media-env, RUN_MIGRATIONS: "true"}
+    environment: *media-env
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -570,7 +598,7 @@ services:
     build: {context: ., dockerfile: services/post/Dockerfile}
     image: tara/post
     pull_policy: build
-    environment: {<<: *post-env, RUN_MIGRATIONS: "true"}
+    environment: *post-env
     mem_limit: 384m
     healthcheck: *healthcheck
 
@@ -579,7 +607,7 @@ services:
     build: {context: ., dockerfile: services/feed/Dockerfile}
     image: tara/feed
     pull_policy: build
-    environment: {<<: *feed-env, RUN_MIGRATIONS: "true"}
+    environment: *feed-env
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -593,7 +621,7 @@ services:
     build: {context: ., dockerfile: services/chat/Dockerfile}
     image: tara/chat
     pull_policy: build
-    environment: {<<: *chat-env, RUN_MIGRATIONS: "true"}
+    environment: *chat-env
     mem_limit: 384m
     healthcheck: *healthcheck
 
@@ -602,7 +630,7 @@ services:
     build: {context: ., dockerfile: services/marketplace/Dockerfile}
     image: tara/marketplace
     pull_policy: build
-    environment: {<<: *marketplace-env, RUN_MIGRATIONS: "true"}
+    environment: *marketplace-env
     mem_limit: 384m
     healthcheck: *healthcheck
 
@@ -611,7 +639,7 @@ services:
     build: {context: ., dockerfile: services/notification/Dockerfile}
     image: tara/notification
     pull_policy: build
-    environment: {<<: *notification-env, RUN_MIGRATIONS: "true"}
+    environment: *notification-env
     mem_limit: 384m
     healthcheck: *healthcheck
 
@@ -620,7 +648,7 @@ services:
     build: {context: ., dockerfile: services/search/Dockerfile}
     image: tara/search
     pull_policy: build
-    environment: {<<: *search-env, RUN_MIGRATIONS: "true"}
+    environment: *search-env
     mem_limit: 384m
     healthcheck: *healthcheck
 
@@ -629,7 +657,7 @@ services:
     build: {context: ., dockerfile: services/moderation/Dockerfile}
     image: tara/moderation
     pull_policy: build
-    environment: {<<: *moderation-env, RUN_MIGRATIONS: "true"}
+    environment: *moderation-env
     mem_limit: 384m
     healthcheck: *healthcheck
 
@@ -638,7 +666,7 @@ services:
     build: {context: ., dockerfile: services/admin/Dockerfile}
     image: tara/admin
     pull_policy: build
-    environment: {<<: *admin-env, RUN_MIGRATIONS: "true"}
+    environment: *admin-env
     mem_limit: 384m
     healthcheck: *healthcheck
 
@@ -647,7 +675,7 @@ services:
     build: {context: ., dockerfile: services/ads/Dockerfile}
     image: tara/ads
     pull_policy: build
-    environment: {<<: *ads-env, RUN_MIGRATIONS: "true"}
+    environment: *ads-env
     mem_limit: 384m
     healthcheck: *healthcheck
 
@@ -661,7 +689,7 @@ services:
     command: ["daphne", "-b", "0.0.0.0", "-p", "8000",
               "--websocket-max-message-size", "65536", "--websocket-max-frame-size", "65536",
               "config.asgi:application"]
-    environment: {<<: *realtime-env}
+    environment: *realtime-env
     mem_limit: 256m
     healthcheck: *healthcheck
 
@@ -703,7 +731,7 @@ services:
     image: tara/identity
     pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *identity-env, RUN_MIGRATIONS: "false"}
+    environment: *identity-env
     volumes: [identity-keys:/app/.keys]
     depends_on: {identity: {condition: service_healthy}}
     mem_limit: 256m
@@ -713,7 +741,7 @@ services:
     image: tara/profile
     pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *profile-env, RUN_MIGRATIONS: "false"}
+    environment: *profile-env
     depends_on: {profile: {condition: service_healthy}}
     mem_limit: 256m
 
@@ -722,7 +750,7 @@ services:
     image: tara/graph
     pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *graph-env, RUN_MIGRATIONS: "false"}
+    environment: *graph-env
     depends_on: {graph: {condition: service_healthy}}
     mem_limit: 256m
 
@@ -732,7 +760,7 @@ services:
     pull_policy: never   # built by the service of the same image
     # Only media's own queue: video transcoding belongs to media-transcoder.
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-Q", "media.tasks", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *media-env, RUN_MIGRATIONS: "false"}
+    environment: *media-env
     depends_on: {media: {condition: service_healthy}}
     mem_limit: 256m
 
@@ -773,7 +801,7 @@ services:
     image: tara/post
     pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *post-env, RUN_MIGRATIONS: "false"}
+    environment: *post-env
     depends_on: {post: {condition: service_healthy}}
     mem_limit: 256m
 
@@ -782,7 +810,7 @@ services:
     image: tara/feed
     pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *feed-env, RUN_MIGRATIONS: "false"}
+    environment: *feed-env
     depends_on: {feed: {condition: service_healthy}}
     mem_limit: 256m
 
@@ -791,7 +819,7 @@ services:
     image: tara/chat
     pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *chat-env, RUN_MIGRATIONS: "false"}
+    environment: *chat-env
     depends_on: {chat: {condition: service_healthy}}
     mem_limit: 256m
 
@@ -800,7 +828,7 @@ services:
     image: tara/marketplace
     pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *marketplace-env, RUN_MIGRATIONS: "false"}
+    environment: *marketplace-env
     depends_on: {marketplace: {condition: service_healthy}}
     mem_limit: 256m
 
@@ -809,7 +837,7 @@ services:
     image: tara/notification
     pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *notification-env, RUN_MIGRATIONS: "false"}
+    environment: *notification-env
     depends_on: {notification: {condition: service_healthy}}
     mem_limit: 256m
 
@@ -818,7 +846,7 @@ services:
     image: tara/moderation
     pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *moderation-env, RUN_MIGRATIONS: "false"}
+    environment: *moderation-env
     depends_on: {moderation: {condition: service_healthy}}
     mem_limit: 256m
 
@@ -828,7 +856,7 @@ services:
     image: tara/admin
     pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *admin-env, RUN_MIGRATIONS: "false"}
+    environment: *admin-env
     depends_on: {admin: {condition: service_healthy}}
     mem_limit: 256m
 
@@ -837,7 +865,7 @@ services:
     image: tara/ads
     pull_policy: never   # built by the service of the same image
     command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "2"]
-    environment: {<<: *ads-env, RUN_MIGRATIONS: "false"}
+    environment: *ads-env
     depends_on: {ads: {condition: service_healthy}}
     mem_limit: 256m
 
@@ -847,7 +875,7 @@ services:
     image: tara/profile
     pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *profile-env, RUN_MIGRATIONS: "false"}
+    environment: *profile-env
     depends_on: {profile: {condition: service_healthy}}
     mem_limit: 192m
 
@@ -856,7 +884,7 @@ services:
     image: tara/graph
     pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *graph-env, RUN_MIGRATIONS: "false"}
+    environment: *graph-env
     depends_on: {graph: {condition: service_healthy}}
     mem_limit: 192m
 
@@ -865,7 +893,7 @@ services:
     image: tara/post
     pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *post-env, RUN_MIGRATIONS: "false"}
+    environment: *post-env
     depends_on: {post: {condition: service_healthy}}
     mem_limit: 192m
 
@@ -874,7 +902,7 @@ services:
     image: tara/feed
     pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *feed-env, RUN_MIGRATIONS: "false"}
+    environment: *feed-env
     depends_on: {feed: {condition: service_healthy}}
     mem_limit: 192m
 
@@ -883,7 +911,7 @@ services:
     image: tara/chat
     pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *chat-env, RUN_MIGRATIONS: "false"}
+    environment: *chat-env
     depends_on: {chat: {condition: service_healthy}}
     mem_limit: 192m
 
@@ -892,7 +920,7 @@ services:
     image: tara/marketplace
     pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *marketplace-env, RUN_MIGRATIONS: "false"}
+    environment: *marketplace-env
     depends_on: {marketplace: {condition: service_healthy}}
     mem_limit: 192m
 
@@ -901,7 +929,7 @@ services:
     image: tara/notification
     pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *notification-env, RUN_MIGRATIONS: "false"}
+    environment: *notification-env
     depends_on: {notification: {condition: service_healthy}}
     mem_limit: 192m
 
@@ -910,7 +938,7 @@ services:
     image: tara/search
     pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *search-env, RUN_MIGRATIONS: "false"}
+    environment: *search-env
     depends_on: {search: {condition: service_healthy}}
     mem_limit: 192m
 
@@ -919,7 +947,7 @@ services:
     image: tara/moderation
     pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *moderation-env, RUN_MIGRATIONS: "false"}
+    environment: *moderation-env
     depends_on: {moderation: {condition: service_healthy}}
     mem_limit: 192m
 
@@ -929,7 +957,7 @@ services:
     image: tara/admin
     pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *admin-env, RUN_MIGRATIONS: "false"}
+    environment: *admin-env
     depends_on: {admin: {condition: service_healthy}}
     mem_limit: 192m
 
@@ -939,7 +967,7 @@ services:
     image: tara/realtime
     pull_policy: never   # built by the service of the same image
     command: ["python", "manage.py", "consume_events"]
-    environment: {<<: *realtime-env}
+    environment: *realtime-env
     depends_on: {realtime: {condition: service_healthy}}
     mem_limit: 192m
 
