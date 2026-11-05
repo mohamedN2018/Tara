@@ -689,6 +689,17 @@ def _visible_seller(viewer_id: str, seller_id: str) -> tuple[SellerProfile, dict
     return profile, stats, blocked
 
 
+def seller_has_shop(viewer_id: str, seller_id: str) -> bool:
+    """Whether the seller page would open for the viewer (the profile's Shop
+    tab). False for every case the page answers 404, blocks included, so it
+    tells the viewer nothing that a 404 would not."""
+    try:
+        _visible_seller(viewer_id, seller_id)
+    except TaraAPIError:
+        return False
+    return True
+
+
 def seller_summary(viewer_id: str, seller_id: str) -> dict:
     profile, stats, _ = _visible_seller(viewer_id, seller_id)
     return {

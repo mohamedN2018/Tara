@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 
 import GroupCard from "@/components/groups/GroupCard.vue";
+import GroupRailItem from "@/components/groups/GroupRailItem.vue";
 import JoinButton from "@/components/groups/JoinButton.vue";
 import AppShell from "@/components/layout/AppShell.vue";
 import PostCard from "@/components/post/PostCard.vue";
@@ -15,9 +16,9 @@ import {
   GROUP_CATEGORIES,
   type Group,
   groupPath,
+  groupPostsService,
   type GroupScope,
   groupsService,
-  isStaff,
   myGroupsFeed,
 } from "@/services/groups";
 import { useToastStore } from "@/stores/toasts";
@@ -66,6 +67,28 @@ let generation = 0;
 
 const panelTitle = computed(() => t(TABS.find((x) => x.id === tab.value)?.label ?? "groups.title"));
 
+// The side panel's "Your groups": searchable by name, each with its picture
+// and when it last had a post (post answers only for groups we may read).
+const RAIL_GROUPS = 12;
+const railQuery = ref("");
+const activity = ref<Record<string, string | null>>({});
+const railGroups = computed(() => {
+  const q = railQuery.value.trim().toLocaleLowerCase();
+  const list = q ? mine.value.filter((g) => g.name.toLocaleLowerCase().includes(q)) : mine.value;
+  return list.slice(0, RAIL_GROUPS);
+});
+
+async function loadActivity(groups: Group[]) {
+  const ids = groups.filter((g) => g.content_visible && !(g.id in activity.value)).map((g) => g.id);
+  if (!ids.length) return;
+  try {
+    activity.value = { ...activity.value, ...(await groupPostsService.activity(ids)) };
+  } catch {
+    // No "last active" line then; the rail still lists the groups.
+  }
+}
+watch(railGroups, (groups) => void loadActivity(groups));
+
 async function loadMine() {
   try {
     mine.value = (await groupsService.list("mine")).data;
@@ -74,6 +97,21 @@ async function loadMine() {
   } finally {
     mineLoaded.value = true;
   }
+}
+
+/** A card's join state changed: refresh that group in place, and "Your groups". */
+async function refreshGroup(g: Group) {
+  try {
+    const fresh = await groupsService.get(g.handle || g.id);
+    const swap = (list: Group[]) => list.map((x) => (x.id === fresh.id ? { ...x, ...fresh } : x));
+    items.value = swap(items.value);
+    suggestions.value = swap(suggestions.value);
+  } catch {
+    // Gone or hidden now: drop it from the lists.
+    items.value = items.value.filter((x) => x.id !== g.id);
+    suggestions.value = suggestions.value.filter((x) => x.id !== g.id);
+  }
+  void loadMine();
 }
 
 async function load() {
@@ -182,15 +220,25 @@ onMounted(async () => {
         <RouterLink to="/groups/new" class="btn-gradient w-full">
           <Plus class="h-4 w-4" aria-hidden="true" /> {{ t("groups.create") }}
         </RouterLink>
-        <div v-if="mine.length" class="hidden border-t border-gray-100 pt-3 dark:border-gray-800 lg:block">
-          <h2 class="px-2 pb-1 text-sm font-bold text-gray-600 dark:text-gray-300">{{ t("groups.sidebar.yours") }}</h2>
-          <ul class="space-y-0.5">
-            <li v-for="g in mine.slice(0, 12)" :key="g.id">
-              <RouterLink :to="groupPath(g)" class="nav-item">
-                <UsersRound class="h-4 w-4 shrink-0 text-brand-600 dark:text-brand-300" aria-hidden="true" />
-                <span class="min-w-0 flex-1 truncate"><bdi>{{ g.name }}</bdi></span>
-                <span v-if="isStaff(g.viewer.role)" class="text-[10px] text-gray-500 dark:text-gray-400">{{ t(`groups.roles.${g.viewer.role}`) }}</span>
-              </RouterLink>
+        <div v-if="mine.length" class="hidden border-t border-gray-100 pt-3 dark:border-gray-800 lg:block" data-testid="groups-rail">
+          <h2 id="groups-rail-title" class="px-2 pb-1 text-sm font-bold text-gray-600 dark:text-gray-300">{{ t("groups.sidebar.yours") }}</h2>
+          <label class="relative mb-1 block px-1">
+            <span class="sr-only">{{ t("socialShell.groups.searchYours") }}</span>
+            <Search class="pointer-events-none absolute start-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" aria-hidden="true" />
+            <input
+              v-model="railQuery"
+              type="search"
+              class="input ps-9 text-sm"
+              :placeholder="t('socialShell.groups.searchYours')"
+              dir="auto"
+              maxlength="100"
+              data-testid="groups-rail-search"
+            />
+          </label>
+          <p v-if="!railGroups.length" class="px-2 py-2 text-sm text-gray-600 dark:text-gray-400" role="status">{{ t("socialShell.groups.noMatch") }}</p>
+          <ul v-else class="space-y-0.5" aria-labelledby="groups-rail-title">
+            <li v-for="g in railGroups" :key="g.id">
+              <GroupRailItem :group="g" :last-post-at="activity[g.id]" />
             </li>
           </ul>
         </div>
@@ -244,7 +292,11 @@ onMounted(async () => {
           <section v-if="tab === 'discover' && suggestions.length" aria-labelledby="groups-suggested" class="space-y-2">
             <h3 id="groups-suggested" class="section-title px-1">{{ t("groups.suggestions.title") }}</h3>
             <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              <GroupCard v-for="g in suggestions" :key="g.id" :group="g" dismissible @dismiss="dismiss" />
+              <GroupCard v-for="g in suggestions" :key="g.id" :group="g" dismissible @dismiss="dismiss">
+                <template #actions>
+                  <JoinButton :group="g" class="w-full [&>button]:flex-1 [&>button]:justify-center" @changed="refreshGroup(g)" />
+                </template>
+              </GroupCard>
             </div>
           </section>
           <h3 v-if="tab === 'discover'" class="section-title px-1">{{ t("groups.browse") }}</h3>
@@ -259,6 +311,14 @@ onMounted(async () => {
               </template>
               <template v-else-if="tab === 'requests' || tab === 'invites'" #actions>
                 <JoinButton :group="g" @changed="load" />
+              </template>
+              <template v-else-if="tab === 'discover'" #actions>
+                <JoinButton :group="g" class="w-full [&>button]:flex-1 [&>button]:justify-center" @changed="refreshGroup(g)" />
+              </template>
+              <template v-else-if="tab === 'mine'" #actions>
+                <RouterLink :to="groupPath(g)" class="btn-soft w-full justify-center py-1.5 text-sm" data-testid="group-view-link">
+                  {{ t("socialShell.groups.viewGroup") }}
+                </RouterLink>
               </template>
             </GroupCard>
           </div>

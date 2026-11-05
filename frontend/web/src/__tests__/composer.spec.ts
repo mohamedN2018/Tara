@@ -312,13 +312,11 @@ describe("ComposerDialog", () => {
     function serve() {
       vi.spyOn(api, "get").mockImplementation(async (url: string) => {
         if (url === "/posts/drafts/") return { data: { data: [draft], page: { next_cursor: null, has_more: false } } };
-        if (url.endsWith("/playback/"))
-          return {
-            data: {
-              data: { id: VIDEO_ID, status: "ready", failure_code: null, duration_ms: 1000, width: 640, height: 360, hls_url: "media/x/hls/master.m3u8?token=t", mp4_url: null, poster_url: null, expires_in: 300 },
-            },
-          };
         return { data: { data: [] } };
+      });
+      // Playback is batched over POST, which these tests mock for the post itself.
+      vi.spyOn(videoService, "playback").mockResolvedValue({
+        id: VIDEO_ID, status: "ready", failure_code: null, duration_ms: 1000, width: 640, height: 360, hls_url: "/api/v1/media/x/hls/master.m3u8?token=t", mp4_url: null, poster_url: null, expires_in: 300,
       });
     }
     async function pickVideo() {

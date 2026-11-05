@@ -72,6 +72,8 @@ urlpatterns = [
     ),
     path("me/deactivate/", settings_views.DeactivateView.as_view(), name="me-deactivate"),
     path("me/delete/", settings_views.DeleteAccountView.as_view(), name="me-delete"),
+    # Friends' birthdays today and this week (plan 08, social shell).
+    path("me/birthdays/", settings_views.FriendBirthdaysView.as_view(), name="me-birthdays"),
     # What the caller may see of someone's birthday and gender. Under /me/ so
     # the edge's identity route covers it.
     path(

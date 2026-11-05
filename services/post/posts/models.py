@@ -233,6 +233,10 @@ class PostReaction(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["post", "account_id"], name="post_reaction_uniq"),
         ]
+        # The activity log: my reactions, newest first.
+        indexes = [
+            models.Index(fields=["account_id", "-created_at"], name="post_reaction_acct_idx")
+        ]
 
 
 class PostReactionCount(models.Model):
@@ -281,6 +285,8 @@ class Comment(models.Model):
         indexes = [
             models.Index(fields=["post", "created_at"], name="comment_post_idx"),
             models.Index(fields=["parent", "created_at"], name="comment_parent_idx"),
+            # The activity log: my comments, newest first.
+            models.Index(fields=["author_id", "-created_at"], name="comment_author_idx"),
         ]
 
 

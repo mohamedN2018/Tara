@@ -4,7 +4,7 @@ import { computed, toRefs } from "vue";
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
-import { educationHeadline, educationRange, linkHost, workHeadline, workRange } from "@/lib/profileFormat";
+import { educationHeadline, educationRange, linkHost, sameText, workHeadline, workRange } from "@/lib/profileFormat";
 import type { ProfileState } from "@/lib/useProfile";
 import { useDirectoryStore } from "@/stores/directory";
 
@@ -19,6 +19,8 @@ const { profile, hasAbout, isSelf, photoUrls, relFriendIds, friendsCount, mutual
 
 const { t, locale } = useI18n();
 const directory = useDirectoryStore();
+// The bio repeats under the intro only when it says something else.
+const showBio = computed(() => !!profile.value?.bio && !sameText(profile.value.bio, profile.value.intro));
 const place = computed(() => [profile.value?.city, profile.value?.country].filter(Boolean).join(", "));
 
 function go(tab: "about" | "photos" | "friends") {
@@ -33,7 +35,7 @@ function go(tab: "about" | "photos" | "friends") {
       <h2 class="mb-3 text-xl font-bold">{{ t("people.intro.title") }}</h2>
       <template v-if="hasAbout">
         <p v-if="profile?.intro" class="mb-1 text-center text-[15px] font-semibold text-gray-800 dark:text-gray-100" dir="auto">{{ profile.intro }}</p>
-        <p v-if="profile?.bio" class="mb-3 whitespace-pre-line text-center text-[15px] text-gray-700 dark:text-gray-200" dir="auto">{{ profile.bio }}</p>
+        <p v-if="showBio" class="mb-3 whitespace-pre-line text-center text-[15px] text-gray-700 dark:text-gray-200" dir="auto">{{ profile?.bio }}</p>
         <ul class="space-y-3 text-[15px]">
           <li v-for="w in profile?.work ?? []" :key="`w${w.id}`" class="flex items-start gap-3">
             <Briefcase class="mt-0.5 h-5 w-5 shrink-0 text-gray-500 dark:text-gray-400" />

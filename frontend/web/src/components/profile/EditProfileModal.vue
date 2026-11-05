@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import { errorMessage, mediaErrorKey } from "@/lib/errors";
+import { coverPosition } from "@/lib/photoFrame";
 import { degreeField, workRange } from "@/lib/profileFormat";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import { useFocusTrap } from "@/lib/useFocusTrap";
@@ -185,6 +186,8 @@ async function save() {
       visibility: form.visibility,
       avatar_media_id: avatarId.value,
       cover_media_id: coverId.value,
+      // A different cover starts centred; the same one keeps where it was dragged to.
+      ...(coverId.value !== props.profile.cover_media_id ? { cover_offset_y: 50 } : {}),
     });
     // Re-fetch the canonical profile (incl. completion %, structured lists).
     const fresh = await profileService.me();
@@ -223,7 +226,13 @@ async function save() {
         <div>
           <p class="mb-1 text-sm font-medium">{{ t("profile.coverPhoto") }}</p>
           <div class="relative h-28 overflow-hidden rounded-xl bg-tara-gradient">
-            <img v-if="coverUrl" :src="coverUrl" class="h-full w-full object-cover" :alt="t('profile.coverPhoto')" />
+            <img
+              v-if="coverUrl"
+              :src="coverUrl"
+              class="h-full w-full object-cover"
+              :style="{ objectPosition: coverPosition(coverId === profile.cover_media_id ? profile.cover_offset_y : 50) }"
+              :alt="t('profile.coverPhoto')"
+            />
             <label class="absolute end-2 top-2 flex cursor-pointer items-center gap-1 rounded-full bg-black/55 px-2.5 py-1 text-xs font-medium text-white focus-within:ring-2 focus-within:ring-brand-400">
               <Camera class="h-3.5 w-3.5" /> {{ uploadingCover ? t("profile.uploading") : t("profile.change") }}
               <input type="file" accept="image/*" class="sr-only" :aria-label="t('profile.coverChange')" @change="pickCover" />

@@ -2,7 +2,7 @@
 // The settings & privacy centre (/settings/:section). Desktop: the section
 // navigation in a start column and the section on the right. Mobile: the
 // navigation is the index page; a section opens with a back arrow.
-import { ArrowLeft, ChevronRight, KeyRound, Lock, MailWarning, ShieldCheck, UserRound } from "lucide-vue-next";
+import { ArrowLeft, ChevronRight, KeyRound, Lock, MailWarning, Search, ShieldCheck, UserRound } from "lucide-vue-next";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
@@ -27,6 +27,7 @@ import SearchabilitySetting from "@/components/settings/SearchabilitySetting.vue
 import { isSettingsSection, SECTION_ICON, type SettingsSection } from "@/components/settings/sections";
 import SecuritySettings from "@/components/settings/SecuritySettings.vue";
 import SettingsNav from "@/components/settings/SettingsNav.vue";
+import { entryByKey, MOST_VISITED, searchSettings, type SettingsEntry } from "@/components/settings/settingsIndex";
 import TagPrivacySetting from "@/components/settings/TagPrivacySetting.vue";
 import TwoFactorSettings from "@/components/settings/TwoFactorSettings.vue";
 import { scrollToHashWhenReady } from "@/lib/hashScroll";
@@ -73,6 +74,12 @@ onMounted(scrollToHash);
 onBeforeUnmount(() => cancelHashScroll());
 watch([section, () => route.hash], scrollToHash, { flush: "post" });
 
+// The landing: one search over every setting (not only the sections), and the
+// most visited settings as cards.
+const find = ref("");
+const found = computed(() => searchSettings(find.value, t));
+const mostVisited = MOST_VISITED.map((k) => entryByKey(k)).filter((e): e is SettingsEntry => !!e);
+
 const OVERVIEW_LINKS = [
   { to: "/settings/account#personal-details", key: "personal", icon: UserRound },
   { to: "/settings/security", key: "security", icon: KeyRound },
@@ -92,6 +99,60 @@ const OVERVIEW_LINKS = [
 
       <div class="min-w-0 flex-1">
         <div class="mx-auto w-full max-w-[680px]">
+          <!-- Landing: find a setting, and the most visited ones -->
+          <section v-if="!section" class="card mb-4 p-4" data-testid="settings-landing">
+            <h2 class="text-lg font-bold">{{ t("polish.settings.findTitle") }}</h2>
+            <label class="relative mt-3 block">
+              <span class="sr-only">{{ t("polish.settings.findLabel") }}</span>
+              <Search class="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500 dark:text-gray-400" aria-hidden="true" />
+              <input
+                v-model="find"
+                type="search"
+                class="input rounded-full bg-gray-100 ps-10 dark:bg-gray-800"
+                dir="auto"
+                :placeholder="t('polish.settings.findPlaceholder')"
+                aria-controls="settings-find-results"
+                data-testid="settings-find"
+              />
+            </label>
+            <div id="settings-find-results" aria-live="polite">
+              <ul v-if="found.length" class="mt-2 divide-y divide-gray-100 dark:divide-gray-800" data-testid="settings-find-results">
+                <li v-for="e in found" :key="e.key">
+                  <RouterLink :to="e.to" class="flex items-center gap-3 rounded-lg p-2 hover:bg-gray-50 dark:hover:bg-gray-800/60" :data-testid="`settings-find-${e.key}`">
+                    <component :is="e.icon" class="h-5 w-5 shrink-0 text-brand-600 dark:text-brand-300" aria-hidden="true" />
+                    <span class="min-w-0 flex-1">
+                      <span class="block text-sm font-semibold">{{ t(`polish.settings.entries.${e.key}.title`) }}</span>
+                      <span class="block truncate text-xs text-gray-600 dark:text-gray-400">{{ t(`polish.settings.entries.${e.key}.desc`) }}</span>
+                    </span>
+                    <ChevronRight class="h-4 w-4 shrink-0 text-gray-400 rtl:rotate-180" aria-hidden="true" />
+                  </RouterLink>
+                </li>
+              </ul>
+              <p v-else-if="find.trim()" class="mt-3 text-sm text-gray-600 dark:text-gray-400" data-testid="settings-find-empty">{{ t("settingsCenter.noMatches") }}</p>
+            </div>
+
+            <template v-if="!find.trim()">
+              <h3 class="mt-4 text-base font-bold">{{ t("polish.settings.mostVisited") }}</h3>
+              <ul class="mt-2 grid gap-2 sm:grid-cols-2" data-testid="settings-most-visited">
+                <li v-for="e in mostVisited" :key="e.key">
+                  <RouterLink
+                    :to="e.to"
+                    class="flex h-full items-start gap-3 rounded-xl p-3 ring-1 ring-gray-200 transition hover:bg-gray-50 dark:ring-gray-800 dark:hover:bg-gray-800/60"
+                    :data-testid="`settings-most-${e.key}`"
+                  >
+                    <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-700 dark:bg-brand-950/50 dark:text-brand-200">
+                      <component :is="e.icon" class="h-5 w-5" aria-hidden="true" />
+                    </span>
+                    <span class="min-w-0 flex-1">
+                      <span class="block text-sm font-semibold">{{ t(`polish.settings.entries.${e.key}.title`) }}</span>
+                      <span class="block text-xs text-gray-600 dark:text-gray-400">{{ t(`polish.settings.entries.${e.key}.desc`) }}</span>
+                    </span>
+                  </RouterLink>
+                </li>
+              </ul>
+            </template>
+          </section>
+
           <!-- Mobile index: the navigation is the page -->
           <div v-if="!section" class="mb-4 rounded-2xl bg-white p-2 shadow-sm ring-1 ring-gray-200/70 lg:hidden dark:bg-gray-900 dark:ring-gray-800">
             <SettingsNav :active="null" />

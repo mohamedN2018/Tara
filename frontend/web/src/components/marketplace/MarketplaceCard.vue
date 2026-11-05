@@ -97,10 +97,10 @@ function toggleCompare() {
 
       <div class="p-3 pb-2">
         <PriceTag :listing="listing" />
-        <h3 class="truncate text-sm font-medium" dir="auto">{{ listing.title }}</h3>
+        <h3 class="truncate text-start text-sm font-medium"><bdi>{{ listing.title }}</bdi></h3>
         <p class="mt-1 flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
           <MapPin class="h-3 w-3 shrink-0" aria-hidden="true" />
-          <span class="truncate" dir="auto">{{ listing.location || "—" }}</span>
+          <span class="truncate text-start"><bdi>{{ listing.location || "—" }}</bdi></span>
         </p>
       </div>
     </RouterLink>
@@ -118,7 +118,7 @@ function toggleCompare() {
         :title="t('market.viewSeller')"
       >
         <UserAvatar :name="directory.label(listing.seller_id)" :media-id="directory.avatarOf(listing.seller_id)" :size="20" />
-        <span class="truncate" dir="auto">{{ directory.label(listing.seller_id) }}</span>
+        <span class="truncate text-start"><bdi>{{ directory.label(listing.seller_id) }}</bdi></span>
       </RouterLink>
       <button
         type="button"

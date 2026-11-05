@@ -14,10 +14,11 @@ Rescheduling is not a new write: the planner uses the existing
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.db.models import Count, F, Sum
-from django.db.models.functions import Coalesce
+from django.db.models.functions import Coalesce, TruncDate
 
 from tara_common.exceptions import TaraAPIError
 
@@ -41,8 +42,20 @@ def _live(author_id: str):
     )
 
 
-def published_queryset(author_id: str, post_type: str | None = None):
-    """The content library's "Published" tab, newest first."""
+MAX_QUERY = 100
+
+
+def published_queryset(
+    author_id: str,
+    post_type: str | None = None,
+    *,
+    query: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+):
+    """The content library's "Published" tab, newest first: optionally one
+    post type, the posts whose text contains ``query``, and the posts published
+    in ``[start, end)`` (ISO date-times with an offset, either edge optional)."""
     from . import services
 
     qs = _live(author_id).filter(state=PostState.PUBLISHED)
@@ -50,6 +63,19 @@ def published_queryset(author_id: str, post_type: str | None = None):
         if post_type not in LIBRARY_TYPES:
             raise _bad_request("Unknown post type.")
         qs = qs.filter(type=post_type)
+    query = (query or "").strip()
+    if query:
+        if len(query) > MAX_QUERY:
+            raise _bad_request(f"q is at most {MAX_QUERY} characters.")
+        qs = qs.filter(body__icontains=query)
+    lo = _parse(start, "from") if start else None
+    hi = _parse(end, "to") if end else None
+    if lo and hi and hi <= lo:
+        raise _bad_request("to must be after from.")
+    if lo:
+        qs = qs.filter(created_at__gte=lo)
+    if hi:
+        qs = qs.filter(created_at__lt=hi)
     return services.with_detail(qs.order_by("-created_at", "-id"))
 
 
@@ -186,3 +212,96 @@ def recent_comments(author_id: str):
         .select_related("reply_to", "post")
         .order_by("-created_at", "-id")
     )
+
+
+# ---- engagement over time ------------------------------------------------------------
+
+MAX_DAILY_SPAN = 366
+DAILY_METRICS = ("views", "reactions", "comments", "shares", "saves", "posts")
+
+
+def _day(value: str | None, name: str) -> date:
+    if not value:
+        raise _bad_request(f"{name} is required.")
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise _bad_request(f"{name} must be a date (YYYY-MM-DD).") from exc
+
+
+def _zone(name: str | None) -> ZoneInfo:
+    try:
+        return ZoneInfo(name or "UTC")
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise _bad_request("tz must be an IANA time zone.") from exc
+
+
+def daily(author_id: str, start: str | None, end: str | None, tz: str | None) -> dict:
+    """What my live published posts received per day, ``start`` .. ``end``
+    inclusive (local days in ``tz``, at most 366): reel views, reactions,
+    comments, shares and saves from other people (my own interactions are not
+    engagement), plus how many posts I published that day.
+
+    Every number is a row that exists: a reaction someone took back, a deleted
+    or removed comment, or an unsaved post is no longer counted. Views exist
+    only for reels (one per viewer per day); other posts have no view telemetry.
+    """
+    from reels.models import ReelView
+
+    from .models import PostReaction, Share
+
+    first, last = _day(start, "from"), _day(end, "to")
+    if last < first:
+        raise _bad_request("to must not be before from.")
+    if (last - first).days + 1 > MAX_DAILY_SPAN:
+        raise _bad_request("The range is at most 366 days.", "range_too_long")
+    zone = _zone(tz)
+    lo = datetime.combine(first, time.min, tzinfo=zone)
+    hi = datetime.combine(last + timedelta(days=1), time.min, tzinfo=zone)
+    mine = _live(author_id).filter(state=PostState.PUBLISHED)
+    post_ids = mine.values("id")
+
+    def per_day(qs, field: str = "created_at") -> dict:
+        rows = (
+            qs.filter(**{f"{field}__gte": lo, f"{field}__lt": hi})
+            .annotate(local_day=TruncDate(field, tzinfo=zone))
+            .values("local_day")
+            .annotate(n=Count("id"))
+        )
+        return {r["local_day"]: r["n"] for r in rows}
+
+    series = {
+        "views": per_day(ReelView.objects.filter(reel__post__in=post_ids), "viewed_at"),
+        "reactions": per_day(
+            PostReaction.objects.filter(post__in=post_ids).exclude(account_id=author_id)
+        ),
+        "comments": per_day(
+            Comment.objects.filter(post__in=post_ids, deleted_at__isnull=True)
+            .exclude(moderation_status=Comment.ModerationStatus.REMOVED)
+            .exclude(author_id=author_id)
+        ),
+        "shares": per_day(Share.objects.filter(post__in=post_ids).exclude(account_id=author_id)),
+        "saves": per_day(
+            SavedItem.objects.filter(item_type="post", item_id__in=post_ids).exclude(
+                owner_id=author_id
+            )
+        ),
+        "posts": per_day(mine),
+    }
+    days = []
+    totals = dict.fromkeys(DAILY_METRICS, 0)
+    current = first
+    while current <= last:
+        row = {"date": current.isoformat()}
+        for metric in DAILY_METRICS:
+            row[metric] = series[metric].get(current, 0)
+            totals[metric] += row[metric]
+        days.append(row)
+        current += timedelta(days=1)
+    return {
+        "from": first.isoformat(),
+        "to": last.isoformat(),
+        "tz": zone.key,
+        "days": days,
+        "totals": totals,
+    }

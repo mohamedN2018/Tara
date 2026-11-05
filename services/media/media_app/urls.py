@@ -11,6 +11,10 @@ urlpatterns = [
         views.CompleteUploadView.as_view(),
         name="complete-upload",
     ),
+    # Batch lookups (one call per page instead of one per image); before the
+    # <uuid> routes for readability, though neither word parses as a uuid.
+    path("media/resolve/", views.ResolveView.as_view(), name="resolve"),
+    path("media/playback/resolve/", views.PlaybackResolveView.as_view(), name="playback-resolve"),
     path("media/<uuid:media_id>/", views.MediaDetailView.as_view(), name="media-detail"),
     path(
         "media/<uuid:media_id>/download-url/", views.DownloadUrlView.as_view(), name="download-url"

@@ -16,6 +16,7 @@ from .models import (
     BlockedPair,
     Page,
     PageMember,
+    PageNameChange,
     PageRole,
     ProfileFieldPrivacy,
     UserProfile,
@@ -220,6 +221,7 @@ def update_profile(profile: UserProfile, data: dict) -> UserProfile:
         "country",
         "avatar_media_id",
         "cover_media_id",
+        "cover_offset_y",
         "visibility",
         "searchable",
     }
@@ -416,11 +418,16 @@ def update_page(page: Page, actor_id: str, data: dict) -> Page:
         "cover_media_id",
     )
     check_page_images(actor_id, page, data)
+    old_name = page.name
     for key in editable:
         if key in data:
             setattr(page, key, data[key])
     with transaction.atomic():
         page.save()
+        if page.name != old_name:
+            PageNameChange.objects.create(
+                page=page, old_name=old_name, new_name=page.name, changed_by=actor_id
+            )
         if settings.PROFILE_EMIT_PAGE_UPDATED:
             events.emit(
                 "page.updated",
@@ -429,6 +436,30 @@ def update_page(page: Page, actor_id: str, data: dict) -> Page:
                 actor_id=str(actor_id),
             )
     return page
+
+
+MAX_NAME_CHANGES = 50
+
+
+def page_transparency(page: Page) -> dict:
+    """What anyone who can see the page may know about it (plan 08, "Page
+    transparency"): when it was created, its category and its past names,
+    newest first. Never who renamed it."""
+    changes = page.name_changes.order_by("-created_at")[:MAX_NAME_CHANGES]
+    return {
+        "page_id": str(page.id),
+        "name": page.name,
+        "category": page.category,
+        "created_at": page.created_at.isoformat(),
+        "name_changes": [
+            {
+                "old_name": c.old_name,
+                "new_name": c.new_name,
+                "changed_at": c.created_at.isoformat(),
+            }
+            for c in changes
+        ],
+    }
 
 
 def remove_member(page: Page, actor_id: str, member: PageMember) -> None:

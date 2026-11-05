@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Bell, CalendarDays, Home, Menu, Search, Store, Users, UsersRound } from "lucide-vue-next";
+import { Bell, CalendarDays, Home, Menu, MonitorPlay, Search, Store, Users, UsersRound } from "lucide-vue-next";
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -20,10 +20,12 @@ const notifications = useNotificationStore();
 const showNotifs = ref(false);
 useEscapeKey(showNotifs, () => (showNotifs.value = false));
 
-// Centre tabs. No video or gaming tab: neither module exists (owner decision 5.5).
+// Centre tabs. Video opens the videos module (reels are reached from there and
+// from the menu); there is no gaming tab because that module does not exist.
 const navIcons = [
   { name: "home", to: "/home", icon: Home, label: "nav.home" },
   { name: "friends", to: "/friends", icon: Users, label: "nav.friends" },
+  { name: "videos", to: "/videos", icon: MonitorPlay, label: "menu.items.videos" },
   { name: "marketplace", to: "/marketplace", icon: Store, label: "nav.marketplace" },
   { name: "groups", to: "/groups", icon: UsersRound, label: "nav.groups" },
   { name: "events", to: "/events", icon: CalendarDays, label: "nav.events" },
@@ -112,7 +114,7 @@ const navIcons = [
 
         <template v-if="showNotifs">
           <div class="fixed inset-0 z-40" @click="showNotifs = false" />
-          <div class="popover absolute end-0 z-50 mt-2 w-[22rem] max-w-[92vw] p-2">
+          <div class="popover absolute end-0 z-50 mt-2 max-h-[calc(100vh-5rem)] w-[22rem] max-w-[92vw] overflow-y-auto overscroll-contain p-2" data-testid="notif-dropdown">
             <div class="flex items-center justify-between px-2 pb-2 pt-1">
               <h3 class="section-title">{{ t("notifications.title") }}</h3>
               <RouterLink to="/notifications" class="text-xs font-semibold text-brand-600 dark:text-brand-300" @click="showNotifs = false">

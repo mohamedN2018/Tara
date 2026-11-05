@@ -15,7 +15,8 @@ from rest_framework.views import APIView
 from tara_common.responses import data_response
 
 from . import playback, services
-from .serializers import SignUploadSerializer
+from .serializers import ResolveSerializer, SignUploadSerializer
+from .throttling import ResolveThrottle
 
 
 class SignUploadView(APIView):
@@ -62,6 +63,27 @@ class MediaDetailView(APIView):
         return data_response(services.asset_payload(asset))
 
 
+def _batch_ids(request: Request) -> list[str]:
+    serializer = ResolveSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    return [str(i) for i in serializer.validated_data["ids"]]
+
+
+@method_decorator(transaction.non_atomic_requests, name="dispatch")
+class ResolveView(APIView):
+    """``POST {"ids": [...]}`` (at most 100): the detail payload of each media
+    the viewer may see, in request order. Unknown and forbidden ids are simply
+    absent, so a page resolves all its images in one call instead of one each."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ResolveThrottle]
+
+    @extend_schema(request=ResolveSerializer, responses={200: None}, tags=["media"])
+    def post(self, request: Request) -> Response:
+        assets = services.assets_for_viewer(request.user.account_id, _batch_ids(request))
+        return data_response([services.asset_payload(a) for a in assets])
+
+
 @method_decorator(transaction.non_atomic_requests, name="dispatch")
 class DownloadUrlView(APIView):
     permission_classes = [IsAuthenticated]
@@ -87,6 +109,19 @@ class PlaybackView(APIView):
     @extend_schema(responses={200: None}, tags=["media"])
     def get(self, request: Request, media_id: str) -> Response:
         return data_response(playback.playback(request.user.account_id, str(media_id)))
+
+
+@method_decorator(transaction.non_atomic_requests, name="dispatch")
+class PlaybackResolveView(APIView):
+    """``POST {"ids": [...]}`` (at most 100): ``playback`` for each video the
+    viewer may watch, in request order; the others are absent."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ResolveThrottle]
+
+    @extend_schema(request=ResolveSerializer, responses={200: None}, tags=["media"])
+    def post(self, request: Request) -> Response:
+        return data_response(playback.playback_many(request.user.account_id, _batch_ids(request)))
 
 
 def _playlist_response(text: str) -> HttpResponse:

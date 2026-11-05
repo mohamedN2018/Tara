@@ -3,13 +3,16 @@ import { Globe, Info, Instagram, Link2, Linkedin, Mail, MapPin, MessageCircle, M
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 
-import { contactHref, PAGE_CONTACT_KEYS, type Page } from "@/services/pages";
+import { pageCategoryLabel } from "@/lib/pageCategory";
+import { contactHref, PAGE_CONTACT_KEYS, PAGE_LINK_KEYS, type Page } from "@/services/pages";
 
 // The page's intro (side card on Posts) or the About tab: description,
 // category, location and the contact links it published. Only http(s) links,
 // tel:, mailto: and wa.me become links (`contactHref`).
-const props = withDefaults(defineProps<{ page: Page; full?: boolean }>(), { full: false });
-const { t } = useI18n();
+// `linksApart`: the website and social links show in their own Links card (Posts tab, plan 08).
+const props = withDefaults(defineProps<{ page: Page; full?: boolean; linksApart?: boolean }>(), { full: false, linksApart: false });
+const i18n = useI18n();
+const { t } = i18n;
 
 const ICONS: Record<string, typeof Globe> = {
   website: Globe,
@@ -26,7 +29,7 @@ const contacts = computed(() =>
   PAGE_CONTACT_KEYS.map((key) => {
     const value = (props.page.contact?.[key] ?? "").trim();
     return { key, value, href: contactHref(key, value) };
-  }).filter((c) => c.value),
+  }).filter((c) => c.value && !(props.linksApart && (PAGE_LINK_KEYS as readonly string[]).includes(c.key))),
 );
 const isEmpty = computed(() => !props.page.description && !props.page.category && !props.page.location && !contacts.value.length);
 const shown = (c: { key: string; value: string }) =>
@@ -43,7 +46,7 @@ const shown = (c: { key: string; value: string }) =>
     <ul class="space-y-2.5 text-sm">
       <li v-if="page.category" class="flex items-center gap-3">
         <Info class="h-5 w-5 shrink-0 text-gray-400" aria-hidden="true" />
-        <span><span class="font-semibold">{{ t("pageHub.about.page") }}</span> · <span dir="auto">{{ page.category }}</span></span>
+        <span><span class="font-semibold">{{ t("pageHub.about.page") }}</span> · <bdi>{{ pageCategoryLabel(page.category, i18n) }}</bdi></span>
       </li>
       <li v-if="page.location" class="flex items-center gap-3">
         <MapPin class="h-5 w-5 shrink-0 text-gray-400" aria-hidden="true" />

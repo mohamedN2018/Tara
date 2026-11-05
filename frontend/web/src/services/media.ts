@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import { createBatchLoader } from "@/lib/batchLoader";
 import { uploadMime } from "@/lib/heic";
 
 export interface MediaVariant {
@@ -32,6 +33,24 @@ interface SignResult {
 // entries carry a timestamp and are re-resolved after a TTL safely below that.
 const urlCache = new Map<string, { url: string; at: number }>();
 const URL_TTL_MS = 10 * 60 * 1000;
+// Ids media left out (unknown, deleted, not visible to this viewer): not asked
+// again for a short while, so every remount of a tile does not repeat the call.
+const missCache = new Map<string, number>();
+const MISS_TTL_MS = 60 * 1000;
+
+// Every lookup made while a page renders goes out in one `POST /media/resolve/`
+// (at most 100 ids), with 429s retried; see lib/batchLoader.ts.
+const assets = createBatchLoader<MediaAsset>({
+  label: "media",
+  fetch: async (ids) => (await api.post<{ data: MediaAsset[] }>("/media/resolve/", { ids })).data.data,
+  idOf: (a) => a.id,
+});
+
+/** Forget cached URLs and misses (sign-out, tests). */
+export function clearMediaCache(): void {
+  urlCache.clear();
+  missCache.clear();
+}
 
 // Presigned storage URLs are signed for the internal host `minio:9000`, which
 // the browser can't resolve. In dev, route them through the Vite proxy (/__s3)
@@ -98,12 +117,37 @@ export const mediaService = {
     return data.data;
   },
 
-  /** Resolve a media id to a displayable URL (cached with TTL). null while not ready. */
+  /** A still-fresh cached URL, synchronously (no request); null otherwise. */
+  cachedUrl(id: string): string | null {
+    const cached = urlCache.get(id);
+    return cached && Date.now() - cached.at < URL_TTL_MS ? cached.url : null;
+  },
+
+  /**
+   * The asset as the viewer may see it, batched with every other lookup of the
+   * same tick; null when media leaves it out (unknown or not visible).
+   */
+  resolveAsset(id: string): Promise<MediaAsset | null> {
+    return assets.load(id);
+  },
+
+  /**
+   * Resolve a media id to a displayable URL (cached with TTL). null while not
+   * ready or not visible. A failed lookup (after retries) is logged once by the
+   * batch loader and falls back to the last good URL.
+   */
   async resolveUrl(id: string): Promise<string | null> {
     const cached = urlCache.get(id);
     if (cached && Date.now() - cached.at < URL_TTL_MS) return cached.url;
+    const missed = missCache.get(id);
+    if (missed && Date.now() - missed < MISS_TTL_MS) return cached?.url ?? null;
     try {
-      const asset = await this.detail(id);
+      const asset = await this.resolveAsset(id);
+      if (!asset) {
+        missCache.set(id, Date.now());
+        return null;
+      }
+      missCache.delete(id);
       const url = viaStorageProxy(asset.url);
       if (url) urlCache.set(id, { url, at: Date.now() });
       return url ?? cached?.url ?? null;

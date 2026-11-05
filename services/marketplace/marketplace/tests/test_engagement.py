@@ -317,6 +317,29 @@ def test_seller_summary_hidden_cases_are_404(client_for, category):
     )
 
 
+def test_seller_shop_answers_200_with_the_seller_page_rule(client_for, category):
+    """The profile's Shop tab asks this instead of the seller page: always 200,
+    true exactly when the seller page would open for the viewer."""
+    seller, viewer, stranger_seller = _acct(), _acct(), _acct()
+
+    def has_shop(who, whose):
+        resp = client_for(who).get(reverse("marketplace:seller-shop", args=[whose]))
+        assert resp.status_code == 200
+        return resp.json()["data"]["has_shop"]
+
+    assert has_shop(viewer, _acct()) is False  # unknown account
+    services.create_listing(seller, {"category_id": str(category.id), "title": "only a draft"})
+    assert has_shop(viewer, seller) is False  # nothing public
+    assert has_shop(seller, seller) is True  # the seller sees theirs
+    _live(seller, category)
+    assert has_shop(viewer, seller) is True
+    BlockedPair.objects.create(blocker_id=seller, blocked_id=viewer)  # either way hides it
+    assert has_shop(viewer, seller) is False
+    _live(stranger_seller, category)
+    BlockedPair.objects.create(blocker_id=viewer, blocked_id=stranger_seller)
+    assert has_shop(viewer, stranger_seller) is False
+
+
 # ---- reviews ----------------------------------------------------------------
 
 

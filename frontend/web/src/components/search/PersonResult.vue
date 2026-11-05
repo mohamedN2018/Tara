@@ -4,6 +4,7 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
+import NameHoverCard from "@/components/social/NameHoverCard.vue";
 import { canFollow, personAction } from "@/lib/search";
 import { graphService } from "@/services/graph";
 import type { Relationship, SearchResult } from "@/services/search";
@@ -50,17 +51,18 @@ const toggleFollow = () =>
       <UserAvatar :name="name" :media-id="result.avatar_media_id" :size="56" />
     </RouterLink>
     <div class="min-w-0 flex-1">
-      <RouterLink
-        :to="{ name: 'profile-by-id', params: { id: result.id } }"
-        class="block truncate font-semibold hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
-        dir="auto"
-      >
-        {{ name }}
-      </RouterLink>
+      <NameHoverCard :id="result.id" class="block min-w-0">
+        <RouterLink
+          :to="{ name: 'profile-by-id', params: { id: result.id } }"
+          class="block truncate text-start font-semibold hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
+        >
+          <bdi>{{ name }}</bdi>
+        </RouterLink>
+      </NameHoverCard>
       <p v-if="result.handle" class="truncate text-xs text-gray-500 dark:text-gray-400" dir="ltr">@{{ result.handle }}</p>
       <p v-if="result.city" class="mt-0.5 flex items-center gap-1 truncate text-xs text-gray-500 dark:text-gray-400">
         <MapPin class="h-3 w-3 shrink-0" aria-hidden="true" />
-        <span class="truncate" dir="auto">{{ result.city }}</span>
+        <span class="truncate text-start"><bdi>{{ result.city }}</bdi></span>
       </p>
       <p v-if="mutual > 0" class="mt-0.5 flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
         <Users class="h-3 w-3 shrink-0" aria-hidden="true" />

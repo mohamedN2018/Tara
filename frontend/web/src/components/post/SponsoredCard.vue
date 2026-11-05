@@ -3,6 +3,7 @@ import { Undo2, X } from "lucide-vue-next";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
+import { ctaLabel } from "@/lib/adCta";
 import { hiddenAds, hideAd, unhideAd } from "@/lib/hiddenAds";
 import { useMediaUrl } from "@/lib/useMediaUrl";
 import { adsService } from "@/services/ads";
@@ -12,6 +13,8 @@ const { ad } = defineProps<{ ad: SponsoredSlot }>();
 const { t } = useI18n();
 // The ad's image (T6), shown between its text and the button.
 const image = useMediaUrl(() => ad.media_id);
+// A known call-to-action ("Learn more", "اعرف المزيد"...) in the reader's language.
+const cta = computed(() => ctaLabel(ad.cta, t));
 const card = ref<HTMLElement | null>(null);
 let observer: IntersectionObserver | null = null;
 let seen = false;
@@ -89,6 +92,6 @@ function open() {
       loading="lazy"
       data-testid="sponsored-image"
     />
-    <button v-if="ad.cta" class="btn-primary mt-3 w-full" dir="auto" @click="open">{{ ad.cta }}</button>
+    <button v-if="ad.cta" class="btn-primary mt-3 w-full" dir="auto" @click="open">{{ cta }}</button>
   </article>
 </template>

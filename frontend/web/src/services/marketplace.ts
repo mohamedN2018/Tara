@@ -275,6 +275,12 @@ export const marketplaceService = {
     return data.data;
   },
 
+  /** Whether the seller page would open for me (the profile's Shop tab): always 200, no 404 noise. */
+  async sellerHasShop(id: string): Promise<boolean> {
+    const { data } = await api.get<{ data: { has_shop: boolean } }>(`/marketplace/sellers/${id}/shop/`);
+    return data.data.has_shop === true;
+  },
+
   async sellerReviews(id: string, cursor?: string): Promise<CursorPage<SellerReview>> {
     const { data } = await api.get<CursorPage<SellerReview>>(`/marketplace/sellers/${id}/reviews/`, {
       params: { cursor },

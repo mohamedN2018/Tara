@@ -38,10 +38,9 @@ function mockApi(shop: "yes" | "no") {
     handle: "sam",
     is_self: false,
   } as never);
-  return vi.spyOn(marketplaceService, "seller").mockImplementation(async (id: string) => {
-    if (shop === "no") throw Object.assign(new Error("Not found"), { response: { status: 404 } });
-    return { seller_id: id, active_listings_count: 2 } as never;
-  });
+  // The profile never asks the seller page itself (its 404 logged an error on every profile).
+  vi.spyOn(marketplaceService, "seller").mockRejectedValue(new Error("not asked by the profile"));
+  return vi.spyOn(marketplaceService, "sellerHasShop").mockResolvedValue(shop === "yes");
 }
 
 async function mount(path: string): Promise<{ el: HTMLElement; router: Router }> {
@@ -92,11 +91,12 @@ describe("profile Marketplace tab", () => {
     const get = mockApi("yes");
     const { el } = await mount("/u/id/s1");
     expect(get).toHaveBeenCalledWith("s1");
+    expect(marketplaceService.seller).not.toHaveBeenCalled();
     expect(state!.hasShop).toBe(true);
     expect(q(el, "profile-tab-marketplace")?.textContent).toContain("Marketplace");
   });
 
-  it("stays hidden when marketplace answers 404, and a deep link lands on Posts", async () => {
+  it("stays hidden when marketplace answers has_shop false, and a deep link lands on Posts", async () => {
     mockApi("no");
     const { el, router } = await mount("/u/id/s1?tab=marketplace");
     expect(state!.hasShop).toBe(false);
@@ -109,5 +109,21 @@ describe("profile Marketplace tab", () => {
     mockApi("yes");
     await mount("/u/id/s1?tab=marketplace");
     expect(state!.tab).toBe("marketplace");
+  });
+
+  it("asks the always-200 shop endpoint, not the seller page", async () => {
+    const { api } = await import("@/lib/api");
+    const get = vi.spyOn(api, "get").mockResolvedValue({ data: { data: { has_shop: false } } } as never);
+    expect(await marketplaceService.sellerHasShop("s1")).toBe(false);
+    expect(get).toHaveBeenCalledWith("/marketplace/sellers/s1/shop/");
+  });
+
+  it("keeps the tab hidden and says so once when marketplace is down", async () => {
+    mockApi("yes");
+    vi.spyOn(marketplaceService, "sellerHasShop").mockRejectedValue(new Error("502"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await mount("/u/id/s1");
+    expect(state!.hasShop).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });

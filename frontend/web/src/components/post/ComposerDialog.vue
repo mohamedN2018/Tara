@@ -5,6 +5,7 @@ import {
   CalendarClock,
   Check,
   ChevronDown,
+  Eye,
   FileText,
   Film,
   Globe,
@@ -26,6 +27,7 @@ import { useI18n } from "vue-i18n";
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import { foldText } from "@/components/layout/menuCatalog";
 import VideoComposerAttachment from "@/components/media/VideoComposerAttachment.vue";
+import ComposerPreview from "@/components/post/ComposerPreview.vue";
 import MentionField from "@/components/post/MentionField.vue";
 import { errorMessage } from "@/lib/errors";
 import { IMAGE_ACCEPT, isHeic } from "@/lib/heic";
@@ -51,6 +53,7 @@ import { mediaService } from "@/services/media";
 import { COMMENT_POLICIES, type CommentPolicy, postService } from "@/services/post";
 import type { VideoAttachmentState } from "@/services/video";
 import { profileService, type UserCard } from "@/services/profile";
+import { STORY_ERRORS, type StoryAudience, storiesService } from "@/services/stories";
 import { useAuthStore } from "@/stores/auth";
 import { useDirectoryStore } from "@/stores/directory";
 import { useToastStore } from "@/stores/toasts";
@@ -113,6 +116,9 @@ const audience = ref("public");
 const commentPolicy = ref<CommentPolicy>("everyone");
 const mediaIds = ref<string[]>([]);
 const previews = ref<(string | null)[]>([]);
+// The picked photo files, in step with `mediaIds`: "Share to story" uploads the
+// first one again, because a story's photo is its own media (never a post's).
+const pickedFiles = ref<File[]>([]);
 const uploading = ref(false);
 const submitting = ref(false);
 const error = ref("");
@@ -191,7 +197,9 @@ function load(draft: ComposerPost) {
   scheduleValue.value = draft.publish_at ? toLocalInput(new Date(draft.publish_at)) : "";
   previews.value.forEach(revoke);
   mediaIds.value = [];
+  pickedFiles.value = [];
   previews.value = [];
+  shareToStory.value = false;
   videoId.value = null;
   videoState.value = "idle";
   videoKey.value++;
@@ -211,6 +219,7 @@ async function upload(files: File[]) {
     for (const file of files.slice(0, Math.max(0, room))) {
       const asset = await mediaService.upload(file, "image");
       mediaIds.value.push(asset.id);
+      pickedFiles.value.push(file);
       previews.value.push(isHeic(file) ? null : URL.createObjectURL(file));
     }
   } catch (err) {
@@ -234,7 +243,84 @@ function revoke(url: string | null) {
 function removeMedia(i: number) {
   revoke(previews.value[i]);
   mediaIds.value.splice(i, 1);
+  pickedFiles.value.splice(i, 1);
   previews.value.splice(i, 1);
+}
+
+// ---- drag and drop (photos) ------------------------------------------------------------
+const canAddPhotos = computed(() => !editing.value && !published.value && !hasVideo.value && !pollOpen.value);
+const dragDepth = ref(0);
+const dragging = computed(() => dragDepth.value > 0);
+const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+function onDragEnter(e: DragEvent) {
+  if (!canAddPhotos.value || !hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth.value++;
+}
+function onDragOver(e: DragEvent) {
+  if (!canAddPhotos.value || !hasFiles(e)) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+}
+function onDragLeave(e: DragEvent) {
+  if (!canAddPhotos.value || !hasFiles(e)) return;
+  dragDepth.value = Math.max(0, dragDepth.value - 1);
+}
+function onDrop(e: DragEvent) {
+  if (!canAddPhotos.value || !hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth.value = 0;
+  const all = Array.from(e.dataTransfer?.files ?? []);
+  const images = all.filter((file) => file.type.startsWith("image/") || isHeic(file));
+  if (images.length < all.length) error.value = t("polish.composer.dropImagesOnly");
+  void upload(images);
+}
+
+// ---- live preview (wide screens) --------------------------------------------------------
+const PREVIEW_KEY = "tara.composer.preview";
+function storedPreview(): boolean {
+  try {
+    return localStorage.getItem(PREVIEW_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+const previewOn = ref(storedPreview());
+function togglePreview() {
+  previewOn.value = !previewOn.value;
+  try {
+    localStorage.setItem(PREVIEW_KEY, previewOn.value ? "on" : "off");
+  } catch {
+    // storage may be unavailable (private mode)
+  }
+}
+
+// ---- share to story --------------------------------------------------------------------
+// A story is public or friends-only: "followers" becomes friends (never wider
+// than the post); "only me" has no story audience, so the toggle is not offered.
+const STORY_AUDIENCE: Record<string, StoryAudience> = { public: "public", friends: "friends", followers: "friends" };
+const shareToStory = ref(false);
+const storyAvailable = computed(
+  () =>
+    !editing.value &&
+    !published.value &&
+    !inGroup.value &&
+    !scheduleValue.value &&
+    pickedFiles.value.length > 0 &&
+    !!STORY_AUDIENCE[audience.value],
+);
+
+async function shareFirstPhotoToStory() {
+  const file = pickedFiles.value[0];
+  const storyAudience = STORY_AUDIENCE[audience.value];
+  if (!file || !storyAudience) return;
+  try {
+    const mediaId = await storiesService.uploadPhoto(file);
+    await storiesService.create({ kind: "photo", audience: storyAudience, media_id: mediaId });
+    toasts.success(t("polish.composer.storyShared"));
+  } catch (err) {
+    toasts.push({ text: `${t("polish.composer.storyFailed")} ${errorMessage(err, STORY_ERRORS)}`, icon: "error" }, 6000);
+  }
 }
 
 onBeforeUnmount(() => previews.value.forEach(revoke));
@@ -367,7 +453,9 @@ function reset() {
   body.value = "";
   previews.value.forEach(revoke);
   mediaIds.value = [];
+  pickedFiles.value = [];
   previews.value = [];
+  shareToStory.value = false;
   videoId.value = null;
   videoState.value = "idle";
   audience.value = "public";
@@ -455,6 +543,8 @@ async function submit(mode: "publish" | "draft") {
       toasts.success(t("composer.scheduledToast", { time: fmtTime(post.publish_at ?? at ?? "") }));
       emit("saved", post);
     } else {
+      // The post is out; the story is a second, separate write (its own photo upload).
+      if (shareToStory.value && storyAvailable.value) await shareFirstPhotoToStory();
       emit("published", post);
     }
     reset();
@@ -552,7 +642,21 @@ const taggedNames = computed(() => taggedIds.value.map((id) => directory.label(i
         aria-labelledby="composer-title"
         tabindex="-1"
         class="card relative z-10 flex max-h-[92dvh] w-full animate-pop-in flex-col rounded-b-none rounded-t-2xl p-0 shadow-pop sm:max-w-lg sm:rounded-2xl"
+        :class="previewOn && view === 'main' ? 'lg:max-w-5xl' : ''"
+        @dragenter="onDragEnter"
+        @dragover="onDragOver"
+        @dragleave="onDragLeave"
+        @drop="onDrop"
       >
+        <!-- Dropping photos anywhere on the composer adds them. -->
+        <div
+          v-if="dragging"
+          class="pointer-events-none absolute inset-2 z-20 flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-brand-500 bg-brand-50/95 text-brand-800 dark:bg-brand-950/90 dark:text-brand-100"
+          data-testid="composer-drop-overlay"
+        >
+          <ImagePlus class="h-8 w-8" aria-hidden="true" />
+          <p class="font-semibold">{{ t("polish.composer.dropHere") }}</p>
+        </div>
         <!-- Header: back (sub-views) · title · close -->
         <div class="relative flex items-center justify-center border-b border-gray-100 px-12 py-3 dark:border-gray-800">
           <button
@@ -572,7 +676,8 @@ const taggedNames = computed(() => taggedIds.value.map((id) => directory.label(i
         </div>
 
         <!-- ================= main ================= -->
-        <div v-show="view === 'main'" class="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-3">
+        <div v-show="view === 'main'" class="flex min-h-0 flex-1">
+        <div class="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 pb-4 pt-3">
           <div class="flex items-center gap-3">
             <UserAvatar :name="authorName()" :media-id="auth.profile?.avatar_media_id" :size="40" />
             <div class="min-w-0">
@@ -685,6 +790,19 @@ const taggedNames = computed(() => taggedIds.value.map((id) => directory.label(i
           <!-- One video instead of photos: uploaded, processed, then previewed (video pipeline). -->
           <VideoComposerAttachment v-if="!published" :key="videoKey" ref="videoPicker" v-model:media-id="videoId" :show-button="false" @state="videoState = $event" />
 
+          <!-- Drag-and-drop zone (also a picker): shown until the first photo is in. -->
+          <label
+            v-if="canAddPhotos && !previews.length && !uploading"
+            class="mt-2 flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-gray-300 px-4 py-5 text-center text-sm text-gray-700 transition hover:border-brand-400 hover:bg-brand-50/60 focus-within:ring-2 focus-within:ring-brand-400 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-brand-950/30"
+            data-testid="composer-dropzone"
+          >
+            <ImagePlus class="h-6 w-6 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+            <span class="font-semibold">{{ t("polish.composer.addPhotos") }}</span>
+            <span class="text-xs text-gray-600 dark:text-gray-400">{{ t("polish.composer.orDrag") }}</span>
+            <input type="file" :accept="IMAGE_ACCEPT" multiple class="sr-only" :aria-label="t('feed.addPhotos')" data-testid="composer-dropzone-input" @change="onFiles" />
+          </label>
+          <p v-if="uploading" class="mt-2 text-sm text-gray-600 dark:text-gray-300" role="status">{{ t("polish.composer.uploading") }}</p>
+
           <p
             v-if="scheduledIso"
             class="mt-3 flex items-center gap-2 rounded-xl bg-brand-50 px-3 py-2 text-sm text-brand-800 dark:bg-brand-950/50 dark:text-brand-200"
@@ -766,7 +884,25 @@ const taggedNames = computed(() => taggedIds.value.map((id) => directory.label(i
             <button v-if="canDraft" type="button" class="btn-ghost text-sm" data-testid="composer-drafts" @click="view = 'drafts'">
               <FileText class="h-4 w-4" aria-hidden="true" /> {{ t("composer.draftsAndScheduled") }}
             </button>
+            <button
+              type="button"
+              class="btn-ghost ms-auto hidden text-sm lg:inline-flex"
+              :aria-pressed="previewOn"
+              data-testid="composer-preview-toggle"
+              @click="togglePreview"
+            >
+              <Eye class="h-4 w-4" aria-hidden="true" /> {{ previewOn ? t("polish.composer.hidePreview") : t("polish.composer.showPreview") }}
+            </button>
           </div>
+
+          <!-- Share to story: the first photo also becomes a story (a second upload). -->
+          <label v-if="storyAvailable" class="mt-3 flex items-center gap-3 rounded-xl border border-gray-200 p-3 dark:border-gray-700" data-testid="composer-share-story">
+            <span class="min-w-0 flex-1">
+              <span class="block text-sm font-semibold">{{ t("polish.composer.shareToStory") }}</span>
+              <span class="block text-xs text-gray-600 dark:text-gray-400">{{ t(audience === "public" ? "polish.composer.storyPublic" : "polish.composer.storyFriends") }}</span>
+            </span>
+            <input v-model="shareToStory" type="checkbox" role="switch" class="h-5 w-5 accent-brand-600" data-testid="composer-share-story-toggle" />
+          </label>
 
           <p v-if="error" class="mt-2 text-sm text-red-600 dark:text-red-400" role="alert">{{ error }}</p>
 
@@ -791,6 +927,22 @@ const taggedNames = computed(() => taggedIds.value.map((id) => directory.label(i
               {{ primaryLabel }}
             </button>
           </div>
+        </div>
+        <aside v-if="previewOn" class="hidden w-[26rem] shrink-0 border-s border-gray-100 bg-gray-50 p-4 lg:flex lg:flex-col dark:border-gray-800 dark:bg-gray-950/40">
+          <ComposerPreview
+            :name="authorName()"
+            :avatar-id="auth.profile?.avatar_media_id"
+            :audience="audience"
+            :in-group="inGroup"
+            :body="body"
+            :photos="previews"
+            :has-video="hasVideo"
+            :feeling="feeling"
+            :location="location"
+            :tagged-names="taggedNames"
+            :poll-options="pollOpen ? filledOptions : []"
+          />
+        </aside>
         </div>
 
         <!-- ================= audience ================= -->

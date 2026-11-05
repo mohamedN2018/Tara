@@ -364,6 +364,17 @@ class SellerView(APIView):
         return data_response(SellerSummarySerializer(summary).data)
 
 
+class SellerShopView(APIView):
+    """``{"has_shop": bool}``: whether the seller page would open for the viewer.
+    Always 200, so a profile can ask without a 404 for everyone with no shop."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: None}, tags=["marketplace"])
+    def get(self, request: Request, seller_id: str) -> Response:
+        return data_response({"has_shop": services.seller_has_shop(_me(request), str(seller_id))})
+
+
 class SellerReviewsView(APIView):
     permission_classes = [IsAuthenticated]
 

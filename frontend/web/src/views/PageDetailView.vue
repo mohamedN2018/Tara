@@ -6,10 +6,14 @@ import { useRoute, useRouter } from "vue-router";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import AppShell from "@/components/layout/AppShell.vue";
+import ManagePageRail from "@/components/pages/ManagePageRail.vue";
 import PageAbout from "@/components/pages/PageAbout.vue";
 import PageEditDialog from "@/components/pages/PageEditDialog.vue";
 import PageHeader, { type PageTab } from "@/components/pages/PageHeader.vue";
+import PageLinksCard from "@/components/pages/PageLinksCard.vue";
+import PagePhotosCard from "@/components/pages/PagePhotosCard.vue";
 import PagePostComposer from "@/components/pages/PagePostComposer.vue";
+import PageTransparencyDialog from "@/components/pages/PageTransparencyDialog.vue";
 import PageTeam from "@/components/pages/PageTeam.vue";
 import PostCard from "@/components/post/PostCard.vue";
 import ReelGrid from "@/components/reels/ReelGrid.vue";
@@ -174,6 +178,7 @@ async function setPhoto(kind: "avatar" | "cover", file: File | null) {
 const editing = ref(false);
 const composing = ref(false);
 const reporting = ref(false);
+const transparency = ref(false);
 function edited(p: Page) {
   page.value = p;
   pageDirectory.remember(p);
@@ -213,12 +218,17 @@ watch(
           @save="toggleSave"
           @report="reporting = true"
           @unfollow="unfollow"
+          @transparency="transparency = true"
         />
 
         <div id="page-panel" role="tabpanel" :aria-labelledby="`page-tab-${tab}`" class="mx-auto w-full max-w-[1100px]">
           <div v-if="tab === 'posts'" class="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
             <div class="space-y-4 lg:sticky lg:top-20 lg:self-start">
-              <PageAbout :page="page" />
+              <!-- The team's shortcuts first (plan 08), then the intro, photos and links. -->
+              <ManagePageRail :page="page" @settings="editing = true" @transparency="transparency = true" />
+              <PageAbout :page="page" links-apart />
+              <PagePhotosCard :page="page" />
+              <PageLinksCard :page="page" />
             </div>
             <div class="min-w-0 space-y-4">
               <div v-if="canPostAs(page)" class="card flex items-center gap-3 p-3" data-testid="page-composer-card">
@@ -281,5 +291,6 @@ watch(
     <PageEditDialog v-if="editing && page" :page="page" @close="editing = false" @saved="edited" />
     <PagePostComposer v-if="composing && page" :page="page" @close="composing = false" @posted="posted" />
     <ReportDialog v-if="reporting && page" target-type="page" :target-id="page.id" :name="page.name" @close="reporting = false" />
+    <PageTransparencyDialog v-if="transparency && page" :page="page" @close="transparency = false" />
   </AppShell>
 </template>

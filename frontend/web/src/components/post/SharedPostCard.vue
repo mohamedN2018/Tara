@@ -41,7 +41,22 @@ const author = computed(() => (props.post ? directory.label(props.post.author_id
         :author-name="author"
         @go="viewer.go"
         @close="viewer.close"
-      />
+      >
+        <!-- The original's author and text; reacting and commenting happen on the original post. -->
+        <template #panel>
+          <div class="space-y-3" data-testid="theater-shared-panel">
+            <RouterLink :to="`/posts/${post.id}`" class="flex items-center gap-3 hover:underline">
+              <UserAvatar :name="author" :media-id="directory.avatarOf(post.author_id)" :size="40" />
+              <span class="min-w-0 flex-1 text-start">
+                <span class="block truncate font-bold"><bdi>{{ author }}</bdi></span>
+                <time class="text-xs text-gray-600 dark:text-gray-400">{{ relativeTime(post.created_at) }}</time>
+              </span>
+            </RouterLink>
+            <p v-if="post.body" class="whitespace-pre-wrap break-words text-[15px]" dir="auto"><RichText :body="post.body" /></p>
+            <RouterLink :to="`/posts/${post.id}`" class="btn-soft w-full justify-center">{{ t("profileTools.theater.openPost") }}</RouterLink>
+          </div>
+        </template>
+      </MediaTheater>
       <div class="p-3">
         <RouterLink :to="`/posts/${post.id}`" class="flex items-center gap-2 text-xs text-gray-500 hover:underline dark:text-gray-400">
           <UserAvatar :name="author" :media-id="directory.avatarOf(post.author_id)" :size="24" />

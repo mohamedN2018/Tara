@@ -17,6 +17,7 @@ import { useDirectoryStore } from "@/stores/directory";
 import { usePresenceStore } from "@/stores/presence";
 import { useToastStore } from "@/stores/toasts";
 
+import RailBirthdays from "./RailBirthdays.vue";
 import RailPageSuggestions from "./RailPageSuggestions.vue";
 import RailPeopleSuggestions from "./RailPeopleSuggestions.vue";
 import { railAd, railHeading, railSection, railVisible, upcomingEvents } from "./rightRail";
@@ -163,6 +164,9 @@ const section = railSection;
         </li>
       </ul>
     </section>
+
+    <!-- Friends' birthdays today; hides itself when there are none -->
+    <RailBirthdays />
 
     <!-- People you may know, then suggested pages (wave 2D); each hides itself when empty -->
     <RailPeopleSuggestions />

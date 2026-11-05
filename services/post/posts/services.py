@@ -812,6 +812,64 @@ def author_posts_queryset(author_id: str | None):
     )
 
 
+# Profile timeline filters (plan 08, profile track): ``?year=``, ``?media=photo``
+# (posts with photos, no video or reel) and ``?media=album`` (two photos or more).
+TIMELINE_MEDIA = ("photo", "album")
+
+
+def _parse_year(year) -> int | None:
+    if year in (None, ""):
+        return None
+    try:
+        value = int(str(year))
+    except ValueError as exc:
+        raise _bad_request("year must be a number.") from exc
+    if not 1970 <= value <= 9999:
+        raise _bad_request("year is out of range.")
+    return value
+
+
+def filter_timeline(queryset, *, year=None, media: str | None = None):
+    """Narrow a timeline queryset by the year it was posted and its photos."""
+    value = _parse_year(year)
+    if value is not None:
+        queryset = queryset.filter(created_at__year=value)
+    if media in (None, ""):
+        return queryset
+    if media not in TIMELINE_MEDIA:
+        raise _bad_request("media must be photo or album.")
+    queryset = queryset.exclude(type__in=[Post.Type.VIDEO, Post.Type.REEL]).filter(
+        Exists(PostMedia.objects.filter(post=OuterRef("pk")))
+    )
+    if media == "album":
+        queryset = queryset.annotate(photo_count=Count("media", distinct=True)).filter(
+            photo_count__gte=2
+        )
+    return queryset
+
+
+def tagged_posts_queryset(account_id: str | None):
+    """Posts by other people that tag ``account_id`` (a profile's "Posted by:
+    others" and "Photos of you"); filter with ``only_visible``. Group posts stay
+    in their group, and an author blocked either way with the tagged person is
+    left out (the viewer's own blocks are applied by ``only_visible``)."""
+    try:
+        account_id = str(uuid.UUID(str(account_id)))
+    except (TypeError, ValueError) as exc:
+        raise _bad_request("tagged_id must be a UUID.") from exc
+    blocked = blocked_ids(account_id)
+    return with_detail(
+        Post.objects.filter(
+            tags__account_id=account_id,
+            deleted_at__isnull=True,
+            group_id__isnull=True,
+            state=PostState.PUBLISHED,
+        )
+        .exclude(author_id=account_id)
+        .exclude(author_id__in=blocked)
+    )
+
+
 def hashtag_posts_queryset(tag: str):
     """Posts carrying a hashtag; filter with ``only_visible``."""
     return with_detail(

@@ -78,6 +78,8 @@ const routes: RouteRecordRaw[] = [
       return legacy ? { name: "settings", params: { section: legacy.section }, hash: legacy.hash ?? "", query: to.query } : true;
     },
   },
+  // The activity log: the signed-in account's own posts, comments, reactions, saves and searches.
+  { path: "/settings/activity-log", name: "activity-log", component: () => import("@/views/ActivityLogView.vue"), meta: { auth: true } },
   // The privacy center (T2's profile and field visibility included) is the settings centre's Privacy section.
   // The mobile menu (the fifth bottom tab): the categorised main menu as a page.
   { path: "/menu", name: "menu", component: () => import("@/views/MobileMenuView.vue"), meta: { auth: true } },

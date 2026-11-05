@@ -99,7 +99,19 @@ class PostCreateView(APIView):
         elif hashtag:
             queryset = services.hashtag_posts_queryset(hashtag)
         else:
-            queryset = services.author_posts_queryset(request.query_params.get("author_id"))
+            # A profile timeline: the author's own posts, or (``tagged_id``)
+            # other people's posts that tag them; ``year`` and ``media`` narrow it.
+            tagged = request.query_params.get("tagged_id")
+            queryset = (
+                services.tagged_posts_queryset(tagged)
+                if tagged
+                else services.author_posts_queryset(request.query_params.get("author_id"))
+            )
+            queryset = services.filter_timeline(
+                queryset,
+                year=request.query_params.get("year"),
+                media=request.query_params.get("media"),
+            )
         paginator = CursorPagination()
         page = paginator.paginate_queryset(queryset, request)
         posts = services.only_visible(_me(request), page)
@@ -396,7 +408,12 @@ class SavedListView(APIView):
         query.is_valid(raise_exception=True)
         paginator = CursorPagination()
         page = paginator.paginate_queryset(
-            saved.list_saved(_me(request), item_type, query.validated_data.get("collection_id")),
+            saved.list_saved(
+                _me(request),
+                item_type,
+                query.validated_data.get("collection_id"),
+                post_type=query.validated_data.get("post_type"),
+            ),
             request,
         )
         return paginator.get_paginated_response(SavedItemSerializer(page, many=True).data)

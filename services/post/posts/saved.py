@@ -16,7 +16,7 @@ from django.db.models import Count
 
 from tara_common.exceptions import TaraAPIError
 
-from .models import SavedCollection, SavedItem
+from .models import Post, SavedCollection, SavedItem
 from .services import _default_collection
 
 MAX_COLLECTIONS = 100
@@ -153,9 +153,18 @@ def move_saved_item(owner_id: str, saved_id, collection_id) -> SavedItem:
     return item
 
 
-def list_saved(owner_id: str, item_type: str | None = None, collection_id=None):
-    """My saved items, newest first, optionally one type or one collection."""
+def list_saved(owner_id: str, item_type: str | None = None, collection_id=None, *, post_type=None):
+    """My saved items, newest first, optionally one type or one collection.
+
+    ``post_type`` keeps saved posts of one kind (``reel``: a profile's "Saved
+    reels"); it implies ``item_type=post``. Visibility is checked when the
+    client loads the posts themselves (``/posts/batch/``)."""
     qs = SavedItem.objects.filter(owner_id=owner_id)
+    if post_type:
+        item_type = "post"
+        qs = qs.filter(
+            item_id__in=Post.objects.filter(type=post_type, deleted_at__isnull=True).values("id")
+        )
     if item_type:
         qs = qs.filter(item_type=item_type)
     if collection_id:

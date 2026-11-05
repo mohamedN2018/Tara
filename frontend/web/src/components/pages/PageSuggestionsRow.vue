@@ -4,6 +4,7 @@ import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
+import { pageCategoryLabel } from "@/lib/pageCategory";
 import { pageService } from "@/services/pages";
 import { type PageSuggestion, relationshipsService } from "@/services/relationships";
 import { useToastStore } from "@/stores/toasts";
@@ -14,7 +15,8 @@ import { useToastStore } from "@/stores/toasts";
 // none or cannot answer; nothing is made up.
 const MAX = 12;
 
-const { t } = useI18n();
+const i18n = useI18n();
+const { t } = i18n;
 const toasts = useToastStore();
 const pages = ref<PageSuggestion[]>([]);
 const followed = ref<Record<string, true>>({});
@@ -133,7 +135,7 @@ onMounted(load);
               <bdi>{{ p.name }}</bdi>
             </RouterLink>
             <p class="truncate text-xs text-gray-500 dark:text-gray-400">
-              <template v-if="p.category"><bdi>{{ p.category }}</bdi> · </template>
+              <template v-if="p.category"><bdi>{{ pageCategoryLabel(p.category, i18n) }}</bdi> · </template>
               {{ t("pageHub.card.followers", { count: p.followers_count + (followed[p.page_id] ? 1 : 0) }, p.followers_count + (followed[p.page_id] ? 1 : 0)) }}
             </p>
           </div>

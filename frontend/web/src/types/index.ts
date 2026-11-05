@@ -62,6 +62,8 @@ export interface Profile {
   display_name: string;
   avatar_media_id: string | null;
   cover_media_id: string | null;
+  /** The cover's vertical position, 0 (top) to 100 (bottom); 50 when unset. */
+  cover_offset_y?: number;
   bio?: string;
   intro?: string;
   city?: string;

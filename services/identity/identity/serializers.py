@@ -266,6 +266,21 @@ class PersonalDetailsSerializer(serializers.Serializer):
     gender = serializers.DictField(allow_null=True)
 
 
+class FriendBirthdaySerializer(serializers.Serializer):
+    """One friend's birthday in GET /me/birthdays/: day and month, never the year."""
+
+    account_id = serializers.UUIDField()
+    month = serializers.IntegerField(min_value=1, max_value=12)
+    day = serializers.IntegerField(min_value=1, max_value=31)
+    days_until = serializers.IntegerField(min_value=0)
+
+
+class FriendBirthdaysSerializer(serializers.Serializer):
+    date = serializers.DateField()
+    days = serializers.IntegerField()
+    results = FriendBirthdaySerializer(many=True)
+
+
 class ReauthSerializer(serializers.Serializer):
     """A re-authentication: the current password (blank for Google-only accounts)."""
 

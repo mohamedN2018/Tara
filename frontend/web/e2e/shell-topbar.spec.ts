@@ -27,10 +27,10 @@ test("the active tab is underlined after navigating, in Arabic, and the tabs run
   await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
 
   const tabs = page.getByRole("navigation", { name: "التنقّل الرئيسي" });
-  for (const name of ["الرئيسية", "الأصدقاء", "السوق", "المجموعات", "الفعاليات"]) {
+  for (const name of ["الرئيسية", "الأصدقاء", "الفيديو", "السوق", "المجموعات", "الفعاليات"]) {
     await expect(tabs.getByRole("link", { name, exact: true })).toBeVisible();
   }
-  await expect(tabs.getByRole("link")).toHaveCount(5);
+  await expect(tabs.getByRole("link")).toHaveCount(6);
   await expect(underline(page, "home")).toBeVisible();
 
   await tabs.getByRole("link", { name: "الأصدقاء", exact: true }).click();
@@ -38,6 +38,12 @@ test("the active tab is underlined after navigating, in Arabic, and the tabs run
   await expect(underline(page, "friends")).toBeVisible();
   await expect(underline(page, "home")).toHaveCount(0);
   await expect(page.getByTestId("top-tab-friends")).toHaveAttribute("aria-current", "page");
+
+  // The Video tab opens the videos module (reels are reached from there).
+  await tabs.getByRole("link", { name: "الفيديو", exact: true }).click();
+  await expect(page).toHaveURL(/\/videos$/);
+  await expect(underline(page, "videos")).toBeVisible();
+  await expect(page.getByTestId("top-tab-videos")).toHaveAttribute("aria-current", "page");
 
   await tabs.getByRole("link", { name: "الفعاليات", exact: true }).click();
   await expect(page).toHaveURL(/\/events$/);
@@ -76,6 +82,7 @@ test("the active tab is underlined after navigating, in English, left to right",
   await expect(underline(page, "marketplace")).toBeVisible();
   await expect(underline(page, "home")).toHaveCount(0);
 
+  await expect(tabs.getByRole("link", { name: "Videos", exact: true })).toBeVisible();
   await tabs.getByRole("link", { name: "Groups", exact: true }).click();
   await expect(page).toHaveURL(/\/groups$/);
   await expect(underline(page, "groups")).toBeVisible();

@@ -3,6 +3,8 @@ import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
+import NameHoverCard from "@/components/social/NameHoverCard.vue";
+import { pageCategoryLabel } from "@/lib/pageCategory";
 import { categoryLabel } from "@/lib/search";
 import { graphService } from "@/services/graph";
 import type { SearchResult } from "@/services/search";
@@ -19,7 +21,8 @@ watch(() => props.result.followers_count, (v) => (followers.value = v ?? null));
 const busy = ref(false);
 
 const name = computed(() => props.result.name || props.result.title);
-const category = computed(() => categoryLabel(props.result));
+const i18n = useI18n();
+const category = computed(() => pageCategoryLabel(categoryLabel(props.result), i18n));
 const to = computed(() =>
   props.result.handle ? { name: "page", params: { handle: props.result.handle } } : { name: "pages" },
 );
@@ -47,11 +50,13 @@ async function toggle() {
       <UserAvatar :name="name" :media-id="result.avatar_media_id" :size="56" />
     </RouterLink>
     <div class="min-w-0 flex-1">
-      <RouterLink :to="to" class="block truncate font-semibold hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400" data-testid="page-result-name">
-        <bdi>{{ name }}</bdi>
-      </RouterLink>
+      <NameHoverCard kind="page" :id="result.id" class="block min-w-0">
+        <RouterLink :to="to" class="block truncate text-start font-semibold hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400" data-testid="page-result-name">
+          <bdi>{{ name }}</bdi>
+        </RouterLink>
+      </NameHoverCard>
       <p class="truncate text-xs text-gray-500 dark:text-gray-400">
-        <span v-if="category" dir="auto">{{ category }}</span>
+        <bdi v-if="category">{{ category }}</bdi>
         <span v-if="category && followers !== null" aria-hidden="true"> · </span>
         <span v-if="followers !== null">{{ t("search.followers", followers) }}</span>
       </p>

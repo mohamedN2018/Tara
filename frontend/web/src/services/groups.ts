@@ -447,6 +447,20 @@ export const groupsService = {
 // ---- post-service endpoints for groups ---------------------------------------------
 
 export const groupPostsService = {
+  /**
+   * When each group last had a post (the groups rail's "last active"). Only
+   * groups whose posts the viewer may read are answered; others are absent.
+   */
+  async activity(groupIds: string[]): Promise<Record<string, string | null>> {
+    const ids = [...new Set(groupIds)].slice(0, 20);
+    if (!ids.length) return {};
+    const { data } = await api.get<{ data: { group_id: string; last_post_at: string | null }[] }>(
+      "/posts/groups/activity/",
+      { params: { ids: ids.join(",") } },
+    );
+    return Object.fromEntries(data.data.map((r) => [r.group_id, r.last_post_at]));
+  },
+
   async feed(groupId: string, view: GroupFeedView = "discussion", cursor?: string | null): Promise<CursorPage<Post>> {
     const { data } = await api.get<CursorPage<Post>>(`/posts/groups/${ref(groupId)}/`, {
       params: { ...(view !== "discussion" ? { view } : {}), ...(cursor ? { cursor } : {}) },

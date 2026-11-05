@@ -17,6 +17,10 @@ import storiesEn from "./stories.en";
 import suggestionsEn from "./suggestions.en";
 import videoEn from "./video.en";
 import reelsEn from "./reels.en";
+import polishEn from "./polish.en";
+import profileToolsEn from "./profileTools.en";
+import adCtaEn from "./adCta.en";
+import socialShellEn from "./socialShell.en";
 
 export default {
   app: { name: "Tara", tagline: "Connect. Share. Belong.", promise: "More than a social network… a place to belong." },
@@ -1448,6 +1452,10 @@ export default {
   suggestions: suggestionsEn,
   video: videoEn,
   reels: reelsEn,
+  polish: polishEn,
+  profileTools: profileToolsEn,
+  adCta: adCtaEn,
+  socialShell: socialShellEn,
   landing: {
     getStarted: "Get started",
     headline: "Your place among",

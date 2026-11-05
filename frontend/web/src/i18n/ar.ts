@@ -17,6 +17,10 @@ import storiesAr from "./stories.ar";
 import suggestionsAr from "./suggestions.ar";
 import videoAr from "./video.ar";
 import reelsAr from "./reels.ar";
+import polishAr from "./polish.ar";
+import profileToolsAr from "./profileTools.ar";
+import adCtaAr from "./adCta.ar";
+import socialShellAr from "./socialShell.ar";
 
 export default {
   app: { name: "Tara", tagline: "تواصل. شارك. انتمِ.", promise: "أكثر من شبكة اجتماعية… مكان تنتمي إليه." },
@@ -1463,6 +1467,10 @@ export default {
   suggestions: suggestionsAr,
   video: videoAr,
   reels: reelsAr,
+  polish: polishAr,
+  profileTools: profileToolsAr,
+  adCta: adCtaAr,
+  socialShell: socialShellAr,
   landing: {
     getStarted: "ابدأ الآن",
     headline: "مكانك بين",

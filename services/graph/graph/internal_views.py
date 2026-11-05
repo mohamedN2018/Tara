@@ -127,3 +127,19 @@ class PreferencesView(APIView):
     def get(self, request: Request, account_id: str) -> Response:
         _require_internal(request)
         return data_response(preferences.snapshot(str(account_id)))
+
+
+class FriendIdsView(APIView):
+    """An account's accepted friends, for identity's birthdays list (plan 08,
+    social shell). Accounts with a block, either way, are left out, as in the
+    public friends list the owner sees."""
+
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+    throttle_classes: list = []  # internal: no per-IP throttle (roadmap 3.3)
+
+    def get(self, request: Request, account_id: str) -> Response:
+        _require_internal(request)
+        return data_response(
+            {"account_id": str(account_id), "friends": services.list_friend_ids(str(account_id))}
+        )

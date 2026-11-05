@@ -16,3 +16,13 @@ class SignUploadSerializer(serializers.Serializer):
     purpose = serializers.ChoiceField(
         choices=MediaAsset.Purpose.values, default="", allow_blank=True, required=False
     )
+
+
+# One call per page render; the client coalesces its lookups into batches of this size.
+MAX_BATCH_IDS = 100
+
+
+class ResolveSerializer(serializers.Serializer):
+    ids = serializers.ListField(
+        child=serializers.UUIDField(), allow_empty=True, max_length=MAX_BATCH_IDS
+    )

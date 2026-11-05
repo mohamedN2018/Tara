@@ -17,7 +17,7 @@ from rest_framework.views import APIView
 
 from tara_common.pagination import CursorPagination
 
-from . import studio
+from . import activity, studio
 from .serializers import CommentSerializer, PostSerializer
 from .views import _comments, _me, _serialize
 
@@ -56,15 +56,26 @@ class StudioPublishedView(APIView):
 
     @extend_schema(
         parameters=[
-            OpenApiParameter("type", str, description="text, image, video, link, share or poll")
+            OpenApiParameter("type", str, description="text, image, video, link, share or poll"),
+            OpenApiParameter("q", str, description="Only posts whose text contains this"),
+            OpenApiParameter("from", str, description="ISO date-time with offset (inclusive)"),
+            OpenApiParameter("to", str, description="ISO date-time with offset (exclusive)"),
         ],
         responses={200: PostSerializer(many=True)},
         tags=["studio"],
     )
     def get(self, request: Request) -> Response:
-        """My published posts (group posts included), newest first."""
+        """My published posts (group posts included), newest first, optionally
+        filtered by type, text and publication time."""
         me = _me(request)
-        queryset = studio.published_queryset(me, request.query_params.get("type") or None)
+        params = request.query_params
+        queryset = studio.published_queryset(
+            me,
+            params.get("type") or None,
+            query=params.get("q"),
+            start=params.get("from") or None,
+            end=params.get("to") or None,
+        )
         paginator = CursorPagination()
         page = paginator.paginate_queryset(queryset, request)
         return paginator.get_paginated_response(_serialize(me, list(page)))
@@ -112,3 +123,55 @@ class StudioCommentsView(APIView):
             row["post_excerpt"] = (comment.post.body or "")[:POST_EXCERPT]
             row["post_type"] = comment.post.type
         return paginator.get_paginated_response(data)
+
+
+@method_decorator(transaction.non_atomic_requests, name="dispatch")
+class StudioDailyView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("from", str, required=True, description="First day, YYYY-MM-DD"),
+            OpenApiParameter("to", str, required=True, description="Last day, YYYY-MM-DD"),
+            OpenApiParameter("tz", str, description="IANA time zone of the days (default UTC)"),
+        ],
+        tags=["studio"],
+    )
+    def get(self, request: Request) -> Response:
+        """Per day (at most 366): reel views, reactions, comments, shares and
+        saves my published posts received from other people, and my posts."""
+        params = request.query_params
+        data = studio.daily(_me(request), params.get("from"), params.get("to"), params.get("tz"))
+        return Response({"data": data})
+
+
+@method_decorator(transaction.non_atomic_requests, name="dispatch")
+class ActivityLogView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "kind", str, description="post, comment, reaction, comment_reaction, save or vote"
+            ),
+            OpenApiParameter("cursor", str),
+            OpenApiParameter("limit", int),
+        ],
+        tags=["activity"],
+    )
+    def get(self, request: Request) -> Response:
+        """My own activity, newest first. A row's ``target`` (the post acted
+        on) is null once I can no longer see that post."""
+        params = request.query_params
+        try:
+            limit = int(params.get("limit") or activity.PAGE_SIZE)
+        except ValueError:
+            limit = activity.PAGE_SIZE
+        return Response(
+            activity.activity(
+                _me(request),
+                kind=params.get("kind") or None,
+                cursor=params.get("cursor"),
+                limit=limit,
+            )
+        )

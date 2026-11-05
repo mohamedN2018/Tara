@@ -9,6 +9,7 @@ import { jwtClaims, tokenStore } from "@/lib/tokens";
 import { clearBlockedCards } from "@/lib/blockedCards";
 import { realtime } from "@/lib/ws";
 import { identityService } from "@/services/identity";
+import { clearMediaCache } from "@/services/media";
 import { useCallStore } from "@/stores/calls";
 import { useDirectoryStore } from "@/stores/directory";
 import { useUiStore } from "@/stores/ui";
@@ -81,6 +82,7 @@ export const useAuthStore = defineStore("auth", () => {
   function clearAccountData(nextOwner: string | null = null) {
     useDirectoryStore().clear();
     clearBlockedCards();
+    clearMediaCache();
     try {
       ACCOUNT_KEYS.forEach((key) => localStorage.removeItem(key));
       if (nextOwner) localStorage.setItem(DATA_OWNER_KEY, nextOwner);

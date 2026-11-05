@@ -26,6 +26,20 @@ export interface Page {
   created_at: string;
 }
 
+export interface PageNameChange {
+  old_name: string;
+  new_name: string;
+  changed_at: string;
+}
+
+export interface PageTransparency {
+  page_id: string;
+  name: string;
+  category: string;
+  created_at: string;
+  name_changes: PageNameChange[];
+}
+
 export interface PageMember {
   id: string;
   account_id: string;
@@ -203,6 +217,18 @@ export const pageService = {
   async posts(pageId: string, cursor?: string | null): Promise<CursorPage<Post>> {
     const { data } = await api.get<CursorPage<Post>>("/posts/", {
       params: { author_id: pageId, cursor: cursor || undefined },
+    });
+    return data;
+  },
+  /** "Page transparency": created date, category and past names (404 when the page is hidden from me). */
+  async transparency(pageId: string): Promise<PageTransparency> {
+    const { data } = await api.get<{ data: PageTransparency }>(`/pages/id/${pageId}/transparency/`);
+    return data.data;
+  },
+  /** The page's posts with photos (its Photos card), newest first. */
+  async photoPosts(pageId: string, cursor?: string | null): Promise<CursorPage<Post>> {
+    const { data } = await api.get<CursorPage<Post>>("/posts/", {
+      params: { author_id: pageId, media: "photo", cursor: cursor || undefined },
     });
     return data;
   },

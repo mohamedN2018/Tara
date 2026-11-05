@@ -2,6 +2,7 @@
 // flow with `purpose: "post"`, so media's transcoder turns them into an HLS
 // ladder; playback asks media for a short-lived, viewer-bound playlist token.
 import { api } from "@/lib/api";
+import { createBatchLoader } from "@/lib/batchLoader";
 import { type MediaAsset, mediaService, viaStorageProxy } from "@/services/media";
 
 /** For `<input type="file" accept>`: what the transcoder takes (iPhone .mov included). */
@@ -52,6 +53,19 @@ export function apiUrl(path: string): string {
 export const isProcessing = (status: string) =>
   status === "uploading" || status === "uploaded" || status === "processing";
 
+// Every player and poster on a page asks in one `POST /media/playback/resolve/`
+// (at most 100 ids). Not cached: each answer carries a fresh playlist token.
+const playbacks = createBatchLoader<Playback>({
+  label: "playback",
+  fetch: async (ids) => (await api.post<{ data: Playback[] }>("/media/playback/resolve/", { ids })).data.data,
+  idOf: (p) => p.id,
+});
+
+/** What the single endpoint answered for a video the viewer may not watch: callers check `response.status`. */
+function notFound(id: string): Error & { response: { status: number } } {
+  return Object.assign(new Error(`playback ${id} not found`), { response: { status: 404 } });
+}
+
 export const videoService = {
   async upload(file: File): Promise<MediaAsset> {
     const mime = videoMime(file);
@@ -59,9 +73,10 @@ export const videoService = {
     return mediaService.upload(file, "video", "public", { purpose: "post", mime });
   },
 
+  /** Batched with the other playbacks of the same tick; rejects with a 404-shaped error when absent. */
   async playback(id: string): Promise<Playback> {
-    const { data } = await api.get<{ data: Playback }>(`/media/${id}/playback/`);
-    const p = data.data;
+    const p = await playbacks.load(id);
+    if (!p) throw notFound(id);
     return {
       ...p,
       hls_url: p.hls_url ? apiUrl(p.hls_url) : null,

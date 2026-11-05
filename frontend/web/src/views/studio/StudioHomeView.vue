@@ -5,11 +5,14 @@ import { useI18n } from "vue-i18n";
 
 import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
+import EngagementChart from "@/components/studio/EngagementChart.vue";
 import StudioPostThumb from "@/components/studio/StudioPostThumb.vue";
 import { useStudioComposer } from "@/components/studio/studioComposer";
 import { addDays } from "@/lib/planner";
+import { CHART_METRICS, type ChartMetric, lastDays, metricOf, spanDays } from "@/lib/studioRange";
 import type { ComposerPost } from "@/services/composer";
-import { type StudioSummary, studioService } from "@/services/studio";
+import { timeZoneName } from "@/services/composer";
+import { type StudioDaily, type StudioSummary, studioService } from "@/services/studio";
 
 defineOptions({ name: "StudioHomeView" });
 
@@ -58,6 +61,48 @@ const fmtTime = (iso: string) =>
 const excerpt = (p: ComposerPost) => (p.body || "").trim() || t("studio.library.noText");
 
 watch(useStudioComposer().version, load);
+
+// ---- engagement over time (real per-day numbers from /posts/studio/daily/) -------------
+const PRESETS = [7, 28, 90] as const;
+const MAX_SPAN = 366;
+const preset = ref<number | "custom">(28);
+const range = ref(lastDays(28));
+const metric = ref<ChartMetric>("engagement");
+const daily = ref<StudioDaily | null>(null);
+const dailyLoading = ref(false);
+const dailyFailed = ref(false);
+const rangeError = computed(() => {
+  const n = spanDays(range.value.from, range.value.to);
+  if (!n) return t("polish.studio.rangeInvalid");
+  if (n > MAX_SPAN) return t("polish.studio.rangeTooLong", { max: MAX_SPAN });
+  return "";
+});
+
+let dailySeq = 0;
+async function loadDaily() {
+  if (rangeError.value) return;
+  const mine = ++dailySeq;
+  dailyLoading.value = true;
+  dailyFailed.value = false;
+  try {
+    const data = await studioService.daily(range.value.from, range.value.to, timeZoneName());
+    if (mine === dailySeq) daily.value = data;
+  } catch {
+    if (mine === dailySeq) dailyFailed.value = true;
+  } finally {
+    if (mine === dailySeq) dailyLoading.value = false;
+  }
+}
+function pickPreset(days: number) {
+  preset.value = days;
+  range.value = lastDays(days);
+}
+watch(range, loadDaily, { deep: true });
+onMounted(loadDaily);
+
+const points = computed(() => (daily.value?.days ?? []).map((d) => ({ date: d.date, value: metricOf(d, metric.value) })));
+const metricTotal = computed(() => points.value.reduce((s, p) => s + p.value, 0));
+const metricLabel = computed(() => t(`polish.studio.metrics.${metric.value}`));
 </script>
 
 <template>
@@ -80,6 +125,77 @@ watch(useStudioComposer().version, load);
               <p class="mt-2 text-2xl font-extrabold text-gray-900 dark:text-white" data-testid="studio-stat-value">{{ fmtNumber(s.value) }}</p>
             </li>
           </ul>
+        </section>
+
+        <section class="card p-4" aria-labelledby="studio-trend" data-testid="studio-trend">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 id="studio-trend" class="section-title">{{ t("polish.studio.trendTitle") }}</h2>
+              <p class="mt-0.5 text-xs text-gray-600 dark:text-gray-400">{{ t("polish.studio.trendLead") }}</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-1" role="group" :aria-label="t('polish.studio.rangeLabel')">
+              <button
+                v-for="d in PRESETS"
+                :key="d"
+                type="button"
+                class="rounded-full px-3 py-1 text-sm font-semibold transition"
+                :class="preset === d ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-800 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700'"
+                :aria-pressed="preset === d"
+                :data-testid="`studio-range-${d}`"
+                @click="pickPreset(d)"
+              >
+                {{ t("polish.studio.lastDays", { n: d }, d) }}
+              </button>
+              <button
+                type="button"
+                class="rounded-full px-3 py-1 text-sm font-semibold transition"
+                :class="preset === 'custom' ? 'bg-brand-600 text-white' : 'bg-gray-100 text-gray-800 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700'"
+                :aria-pressed="preset === 'custom'"
+                data-testid="studio-range-custom"
+                @click="preset = 'custom'"
+              >
+                {{ t("polish.studio.custom") }}
+              </button>
+            </div>
+          </div>
+          <div v-if="preset === 'custom'" class="mt-3 flex flex-wrap items-end gap-3" data-testid="studio-range-dates">
+            <label class="text-sm">
+              <span class="mb-1 block font-semibold text-gray-700 dark:text-gray-300">{{ t("polish.studio.from") }}</span>
+              <input v-model.lazy="range.from" type="date" class="input w-auto py-1.5" dir="ltr" :max="range.to" data-testid="studio-range-from" />
+            </label>
+            <label class="text-sm">
+              <span class="mb-1 block font-semibold text-gray-700 dark:text-gray-300">{{ t("polish.studio.to") }}</span>
+              <input v-model.lazy="range.to" type="date" class="input w-auto py-1.5" dir="ltr" :min="range.from" data-testid="studio-range-to" />
+            </label>
+            <p v-if="rangeError" class="text-sm text-red-700 dark:text-red-400" role="alert">{{ rangeError }}</p>
+          </div>
+
+          <div class="mt-3 flex gap-1 overflow-x-auto" role="radiogroup" :aria-label="t('polish.studio.metricLabel')">
+            <button
+              v-for="m in CHART_METRICS"
+              :key="m"
+              type="button"
+              role="radio"
+              class="shrink-0 rounded-lg px-3 py-1.5 text-start text-sm transition"
+              :class="metric === m ? 'bg-brand-50 font-semibold text-brand-800 ring-1 ring-brand-300 dark:bg-brand-950/50 dark:text-brand-100 dark:ring-brand-800' : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'"
+              :aria-checked="metric === m"
+              :data-testid="`studio-metric-${m}`"
+              @click="metric = m"
+            >
+              <span class="block">{{ t(`polish.studio.metrics.${m}`) }}</span>
+              <span v-if="daily" class="block text-base font-extrabold tabular-nums">{{ fmtNumber(daily.days.reduce((s, d) => s + metricOf(d, m), 0)) }}</span>
+            </button>
+          </div>
+
+          <div class="mt-3">
+            <LoadingSkeleton v-if="dailyLoading && !daily" :rows="1" />
+            <ErrorState v-else-if="dailyFailed" @retry="loadDaily" />
+            <template v-else-if="daily">
+              <p class="sr-only" aria-live="polite">{{ t("polish.studio.totalLive", { metric: metricLabel, total: fmtNumber(metricTotal) }) }}</p>
+              <EngagementChart :points="points" :label="metricLabel" />
+              <p v-if="metric === 'views'" class="mt-1 text-xs text-gray-600 dark:text-gray-400">{{ t("polish.studio.viewsNote") }}</p>
+            </template>
+          </div>
         </section>
 
         <div class="grid gap-4 lg:grid-cols-2">

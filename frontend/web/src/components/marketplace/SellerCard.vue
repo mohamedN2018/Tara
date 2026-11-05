@@ -51,7 +51,7 @@ const since = computed(() => {
       <UserAvatar :name="directory.label(sellerId)" :media-id="directory.avatarOf(sellerId)" :size="44" />
       <div class="min-w-0">
         <p class="text-xs text-gray-500 dark:text-gray-400">{{ t("market.listedBy") }}</p>
-        <p class="truncate text-sm font-semibold" dir="auto">{{ directory.label(sellerId) }}</p>
+        <p class="truncate text-start text-sm font-semibold"><bdi>{{ directory.label(sellerId) }}</bdi></p>
       </div>
       <span class="ms-auto text-xs font-medium text-brand-600 dark:text-brand-300">
         {{ shopLink ? t("market.viewSeller") : t("commerce.shop.viewProfile") }}

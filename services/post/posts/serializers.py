@@ -329,6 +329,8 @@ class SaveIntoSerializer(serializers.Serializer):
 
 class SavedFilterSerializer(serializers.Serializer):
     collection_id = serializers.UUIDField(required=False)
+    # Saved posts of one kind (a profile's "Saved reels"); posts only.
+    post_type = serializers.ChoiceField(choices=["reel", "video"], required=False)
 
 
 class ReportSerializer(serializers.Serializer):

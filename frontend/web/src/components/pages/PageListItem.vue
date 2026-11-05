@@ -2,6 +2,7 @@
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
+import { pageCategoryLabel } from "@/lib/pageCategory";
 import { type Page } from "@/services/pages";
 
 import PageFollowButton from "./PageFollowButton.vue";
@@ -10,7 +11,8 @@ import PageFollowButton from "./PageFollowButton.vue";
 // followers and the Follow toggle (hidden for the page's own team).
 defineProps<{ page: Page }>();
 const emit = defineEmits<{ followChanged: [page: Page, following: boolean] }>();
-const { t } = useI18n();
+const i18n = useI18n();
+const { t } = i18n;
 </script>
 
 <template>
@@ -23,7 +25,7 @@ const { t } = useI18n();
         <bdi>{{ page.name }}</bdi>
       </RouterLink>
       <p class="truncate text-xs text-gray-500 dark:text-gray-400">
-        <span v-if="page.category" dir="auto">{{ page.category }}</span>
+        <bdi v-if="page.category">{{ pageCategoryLabel(page.category, i18n) }}</bdi>
         <template v-if="page.category && page.followers_count !== null"> · </template>
         <span v-if="page.followers_count !== null">{{ t("pageHub.card.followers", { count: page.followers_count }, page.followers_count) }}</span>
       </p>

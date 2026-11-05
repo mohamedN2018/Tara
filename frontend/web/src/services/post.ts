@@ -69,6 +69,28 @@ const BATCH_LIMIT = 50;
 const MAX_EMPTY_PAGES = 25;
 const MAX_HASHTAG_PAGES = 3;
 
+/**
+ * A profile timeline's filters (plan 08): the year posted, who posted
+ * (`others`: other people's posts that tag the person) and photos only
+ * (`photo`) or posts with several photos (`album`).
+ */
+export interface TimelineFilters {
+  year?: number | null;
+  postedBy?: "author" | "others";
+  media?: "photo" | "album" | null;
+}
+
+export function timelineParams(authorId: string, cursor?: string, filters?: TimelineFilters): Record<string, string | number | undefined> {
+  const others = filters?.postedBy === "others";
+  return {
+    author_id: others ? undefined : authorId,
+    tagged_id: others ? authorId : undefined,
+    year: filters?.year || undefined,
+    media: filters?.media || undefined,
+    cursor,
+  };
+}
+
 export const postService = {
   async create(payload: {
     body: string;
@@ -126,9 +148,9 @@ export const postService = {
     await api.post(`/posts/${id}/report/`, { reason });
   },
 
-  async byAuthor(authorId: string, cursor?: string): Promise<CursorPage<Post>> {
+  async byAuthor(authorId: string, cursor?: string, filters?: TimelineFilters): Promise<CursorPage<Post>> {
     const { data } = await api.get<CursorPage<Post>>(`/posts/`, {
-      params: { author_id: authorId, cursor },
+      params: timelineParams(authorId, cursor, filters),
     });
     return data;
   },
@@ -138,11 +160,11 @@ export const postService = {
    * Audience filtering runs after paging, so a page can be short or even empty
    * while older posts remain: keep following next_cursor.
    */
-  async timelinePage(authorId: string, cursor?: string): Promise<CursorPage<Post>> {
-    let page = await this.byAuthor(authorId, cursor);
+  async timelinePage(authorId: string, cursor?: string, filters?: TimelineFilters): Promise<CursorPage<Post>> {
+    let page = await this.byAuthor(authorId, cursor, filters);
     for (let i = 0; i < MAX_EMPTY_PAGES; i++) {
       if (page.data.length || !page.page.has_more || !page.page.next_cursor) break;
-      page = await this.byAuthor(authorId, page.page.next_cursor);
+      page = await this.byAuthor(authorId, page.page.next_cursor, filters);
     }
     return page;
   },
@@ -304,6 +326,18 @@ export const postService = {
       savedIds: Object.fromEntries(data.data.map((s) => [s.item_id, s.id])),
       collectionIds: Object.fromEntries(data.data.map((s) => [s.item_id, s.collection_id])),
     };
+  },
+
+  /**
+   * One page of my saved reels (a profile's "Saved reels"), newest save first:
+   * the reel ids only. Load each through `/reels/<id>/`, which checks it may
+   * still be seen (a hidden one is 404 and is left out).
+   */
+  async savedReelIds(cursor?: string | null): Promise<{ ids: string[]; nextCursor: string | null; hasMore: boolean }> {
+    const { data } = await api.get<CursorPage<SavedItem>>("/saved/", {
+      params: { post_type: "reel", cursor: cursor || undefined },
+    });
+    return { ids: data.data.map((s) => s.item_id), nextCursor: data.page.next_cursor, hasMore: data.page.has_more };
   },
 
   // ---- saved collections (owner-only; another account's ids are 404) ----

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // The settings centre's start column: title, a search over the sections, the
 // Account centre card, then the grouped sections and the policy links.
-import { ChevronRight, FileText, Search, ShieldCheck, UserRound } from "lucide-vue-next";
+import { ChevronRight, FileText, History, Search, ShieldCheck, UserRound } from "lucide-vue-next";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -9,7 +9,7 @@ import TaraLogo from "@/components/brand/TaraLogo.vue";
 
 import { SETTINGS_GROUPS, type SettingsSection } from "./sections";
 
-defineProps<{ active?: SettingsSection | null }>();
+defineProps<{ active?: SettingsSection | null; activityActive?: boolean }>();
 
 const { t } = useI18n();
 const query = ref("");
@@ -32,6 +32,15 @@ const groups = computed(() => {
         norm(t(`settingsCenter.sections.${i.id}.desc`)).includes(q),
     ),
   })).filter((g) => g.items.length);
+});
+
+const showActivityLog = computed(() => {
+  const q = norm(query.value);
+  return (
+    !q ||
+    norm(t("polish.settings.entries.activityLog.title")).includes(q) ||
+    norm(t("polish.settings.entries.activityLog.desc")).includes(q)
+  );
 });
 
 const item =
@@ -76,7 +85,7 @@ const bubble =
       <span class="mt-2 block text-sm font-semibold text-brand-700 dark:text-brand-300">{{ t("settingsCenter.overview.open") }}</span>
     </RouterLink>
 
-    <p v-if="!groups.length" class="px-2 text-sm text-gray-500 dark:text-gray-400">{{ t("settingsCenter.noMatches") }}</p>
+    <p v-if="!groups.length && !showActivityLog" class="px-2 text-sm text-gray-500 dark:text-gray-400">{{ t("settingsCenter.noMatches") }}</p>
 
     <div v-for="g in groups" :key="g.id" class="mb-2 border-t border-gray-200 pt-3 dark:border-gray-800">
       <h2 class="px-2 pb-1 text-base font-bold">{{ t(`settingsCenter.groups.${g.id}`) }}</h2>
@@ -97,6 +106,23 @@ const bubble =
           </RouterLink>
         </li>
       </ul>
+    </div>
+
+    <!-- The activity log: its own page (my posts, comments, reactions, saves, searches). -->
+    <div v-if="showActivityLog" class="mb-2 border-t border-gray-200 pt-3 dark:border-gray-800">
+      <RouterLink
+        to="/settings/activity-log"
+        :class="[item, activityActive ? 'bg-brand-50 dark:bg-brand-950/40' : '']"
+        :aria-current="activityActive ? 'page' : undefined"
+        data-testid="settings-nav-activity-log"
+      >
+        <span :class="bubble"><History class="h-5 w-5" aria-hidden="true" /></span>
+        <span class="min-w-0 flex-1">
+          <span class="block truncate text-sm font-semibold">{{ t("polish.settings.entries.activityLog.title") }}</span>
+          <span class="block truncate text-xs text-gray-600 dark:text-gray-300">{{ t("polish.settings.entries.activityLog.desc") }}</span>
+        </span>
+        <ChevronRight class="h-4 w-4 shrink-0 text-gray-400 lg:hidden rtl:rotate-180" aria-hidden="true" />
+      </RouterLink>
     </div>
 
     <div v-if="!query" class="border-t border-gray-200 pt-3 dark:border-gray-800">

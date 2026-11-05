@@ -38,6 +38,7 @@ import ComposerDialog from "@/components/post/ComposerDialog.vue";
 import LinkPreviewCard from "@/components/post/LinkPreviewCard.vue";
 import MediaGrid from "@/components/post/MediaGrid.vue";
 import MediaTheater from "@/components/post/MediaTheater.vue";
+import PostTheaterPanel, { type PanelState } from "@/components/post/PostTheaterPanel.vue";
 import PollCard from "@/components/post/PollCard.vue";
 import PostActions from "@/components/post/PostActions.vue";
 import PostComposerMeta from "@/components/post/PostComposerMeta.vue";
@@ -49,6 +50,7 @@ import SharedPostCard from "@/components/post/SharedPostCard.vue";
 import SharesDialog from "@/components/post/SharesDialog.vue";
 import WhyThisPost from "@/components/post/WhyThisPost.vue";
 import ConfirmActionDialog from "@/components/social/ConfirmActionDialog.vue";
+import NameHoverCard from "@/components/social/NameHoverCard.vue";
 import { AUDIENCE_ICON, audienceLabel } from "@/lib/audiences";
 import { downloadMedia } from "@/lib/downloadMedia";
 import { relativeTime } from "@/lib/format";
@@ -464,6 +466,21 @@ async function onUnreact() {
   }
 }
 
+// The theater's panel reacts and comments on its own: keep this card in step.
+function onPanelChanged(state: PanelState) {
+  myReaction.value = state.myReaction;
+  reactionCount.value = state.reactionCount;
+  reactionCounts.value = state.reactionCounts;
+  if (state.commentCount !== commentCount.value) {
+    commentCount.value = state.commentCount;
+    commentsMounted.value = false; // the full list reloads next time it opens
+  }
+}
+function shareFromTheater() {
+  viewer.close();
+  sharing.value = true;
+}
+
 const JUST_POSTED_MS = 15_000;
 onMounted(() => {
   if (props.startCommentsOpen) toggleComments();
@@ -610,9 +627,11 @@ const iconCls = "h-5 w-5 shrink-0 text-gray-600 dark:text-gray-300";
         <UserAvatar :name="authorDisplay" :media-id="avatarId" :size="44" />
       </RouterLink>
       <div class="min-w-0">
-        <RouterLink :to="authorTo" class="block truncate text-[15px] font-bold text-gray-900 hover:text-brand-600 dark:text-white dark:hover:text-brand-300" data-testid="post-author-name">
-          <bdi>{{ authorDisplay }}</bdi>
-        </RouterLink>
+        <NameHoverCard :kind="byPage ? 'page' : 'user'" :id="post.author_id" class="block min-w-0">
+          <RouterLink :to="authorTo" class="block truncate text-[15px] font-bold text-gray-900 hover:text-brand-600 dark:text-white dark:hover:text-brand-300" data-testid="post-author-name">
+            <bdi>{{ authorDisplay }}</bdi>
+          </RouterLink>
+        </NameHoverCard>
         <PostComposerMeta :post="current" />
         <div class="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
           <RouterLink :to="`/posts/${post.id}`" class="hover:underline" :title="fullTime">
@@ -863,7 +882,24 @@ const iconCls = "h-5 w-5 shrink-0 text-gray-600 dark:text-gray-300";
       :author-name="authorDisplay"
       @go="viewer.go"
       @close="viewer.close"
-    />
+    >
+      <!-- The post beside its photos (plan 08): same counts as this card. -->
+      <template #panel>
+        <PostTheaterPanel
+          :post="current"
+          :author-name="authorDisplay"
+          :author-avatar="avatarId"
+          :author-to="authorTo"
+          :body="localBody"
+          :policy="commentPolicy"
+          :known-names="knownNames"
+          :can-moderate="groupModerator"
+          :state="{ myReaction, reactionCount, reactionCounts, commentCount }"
+          @changed="onPanelChanged"
+          @share="shareFromTheater"
+        />
+      </template>
+    </MediaTheater>
 
     <div class="mt-3">
       <PostActions

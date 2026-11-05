@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CalendarClock, Eye, Pencil, Send, Trash2, UsersRound } from "lucide-vue-next";
+import { CalendarClock, Download, Eye, Pencil, Search, Send, Trash2, UsersRound } from "lucide-vue-next";
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
@@ -10,6 +10,7 @@ import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
 import StudioPostThumb from "@/components/studio/StudioPostThumb.vue";
 import { useStudioComposer } from "@/components/studio/studioComposer";
 import { zoneLabel } from "@/lib/planner";
+import { dayEdge, spanDays, toCsv } from "@/lib/studioRange";
 import { COMPOSER_ERRORS, type ComposerPost, composerService, timeZoneName } from "@/services/composer";
 import { postService } from "@/services/post";
 import { LIBRARY_TYPES, type LibraryType, studioService } from "@/services/studio";
@@ -43,8 +44,74 @@ const busy = ref<string | null>(null);
 const counts = ref<Record<Tab, number | null>>({ published: null, scheduled: null, drafts: null });
 const zone = zoneLabel(locale.value, timeZoneName());
 
+// ---- the published tab's filters: text, publication dates (local days) ----------------
+const q = ref("");
+const qApplied = ref("");
+const fromDay = ref("");
+const toDay = ref("");
+const filtersError = computed(() => (fromDay.value && toDay.value && !spanDays(fromDay.value, toDay.value) ? t("polish.studio.rangeInvalid") : ""));
+const filter = computed(() => ({
+  type: type.value,
+  q: qApplied.value,
+  from: fromDay.value ? dayEdge(fromDay.value) : null,
+  to: toDay.value ? dayEdge(toDay.value, true) : null,
+}));
+const filtered = computed(() => !!(qApplied.value || fromDay.value || toDay.value || type.value));
+let qTimer: number | null = null;
+watch(q, (v) => {
+  if (qTimer) window.clearTimeout(qTimer);
+  qTimer = window.setTimeout(() => (qApplied.value = v.trim()), 300);
+});
+function clearFilters() {
+  q.value = qApplied.value = fromDay.value = toDay.value = "";
+  type.value = "";
+}
+
+// ---- CSV export of the filtered published posts (every page, up to a cap) ------------------
+const EXPORT_MAX = 2000;
+const exporting = ref(false);
+async function exportCsv() {
+  if (exporting.value || filtersError.value) return;
+  exporting.value = true;
+  try {
+    const all: ComposerPost[] = [];
+    let next: string | null = null;
+    do {
+      const page = await studioService.published(filter.value, next, 100);
+      all.push(...page.data);
+      next = page.page.has_more ? page.page.next_cursor : null;
+    } while (next && all.length < EXPORT_MAX);
+    const rows = all.slice(0, EXPORT_MAX).map((p) => [
+      p.created_at ?? "",
+      t(`studio.library.types.${p.type}`),
+      (p.body || "").replace(/\s+/g, " ").trim(),
+      p.reaction_count,
+      p.comment_count,
+      p.share_count,
+      `${window.location.origin}/posts/${p.id}`,
+    ]);
+    const csv = toCsv(
+      ["published_at", "type", "text", "reactions", "comments", "shares", "url"].map((k) => t(`polish.studio.csv.${k}`)),
+      rows,
+    );
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `tara-content-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toasts.success(t("polish.studio.exported", { count: rows.length }, rows.length));
+  } catch (err) {
+    toasts.error(err);
+  } finally {
+    exporting.value = false;
+  }
+}
+
 async function fetchPage(next: string | null) {
-  if (tab.value === "published") return studioService.published(type.value, next);
+  if (tab.value === "published") return studioService.published(filter.value, next);
   return composerService.drafts(tab.value === "drafts" ? "draft" : "scheduled", next);
 }
 
@@ -85,7 +152,12 @@ function refresh() {
   void loadCounts();
 }
 
-watch(() => [tab.value, type.value], () => load());
+watch(
+  () => [tab.value, type.value, qApplied.value, fromDay.value, toDay.value],
+  () => {
+    if (!filtersError.value) void load();
+  },
+);
 watch(composer.version, refresh);
 
 // ---- the deep link: /studio/library?edit=<id> -----------------------------------------
@@ -176,14 +248,34 @@ const whenLabel = computed(() =>
           <h1 class="text-2xl font-extrabold tracking-tight text-gray-900 dark:text-white">{{ t("studio.library.title") }}</h1>
           <p v-if="tab === 'scheduled'" class="mt-0.5 text-xs text-gray-500 dark:text-gray-400" dir="auto">{{ t("studio.library.zone", { zone }) }}</p>
         </div>
-        <label v-if="tab === 'published'" class="flex items-center gap-2 text-sm">
-          <span class="font-semibold text-gray-600 dark:text-gray-300">{{ t("studio.library.type") }}</span>
-          <select v-model="type" class="input w-auto py-1.5" data-testid="library-type">
-            <option value="">{{ t("studio.library.allTypes") }}</option>
-            <option v-for="k in LIBRARY_TYPES" :key="k" :value="k">{{ t(`studio.library.types.${k}`) }}</option>
-          </select>
-        </label>
+        <div v-if="tab === 'published'" class="flex flex-wrap items-end gap-2">
+          <label class="relative block text-sm">
+            <span class="sr-only">{{ t("polish.studio.searchLabel") }}</span>
+            <Search class="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500 dark:text-gray-400" aria-hidden="true" />
+            <input v-model="q" type="search" class="input w-56 py-1.5 ps-9" dir="auto" maxlength="100" :placeholder="t('polish.studio.searchPlaceholder')" data-testid="library-search" />
+          </label>
+          <label class="flex items-center gap-2 text-sm">
+            <span class="font-semibold text-gray-600 dark:text-gray-300">{{ t("studio.library.type") }}</span>
+            <select v-model="type" class="input w-auto py-1.5" data-testid="library-type">
+              <option value="">{{ t("studio.library.allTypes") }}</option>
+              <option v-for="k in LIBRARY_TYPES" :key="k" :value="k">{{ t(`studio.library.types.${k}`) }}</option>
+            </select>
+          </label>
+          <label class="flex items-center gap-2 text-sm">
+            <span class="font-semibold text-gray-600 dark:text-gray-300">{{ t("polish.studio.from") }}</span>
+            <input v-model.lazy="fromDay" type="date" class="input w-auto py-1.5" dir="ltr" :max="toDay || undefined" data-testid="library-from" />
+          </label>
+          <label class="flex items-center gap-2 text-sm">
+            <span class="font-semibold text-gray-600 dark:text-gray-300">{{ t("polish.studio.to") }}</span>
+            <input v-model.lazy="toDay" type="date" class="input w-auto py-1.5" dir="ltr" :min="fromDay || undefined" data-testid="library-to" />
+          </label>
+          <button v-if="filtered" type="button" class="btn-ghost px-3 py-1.5 text-sm" data-testid="library-clear" @click="clearFilters">{{ t("polish.studio.clearFilters") }}</button>
+          <button type="button" class="btn-outline px-3 py-1.5 text-sm" :disabled="exporting || !!filtersError" data-testid="library-export" @click="exportCsv">
+            <Download class="h-4 w-4" aria-hidden="true" /> {{ exporting ? t("polish.studio.exporting") : t("polish.studio.exportCsv") }}
+          </button>
+        </div>
       </header>
+      <p v-if="tab === 'published' && filtersError" class="px-4 pt-2 text-sm text-red-700 dark:text-red-400 sm:px-5" role="alert">{{ filtersError }}</p>
 
       <!-- Tabs: one row, like the reference's content library. -->
       <div role="tablist" :aria-label="t('studio.library.tabsLabel')" class="mt-3 flex gap-1 overflow-x-auto border-b border-gray-200 px-2 dark:border-gray-800 sm:px-3">
@@ -211,7 +303,7 @@ const whenLabel = computed(() =>
       <div id="library-panel" role="tabpanel" :aria-labelledby="`library-tab-${tab}`" class="p-2 sm:p-3">
         <LoadingSkeleton v-if="loading" :rows="2" />
         <ErrorState v-else-if="failed" @retry="load()" />
-        <EmptyState v-else-if="!rows.length">{{ t(`studio.library.empty.${tab}`) }}</EmptyState>
+        <EmptyState v-else-if="!rows.length">{{ tab === "published" && filtered ? t("polish.studio.noMatches") : t(`studio.library.empty.${tab}`) }}</EmptyState>
         <template v-else>
           <!-- Column headings (wide screens). -->
           <div

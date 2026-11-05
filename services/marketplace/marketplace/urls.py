@@ -58,6 +58,11 @@ urlpatterns = [
     ),
     path("marketplace/sellers/<uuid:seller_id>/", views.SellerView.as_view(), name="seller"),
     path(
+        "marketplace/sellers/<uuid:seller_id>/shop/",
+        views.SellerShopView.as_view(),
+        name="seller-shop",
+    ),
+    path(
         "marketplace/sellers/<uuid:seller_id>/reviews/",
         views.SellerReviewsView.as_view(),
         name="seller-reviews",

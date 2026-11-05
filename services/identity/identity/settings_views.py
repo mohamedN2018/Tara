@@ -4,18 +4,23 @@ another person may see. Logic lives in two_factor.py and account_center.py."""
 
 from __future__ import annotations
 
-from drf_spectacular.utils import OpenApiResponse, extend_schema
+from datetime import date
+
+from django.utils import timezone
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from tara_common.exceptions import TaraAPIError
 from tara_common.responses import data_response
 
 from . import account_center, two_factor
 from .serializers import (
     DeactivateSerializer,
+    FriendBirthdaysSerializer,
     PersonalDetailsSerializer,
     ReauthSerializer,
     TwoFactorCodeSerializer,
@@ -227,3 +232,44 @@ class PersonalDetailsView(APIView):
     @extend_schema(responses={200: PersonalDetailsSerializer}, tags=["account"])
     def get(self, request: Request, account_id: str) -> Response:
         return data_response(account_center.personal_details(str(request.user.id), str(account_id)))
+
+
+class FriendBirthdaysView(APIView):
+    """Friends' birthdays today and in the next days (Friends > Birthdays and
+    the right column's card).
+
+    ``date`` is the caller's local date (YYYY-MM-DD), so "today" matches the
+    clock they see; it may differ from the server's UTC date by one day at most,
+    otherwise the UTC date is used. ``days`` (1-31, default 7) is the window."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("date", str, description="The caller's local date, YYYY-MM-DD."),
+            OpenApiParameter("days", int, description="Window in days, 1-31 (default 7)."),
+        ],
+        responses={200: FriendBirthdaysSerializer},
+        tags=["account"],
+    )
+    def get(self, request: Request) -> Response:
+        today = timezone.now().date()
+        raw = (request.query_params.get("date") or "").strip()
+        if raw:
+            try:
+                asked = date.fromisoformat(raw)
+            except ValueError as exc:
+                raise TaraAPIError(
+                    "date must be YYYY-MM-DD.", code="validation_error", http_status_code=400
+                ) from exc
+            if abs((asked - today).days) <= 1:
+                today = asked
+        try:
+            days = int(request.query_params.get("days") or 7)
+        except ValueError as exc:
+            raise TaraAPIError(
+                "days must be a number.", code="validation_error", http_status_code=400
+            ) from exc
+        days = max(1, min(days, account_center.MAX_BIRTHDAY_DAYS))
+        results = account_center.friend_birthdays(str(request.user.id), today=today, days=days)
+        return data_response({"date": today.isoformat(), "days": days, "results": results})

@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { Check, MessageCircle, Search, Undo2, UserCheck, UserPlus, Users, UsersRound, Send } from "lucide-vue-next";
+import { Cake, Home, MessageCircle, Search, Send, UserCheck, UserPlus, Users, UsersRound } from "lucide-vue-next";
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
+import FriendRequestCard from "@/components/friends/FriendRequestCard.vue";
+import FriendsBirthdays from "@/components/friends/FriendsBirthdays.vue";
+import SuggestionCard from "@/components/friends/SuggestionCard.vue";
 import AppShell from "@/components/layout/AppShell.vue";
 import PersonActionsMenu from "@/components/social/PersonActionsMenu.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
@@ -17,9 +20,11 @@ import { useDirectoryStore } from "@/stores/directory";
 import { usePresenceStore } from "@/stores/presence";
 import { useToastStore } from "@/stores/toasts";
 
-// Friends hub in the reference layout: a left section list (requests,
-// suggestions, all friends, sent requests) and a card grid. The section lives in
-// ?tab= so menus, notifications and the rail's "See all" can deep-link to it.
+// Friends hub in the reference layout: a left section list (home, requests,
+// suggestions, birthdays, all friends, sent requests) and a card grid. Home is
+// the default: pending requests (when there are any) above People you may know.
+// The section lives in ?tab= so menus, notifications and the rail's "See all"
+// can deep-link to it.
 const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
@@ -27,14 +32,18 @@ const presence = usePresenceStore();
 const directory = useDirectoryStore();
 const toasts = useToastStore();
 
-type Tab = "requests" | "suggestions" | "all" | "sent";
+type Tab = "home" | "requests" | "suggestions" | "birthdays" | "all" | "sent";
 const TABS: { id: Tab; icon: typeof Users; label: string }[] = [
+  { id: "home", icon: Home, label: "socialShell.friends.home" },
   { id: "requests", icon: UserPlus, label: "people.friendsHub.home" },
   { id: "suggestions", icon: UsersRound, label: "people.friendsHub.suggestions" },
+  { id: "birthdays", icon: Cake, label: "socialShell.friends.birthdays" },
   { id: "all", icon: Users, label: "people.friendsHub.all" },
   { id: "sent", icon: Send, label: "people.friendsHub.sent" },
 ];
-const fromQuery = (v: unknown): Tab => (TABS.some((x) => x.id === v) ? (v as Tab) : "requests");
+/** Requests shown on Home before "See all". */
+const HOME_REQUESTS = 8;
+const fromQuery = (v: unknown): Tab => (TABS.some((x) => x.id === v) ? (v as Tab) : "home");
 const tab = ref<Tab>(fromQuery(route.query.tab));
 watch(
   () => route.query.tab,
@@ -43,7 +52,7 @@ watch(
 function select(next: Tab) {
   if (next === tab.value) return;
   tab.value = next;
-  void router.replace({ query: { ...route.query, tab: next === "requests" ? undefined : next } });
+  void router.replace({ query: { ...route.query, tab: next === "home" ? undefined : next } });
 }
 
 const requests = ref<FriendRequest[]>([]);
@@ -161,6 +170,11 @@ function dropFriend(id: string) {
   friendIds.value = friendIds.value.filter((x) => x !== id);
 }
 
+function suggestionState(id: string): "idle" | "sent" | "dismissed" {
+  if (dismissed.value[id]) return "dismissed";
+  return id in sentTo.value ? "sent" : "idle";
+}
+
 const shownFriends = computed(() => {
   const q = query.value.trim().toLowerCase();
   return q ? friendIds.value.filter((id) => directory.label(id).toLowerCase().includes(q)) : friendIds.value;
@@ -176,14 +190,15 @@ function count(tb: Tab): number | null {
 watch(
   tab,
   (tb) => {
-    if (tb === "suggestions" && suggestions.value === null) void loadSuggestions();
+    if ((tb === "suggestions" || tb === "home") && suggestions.value === null) void loadSuggestions();
   },
   { immediate: true },
 );
 onMounted(load);
 
-const card = "card flex flex-col overflow-hidden";
-const cardTop = "flex aspect-[4/3] items-center justify-center bg-gradient-to-br from-brand-100 via-accent-50 to-brand-50 dark:from-brand-950/60 dark:via-gray-900 dark:to-brand-950/40";
+const grid = "grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4";
+const seeAllBtn =
+  "rounded-lg px-2 py-1 text-sm font-semibold text-brand-700 hover:bg-brand-50 dark:text-brand-300 dark:hover:bg-brand-900/40";
 </script>
 
 <template>
@@ -218,30 +233,74 @@ const cardTop = "flex aspect-[4/3] items-center justify-center bg-gradient-to-br
       </aside>
 
       <section class="min-w-0" :aria-labelledby="`fh-${tab}`">
-        <h2 :id="`fh-${tab}`" class="mb-3 text-xl font-bold">{{ t(TABS.find((x) => x.id === tab)!.label) }}</h2>
+        <h2 :id="`fh-${tab}`" class="mb-3 text-xl font-bold" :class="tab === 'home' ? 'sr-only' : ''">{{ t(TABS.find((x) => x.id === tab)!.label) }}</h2>
 
-        <LoadingSkeleton v-if="loading && tab !== 'suggestions'" :rows="3" />
+        <!-- Birthdays: identity's list, loaded by the component itself -->
+        <FriendsBirthdays v-if="tab === 'birthdays'" />
+
+        <LoadingSkeleton v-else-if="loading && tab !== 'suggestions'" :rows="3" />
+
+        <!-- Home: pending requests (if any), then People you may know -->
+        <template v-else-if="tab === 'home'">
+          <section v-if="requests.length" class="mb-6" aria-labelledby="fh-home-requests" data-testid="friends-home-requests">
+            <div class="mb-2 flex items-center justify-between gap-2">
+              <h3 id="fh-home-requests" class="text-xl font-bold">
+                {{ t("socialShell.friends.requestsTitle") }}
+                <span class="ms-1 text-base font-semibold text-red-600 dark:text-red-400">{{ requests.length }}</span>
+              </h3>
+              <button type="button" :class="seeAllBtn" data-testid="friends-home-requests-all" @click="select('requests')">
+                {{ t("socialShell.friends.seeAll") }}
+              </button>
+            </div>
+            <ul :class="grid">
+              <FriendRequestCard
+                v-for="r in requests.slice(0, HOME_REQUESTS)"
+                :key="r.id"
+                :account-id="r.from_user_id"
+                :busy="busy === r.id"
+                @confirm="confirmRequest(r)"
+                @delete="deleteRequest(r)"
+              />
+            </ul>
+          </section>
+          <section aria-labelledby="fh-home-pymk" data-testid="friends-home-pymk">
+            <div class="mb-2 flex items-center justify-between gap-2">
+              <h3 id="fh-home-pymk" class="text-xl font-bold">{{ t("socialShell.friends.pymkTitle") }}</h3>
+              <button v-if="suggestions?.length" type="button" :class="seeAllBtn" @click="select('suggestions')">
+                {{ t("socialShell.friends.seeAll") }}
+              </button>
+            </div>
+            <ErrorState v-if="suggestionsFailed" @retry="loadSuggestions" />
+            <LoadingSkeleton v-else-if="suggestions === null" :rows="3" />
+            <EmptyState v-else-if="suggestions.length === 0" class="card">{{ t("people.friendsHub.noSuggestions") }}</EmptyState>
+            <ul v-else :class="grid">
+              <SuggestionCard
+                v-for="p in suggestions"
+                :key="p.account_id"
+                :person="p"
+                :state="suggestionState(p.account_id)"
+                :busy="busy === p.account_id"
+                @add="addSuggested(p.account_id)"
+                @cancel="cancelSuggested(p.account_id)"
+                @remove="dismissSuggested(p.account_id)"
+                @undo="undoDismiss(p.account_id)"
+              />
+            </ul>
+          </section>
+        </template>
 
         <!-- Friend requests -->
         <template v-else-if="tab === 'requests'">
           <EmptyState v-if="requests.length === 0" class="card">{{ t("friends.noRequests") }}</EmptyState>
-          <ul v-else class="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-            <li v-for="r in requests" :key="r.id" :class="card" data-testid="friend-request-card">
-              <RouterLink :to="{ name: 'profile-by-id', params: { id: r.from_user_id } }" :class="cardTop" tabindex="-1" aria-hidden="true">
-                <UserAvatar :name="directory.label(r.from_user_id)" :media-id="directory.avatarOf(r.from_user_id)" :size="96" />
-              </RouterLink>
-              <div class="flex flex-1 flex-col gap-2 p-3">
-                <RouterLink :to="{ name: 'profile-by-id', params: { id: r.from_user_id } }" class="truncate font-semibold hover:underline" dir="auto">
-                  {{ directory.label(r.from_user_id) }}
-                </RouterLink>
-                <button type="button" class="btn-primary w-full justify-center py-1.5" :disabled="busy === r.id" @click="confirmRequest(r)">
-                  {{ t("people.friendsHub.confirm") }}
-                </button>
-                <button type="button" class="btn-soft w-full justify-center py-1.5" :disabled="busy === r.id" @click="deleteRequest(r)">
-                  {{ t("people.friendsHub.delete") }}
-                </button>
-              </div>
-            </li>
+          <ul v-else :class="grid">
+            <FriendRequestCard
+              v-for="r in requests"
+              :key="r.id"
+              :account-id="r.from_user_id"
+              :busy="busy === r.id"
+              @confirm="confirmRequest(r)"
+              @delete="deleteRequest(r)"
+            />
           </ul>
         </template>
 
@@ -250,54 +309,18 @@ const cardTop = "flex aspect-[4/3] items-center justify-center bg-gradient-to-br
           <ErrorState v-if="suggestionsFailed" @retry="loadSuggestions" />
           <LoadingSkeleton v-else-if="suggestions === null" :rows="3" />
           <EmptyState v-else-if="suggestions.length === 0" class="card">{{ t("people.friendsHub.noSuggestions") }}</EmptyState>
-          <ul v-else class="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
-            <li v-for="p in suggestions" :key="p.account_id" :class="card" data-testid="friend-suggestion-card" :data-account-id="p.account_id">
-              <RouterLink :to="{ name: 'profile-by-id', params: { id: p.account_id } }" :class="cardTop" tabindex="-1" aria-hidden="true">
-                <UserAvatar :name="directory.label(p.account_id)" :media-id="directory.avatarOf(p.account_id)" :size="96" />
-              </RouterLink>
-              <div class="flex flex-1 flex-col gap-2 p-3">
-                <RouterLink :to="{ name: 'profile-by-id', params: { id: p.account_id } }" class="truncate font-semibold hover:underline" dir="auto">
-                  {{ directory.label(p.account_id) }}
-                </RouterLink>
-                <p class="-mt-1 truncate text-xs text-gray-500 dark:text-gray-400">
-                  {{ p.reason === "follows_you" && !p.mutual_count ? t("people.friendsHub.followsYou") : t("people.hero.mutual", p.mutual_count) }}
-                </p>
-                <template v-if="dismissed[p.account_id]">
-                  <p class="text-sm text-gray-600 dark:text-gray-300" role="status">{{ t("people.friendsHub.removed") }}</p>
-                  <button type="button" class="btn-soft w-full justify-center py-1.5" :disabled="busy === p.account_id" @click="undoDismiss(p.account_id)">
-                    <Undo2 class="h-4 w-4" aria-hidden="true" /> {{ t("people.friendsHub.undo") }}
-                  </button>
-                </template>
-                <template v-else-if="p.account_id in sentTo">
-                  <span class="btn w-full cursor-default justify-center bg-brand-50 py-1.5 text-brand-700 dark:bg-brand-900/40 dark:text-brand-200" role="status">
-                    <Check class="h-4 w-4" aria-hidden="true" /> {{ t("people.friendsHub.requestSent") }}
-                  </span>
-                  <button type="button" class="btn-soft w-full justify-center py-1.5" :disabled="busy === p.account_id" @click="cancelSuggested(p.account_id)">
-                    {{ t("people.friendsHub.cancelRequest") }}
-                  </button>
-                </template>
-                <template v-else>
-                  <button
-                    type="button"
-                    class="btn-primary w-full justify-center py-1.5"
-                    :disabled="busy === p.account_id"
-                    data-testid="suggestion-add"
-                    @click="addSuggested(p.account_id)"
-                  >
-                    <UserPlus class="h-4 w-4" aria-hidden="true" /> {{ t("people.friendsHub.addFriend") }}
-                  </button>
-                  <button
-                    type="button"
-                    class="btn-soft w-full justify-center py-1.5"
-                    :disabled="busy === p.account_id"
-                    data-testid="suggestion-remove"
-                    @click="dismissSuggested(p.account_id)"
-                  >
-                    {{ t("people.friendsHub.remove") }}
-                  </button>
-                </template>
-              </div>
-            </li>
+          <ul v-else :class="grid">
+            <SuggestionCard
+              v-for="p in suggestions"
+              :key="p.account_id"
+              :person="p"
+              :state="suggestionState(p.account_id)"
+              :busy="busy === p.account_id"
+              @add="addSuggested(p.account_id)"
+              @cancel="cancelSuggested(p.account_id)"
+              @remove="dismissSuggested(p.account_id)"
+              @undo="undoDismiss(p.account_id)"
+            />
           </ul>
         </template>
 

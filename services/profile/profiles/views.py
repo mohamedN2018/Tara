@@ -62,6 +62,7 @@ def _build_public_profile(profile: UserProfile, ctx) -> dict:
         "display_name": profile.display_name,
         "avatar_media_id": str(profile.avatar_media_id) if profile.avatar_media_id else None,
         "cover_media_id": str(profile.cover_media_id) if profile.cover_media_id else None,
+        "cover_offset_y": profile.cover_offset_y,
         "visibility": profile.visibility,
         "is_self": ctx.is_self,
         "are_friends": ctx.are_friends,
@@ -350,6 +351,18 @@ class PageDetailView(APIView):
         page = services.get_visible_page(request.user.account_id, id=page_id)
         page = services.update_page(page, request.user.account_id, serializer.validated_data)
         return data_response(_page_data(page, request))
+
+
+class PageTransparencyView(APIView):
+    """Page transparency: the created date, category and name history, for
+    anyone who may see the page (a hidden, blocked or missing page is 404)."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: None}, tags=["pages"])
+    def get(self, request: Request, page_id: str) -> Response:
+        page = services.get_visible_page(request.user.account_id, id=page_id)
+        return data_response(services.page_transparency(page))
 
 
 class PageMembersView(APIView):

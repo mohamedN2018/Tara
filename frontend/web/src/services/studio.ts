@@ -56,6 +56,35 @@ export interface StudioComment {
   post_type: string;
 }
 
+/** One local day of what my published posts received from other people. */
+export interface StudioDay {
+  date: string;
+  /** Reel views (one per viewer per day); other posts have no view telemetry. */
+  views: number;
+  reactions: number;
+  comments: number;
+  shares: number;
+  saves: number;
+  /** Posts I published that day. */
+  posts: number;
+}
+export type DailyMetric = Exclude<keyof StudioDay, "date">;
+export interface StudioDaily {
+  from: string;
+  to: string;
+  tz: string;
+  days: StudioDay[];
+  totals: Record<DailyMetric, number>;
+}
+
+/** The content library's filters (published tab). `from`/`to` are ISO instants. */
+export interface LibraryFilter {
+  type?: LibraryType | "";
+  q?: string;
+  from?: string | null;
+  to?: string | null;
+}
+
 export const studioService = {
   async summary(): Promise<StudioSummary> {
     const { data } = await api.get<{ data: StudioSummary }>("/posts/studio/summary/");
@@ -74,11 +103,25 @@ export const studioService = {
     return data;
   },
 
-  async published(type?: LibraryType | "", cursor?: string | null): Promise<CursorPage<ComposerPost>> {
+  async published(filter: LibraryType | "" | LibraryFilter = "", cursor?: string | null, limit?: number): Promise<CursorPage<ComposerPost>> {
+    const f: LibraryFilter = typeof filter === "string" ? { type: filter } : filter;
     const { data } = await api.get<CursorPage<ComposerPost>>("/posts/studio/published/", {
-      params: { type: type || undefined, cursor: cursor || undefined },
+      params: {
+        type: f.type || undefined,
+        q: f.q?.trim() || undefined,
+        from: f.from || undefined,
+        to: f.to || undefined,
+        cursor: cursor || undefined,
+        limit: limit || undefined,
+      },
     });
     return data;
+  },
+
+  /** Per local day, `from`..`to` inclusive (YYYY-MM-DD, at most 366 days). */
+  async daily(from: string, to: string, tz: string): Promise<StudioDaily> {
+    const { data } = await api.get<{ data: StudioDaily }>("/posts/studio/daily/", { params: { from, to, tz } });
+    return data.data;
   },
 
   /** Scheduled and published posts in `[from, to)` (ISO instants, at most 43 days). */

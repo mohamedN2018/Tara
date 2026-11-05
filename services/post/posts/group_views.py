@@ -19,7 +19,7 @@ from rest_framework.views import APIView
 from tara_common.pagination import CursorPagination
 from tara_common.responses import data_response
 
-from . import services
+from . import group_activity, services
 from .serializers import GroupReportDismissSerializer, PostSerializer
 from .views import _me, _one, _serialize
 
@@ -43,6 +43,26 @@ class GroupFeedView(APIView):
         paginator = CursorPagination()
         page = paginator.paginate_queryset(queryset, request)
         return paginator.get_paginated_response(_serialize(_me(request), list(page)))
+
+
+@method_decorator(transaction.non_atomic_requests, name="dispatch")  # may ask profile
+class GroupActivityView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        parameters=[OpenApiParameter("ids", str, description="Comma-separated group ids (<= 20).")],
+        responses={200: None},
+        tags=["groups"],
+    )
+    def get(self, request: Request) -> Response:
+        """When each group last had a post, for the groups rail. Only groups
+        whose content the viewer may read are in the answer (others are left
+        out, never an error)."""
+        ids = group_activity.parse_ids(request.query_params.get("ids", ""))
+        times = group_activity.last_post_times(_me(request), ids)
+        return data_response(
+            [{"group_id": gid, "last_post_at": when} for gid, when in times.items()]
+        )
 
 
 @method_decorator(transaction.non_atomic_requests, name="dispatch")

@@ -249,16 +249,20 @@ def complete_upload(owner_id: str, media_id: str) -> MediaAsset:
 # ---- access ----------------------------------------------------------------------
 
 
-def _can_view(viewer_id: str, asset: MediaAsset) -> bool:
+def _can_view(viewer_id: str, asset: MediaAsset, post_check=None) -> bool:
+    """``post_check(post_id)`` answers for restricted photos; the default asks
+    post each time (a batch passes a per-request memo of the same answer)."""
     if is_transcoded(asset):
         return playback.can_watch(viewer_id, asset)
     if str(asset.owner_id) == str(viewer_id):
         return True
     if asset.restricted:
         # Attached to a non-public post: the post decides, and fails closed.
-        return asset.post_id is not None and post_client.can_view_post(
-            str(viewer_id), str(asset.post_id)
-        )
+        if asset.post_id is None:
+            return False
+        if post_check is not None:
+            return post_check(str(asset.post_id))
+        return post_client.can_view_post(str(viewer_id), str(asset.post_id))
     return asset.visibility == MediaAsset.Visibility.PUBLIC
 
 
@@ -268,6 +272,29 @@ def get_asset_for_viewer(viewer_id: str, media_id: str) -> MediaAsset:
         # Don't reveal private media existence.
         raise TaraAPIError("Media not found.", code="not_found", http_status_code=404)
     return asset
+
+
+def assets_for_viewer(viewer_id: str, media_ids: list[str]) -> list[MediaAsset]:
+    """The assets of ``media_ids`` the viewer may see, by the detail endpoint's
+    rules, in request order. Unknown, deleted and forbidden ids are left out,
+    so the answer reveals no more than one 404 per id would.
+
+    Post is asked once per restricted post in the batch, not once per photo."""
+    wanted = list(dict.fromkeys(str(m) for m in media_ids))
+    rows = {
+        str(a.id): a
+        for a in MediaAsset.objects.filter(id__in=wanted, deleted_at__isnull=True).prefetch_related(
+            "variants"
+        )
+    }
+    answers: dict[str, bool] = {}
+
+    def post_check(post_id: str) -> bool:
+        if post_id not in answers:
+            answers[post_id] = post_client.can_view_post(str(viewer_id), post_id)
+        return answers[post_id]
+
+    return [rows[m] for m in wanted if m in rows and _can_view(viewer_id, rows[m], post_check)]
 
 
 # Shown in place in the app. Everything else (PDFs, audio files) is served as a

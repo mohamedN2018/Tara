@@ -111,10 +111,9 @@ onMounted(load);
         <div class="min-w-0 flex-1">
           <RouterLink
             :to="{ name: 'profile-by-id', params: { id: p.account_id } }"
-            class="block truncate text-sm font-semibold hover:underline"
-            dir="auto"
+            class="block truncate text-start text-sm font-semibold hover:underline"
           >
-            {{ directory.label(p.account_id) }}
+            <bdi>{{ directory.label(p.account_id) }}</bdi>
           </RouterLink>
           <p class="truncate text-xs text-gray-600 dark:text-gray-400" data-testid="rail-person-mutual">
             {{ p.reason === "follows_you" && !p.mutual_count ? t("suggestions.followsYou") : t("suggestions.mutual", p.mutual_count) }}

@@ -36,6 +36,9 @@ class UserProfile(models.Model):
     country = models.CharField(max_length=80, blank=True, default="")
     avatar_media_id = models.UUIDField(null=True, blank=True)
     cover_media_id = models.UUIDField(null=True, blank=True)
+    # Where the cover sits vertically in its frame, 0 (top) to 100 (bottom), set
+    # by "drag to reposition" (plan 08); 50 is centred, as before it existed.
+    cover_offset_y = models.PositiveSmallIntegerField(default=50, db_default=50)
     visibility = models.CharField(
         max_length=16, choices=Visibility.choices, default=Visibility.PUBLIC
     )
@@ -156,6 +159,24 @@ class PageMember(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["page", "account_id"], name="page_member_uniq"),
         ]
+
+
+class PageNameChange(models.Model):
+    """A page rename (plan 08: Page transparency shows the name history).
+
+    Written in the same transaction as the rename. Who renamed it is kept for
+    the team's audit but never shown to visitors."""
+
+    id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
+    page = models.ForeignKey(Page, on_delete=models.CASCADE, related_name="name_changes")
+    old_name = models.CharField(max_length=120)
+    new_name = models.CharField(max_length=120)
+    changed_by = models.UUIDField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "page_name_change"
+        indexes = [models.Index(fields=["page", "created_at"], name="page_name_change_idx")]
 
 
 class BlockedPair(models.Model):

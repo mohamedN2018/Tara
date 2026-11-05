@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { Bookmark, BookmarkCheck, Camera, Flag, ImageUp, Link2, MoreHorizontal, PenSquare, Settings2, Trash2, UserMinus } from "lucide-vue-next";
+import { Bookmark, BookmarkCheck, Camera, Flag, ImageUp, Link2, MoreHorizontal, PenSquare, Settings2, ShieldCheck, Trash2, UserMinus } from "lucide-vue-next";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import PageMessageButton from "@/components/chat/PageMessageButton.vue";
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import { IMAGE_ACCEPT } from "@/lib/heic";
+import { pageCategoryLabel } from "@/lib/pageCategory";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import { useMediaUrl } from "@/lib/useMediaUrl";
 import { canEditPage, canPostAs, type Page } from "@/services/pages";
@@ -30,9 +31,11 @@ const emit = defineEmits<{
   save: [];
   report: [];
   unfollow: [];
+  transparency: [];
 }>();
 
-const { t } = useI18n();
+const i18n = useI18n();
+const { t } = i18n;
 const cover = useMediaUrl(() => props.page.cover_media_id);
 const isTeam = computed(() => !!props.page.my_role);
 const editor = computed(() => canEditPage(props.page));
@@ -53,9 +56,10 @@ function pick(kind: "avatar" | "cover", e: Event) {
   photoMenu.value = "";
   if (file) emit("photo", kind, file);
 }
-function act(name: "copy" | "save" | "report" | "unfollow") {
+function act(name: "copy" | "save" | "report" | "unfollow" | "transparency") {
   menuOpen.value = false;
-  if (name === "copy") emit("copy");
+  if (name === "transparency") emit("transparency");
+  else if (name === "copy") emit("copy");
   else if (name === "save") emit("save");
   else if (name === "report") emit("report");
   else emit("unfollow");
@@ -124,7 +128,7 @@ const menuItem = "nav-item w-full";
               {{ t("pageHub.card.followers", { count: page.followers_count }, page.followers_count) }}
             </span>
             <template v-if="page.followers_count !== null && page.category"> · </template>
-            <span v-if="page.category" dir="auto">{{ page.category }}</span>
+            <bdi v-if="page.category" data-testid="page-category">{{ pageCategoryLabel(page.category, i18n) }}</bdi>
           </p>
           <p class="text-xs text-gray-500 dark:text-gray-400"><span dir="ltr">@{{ page.handle }}</span></p>
           <p v-if="page.status !== 'published'" class="mt-1 text-xs font-semibold text-amber-600 dark:text-amber-400">{{ t(`pages.status.${page.status}`) }}</p>
@@ -189,6 +193,9 @@ const menuItem = "nav-item w-full";
               <button v-if="saved !== null" type="button" role="menuitem" :class="menuItem" data-testid="page-save" @click="act('save')">
                 <component :is="saved ? BookmarkCheck : Bookmark" class="h-4 w-4" aria-hidden="true" />
                 {{ saved ? t("pageHub.header.unsave") : t("pageHub.header.save") }}
+              </button>
+              <button type="button" role="menuitem" :class="menuItem" data-testid="page-transparency-open" @click="act('transparency')">
+                <ShieldCheck class="h-4 w-4" aria-hidden="true" /> {{ t("profileTools.page.transparency") }}
               </button>
               <button v-if="!isTeam && page.viewer_following" type="button" role="menuitem" :class="menuItem" @click="act('unfollow')">
                 <UserMinus class="h-4 w-4" aria-hidden="true" /> {{ t("pageHub.header.unfollow") }}

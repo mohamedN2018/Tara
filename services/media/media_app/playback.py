@@ -127,9 +127,44 @@ def _poster_url(asset: MediaAsset, variants: list[MediaVariant]) -> str | None:
 
 def playback(viewer_id: str, media_id: str) -> dict:
     asset = watchable_asset(viewer_id, media_id)
+    data = _payload(viewer_id, asset)
+    if data is None:
+        raise _not_found()  # only the owner sees a video before it is ready
+    return data
+
+
+def playback_many(viewer_id: str, media_ids: list[str]) -> list[dict]:
+    """``playback`` for several videos at once, in request order. Ids the
+    viewer would get a 404 for (unknown, not a transcoded video, not allowed,
+    not ready to a non-owner) are left out. Post is asked once per post, and
+    its answers are cached as for single requests."""
+    wanted = list(dict.fromkeys(str(m) for m in media_ids))
+    rows = {
+        str(a.id): a
+        for a in MediaAsset.objects.filter(
+            id__in=wanted, kind=MediaAsset.Kind.VIDEO, deleted_at__isnull=True
+        )
+        .exclude(purpose="")
+        .prefetch_related("variants")
+    }
+    out = []
+    for m in wanted:
+        asset = rows.get(m)
+        if asset is None or not can_watch(viewer_id, asset):
+            continue
+        data = _payload(viewer_id, asset)
+        if data is not None:
+            out.append(data)
+    return out
+
+
+def _payload(viewer_id: str, asset: MediaAsset) -> dict | None:
+    """What the player gets for a video the viewer may watch; None when it is
+    not ready and the viewer is not its owner."""
+    media_id = str(asset.id)
     ready = asset.status == MediaAsset.Status.READY
     if not ready and str(asset.owner_id) != str(viewer_id):
-        raise _not_found()  # only the owner sees a video before it is ready
+        return None
     data = {
         "id": str(asset.id),
         "status": asset.status,

@@ -11,6 +11,8 @@ import ProfileDetails from "@/components/profile/ProfileDetails.vue";
 import ProfileFriendsTab from "@/components/profile/ProfileFriendsTab.vue";
 import ProfileHero from "@/components/profile/ProfileHero.vue";
 import ProfilePhotosTab from "@/components/profile/ProfilePhotosTab.vue";
+import ProfilePostsGrid from "@/components/profile/ProfilePostsGrid.vue";
+import ProfilePostsHeader, { type PostsView } from "@/components/profile/ProfilePostsHeader.vue";
 import ReelGrid from "@/components/reels/ReelGrid.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
@@ -43,6 +45,25 @@ function onRemoved(id: string) {
 }
 function onCreated(post: Post) {
   if (post.author_id === p.userId) p.posts = [post, ...p.posts];
+}
+
+// List or Grid (plan 08): a per-viewer convenience, remembered in this browser only.
+const VIEW_KEY = "tara.profile.postsView";
+function storedView(): PostsView {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "grid" ? "grid" : "list";
+  } catch {
+    return "list";
+  }
+}
+const postsView = ref<PostsView>(storedView());
+function setPostsView(view: PostsView) {
+  postsView.value = view;
+  try {
+    localStorage.setItem(VIEW_KEY, view);
+  } catch {
+    // Storage blocked: the choice lasts for this visit.
+  }
 }
 
 const showEdit = ref(false);
@@ -78,19 +99,20 @@ function onProfileSaved(fresh: Profile) {
 
             <div class="mt-4 space-y-4 lg:mt-0">
               <CreatePostCard v-if="p.isSelf" :listen-shortcuts="false" @created="onCreated" />
-              <div class="card flex items-center justify-between px-4 py-3">
-                <h2 class="text-xl font-bold">{{ t("people.posts.title") }}</h2>
-              </div>
+              <ProfilePostsHeader :state="p" :view="postsView" @update:view="setPostsView" />
               <LoadingSkeleton v-if="p.loadingPosts && !p.posts.length" :rows="2" />
               <ErrorState v-else-if="p.postsError" @retry="p.loadPosts" />
-              <EmptyState v-else-if="p.posts.length === 0" class="card">{{ t("feed.empty") }}</EmptyState>
+              <EmptyState v-else-if="p.posts.length === 0" class="card">
+                {{ p.activeFilterCount ? t("profileTools.posts.emptyFiltered") : t("feed.empty") }}
+              </EmptyState>
+              <ProfilePostsGrid v-else-if="postsView === 'grid'" :posts="p.posts" />
               <PostCard
-                v-for="post in p.posts"
+                v-for="post in postsView === 'list' ? p.posts : []"
                 :key="post.id"
                 :post="post"
-                :author-name="p.displayName"
-                :author-handle="p.profile?.handle"
-                :author-avatar="p.profile?.avatar_media_id"
+                :author-name="post.author_id === p.userId ? p.displayName : undefined"
+                :author-handle="post.author_id === p.userId ? p.profile?.handle : undefined"
+                :author-avatar="post.author_id === p.userId ? p.profile?.avatar_media_id : undefined"
                 @removed="onRemoved"
               />
               <div v-if="p.hasMore" class="flex justify-center pt-1">
@@ -102,9 +124,9 @@ function onProfileSaved(fresh: Profile) {
           </div>
 
           <ProfileAboutTab v-if="p.tab === 'about'" class="mt-4" :state="p" />
-          <ProfilePhotosTab v-show="p.tab === 'photos'" class="mt-4" :state="p" @open-photo="lightbox = $event" />
+          <ProfilePhotosTab v-show="p.tab === 'photos'" class="mt-4" :state="p" />
           <ProfileFriendsTab v-show="p.tab === 'friends'" class="mt-4" :state="p" />
-          <ReelGrid v-if="p.tab === 'reels' && p.userId" class="mt-4" :author-id="p.userId" :can-create="p.isSelf" />
+          <ReelGrid v-if="p.tab === 'reels' && p.userId" class="mt-4" :author-id="p.userId" :can-create="p.isSelf" :show-saved="p.isSelf" />
           <SellerShop
             v-if="p.tab === 'marketplace' && p.hasShop && p.userId"
             class="mt-4"

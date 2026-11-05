@@ -11,7 +11,7 @@ import { chatService } from "@/services/chat";
 import { type FriendState, graphService } from "@/services/graph";
 import { marketplaceService } from "@/services/marketplace";
 import { mediaService } from "@/services/media";
-import { postService } from "@/services/post";
+import { postService, type TimelineFilters } from "@/services/post";
 import { profileService } from "@/services/profile";
 import { relationshipsService } from "@/services/relationships";
 import { useAuthStore } from "@/stores/auth";
@@ -52,6 +52,11 @@ export function useProfile() {
 
   const cursor = ref<string | null>(null);
   const hasMore = ref(false);
+  // The Posts header's filters (plan 08): year and who posted; empty = the timeline as it is.
+  const postFilters = ref<TimelineFilters>({});
+  const activeFilterCount = computed(
+    () => (postFilters.value.year ? 1 : 0) + (postFilters.value.postedBy === "others" ? 1 : 0),
+  );
   const loadingMore = ref(false);
   // Guards against a slow response landing after navigating to another profile.
   let loadGeneration = 0;
@@ -74,7 +79,8 @@ export function useProfile() {
   const mutual = ref<string[]>([]);
   const relFriendIds = ref<string[]>([]);
   // The Marketplace tab shows only when marketplace's seller page would open for
-  // this viewer (its rule: 404 when blocked either way, unknown, or nothing public).
+  // this viewer (its rule: hidden when blocked either way, unknown, or nothing
+  // public). Asked through `sellers/<id>/shop/`, which answers 200 {has_shop}.
   const hasShop = ref(false);
   const shopChecked = ref(false);
 
@@ -109,7 +115,10 @@ export function useProfile() {
     );
   });
 
-  const photoIds = computed(() => posts.value.flatMap((p) => p.media_ids ?? []));
+  // Photos only: a video or reel's media is not a photo.
+  const photoIds = computed(() =>
+    posts.value.filter((p) => p.type !== "video" && p.type !== "reel").flatMap((p) => p.media_ids ?? []),
+  );
   const photoUrls = useMediaUrls(() => photoIds.value);
   function joinedText(iso?: string): string {
     if (!iso) return "";
@@ -128,6 +137,7 @@ export function useProfile() {
     cursor.value = null;
     hasMore.value = false;
     postsError.value = false;
+    postFilters.value = {};
     tab.value = tabFromQuery(route.query.tab);
     friendsList.value = listFromQuery(route.query.list);
     following.value = false;
@@ -211,32 +221,36 @@ export function useProfile() {
       return status === undefined || status >= 500;
     };
     const author = userId.value;
+    // Filters changed while this page loaded: its answer belongs to the old ones.
+    const filters = postFilters.value;
+    const current = () => generation === loadGeneration && filters === postFilters.value;
     const fetchPage = () =>
-      postService.timelinePage(author).catch(async (e) => {
-        if (!transient(e) || generation !== loadGeneration) throw e;
+      postService.timelinePage(author, undefined, filters).catch(async (e) => {
+        if (!transient(e) || !current()) throw e;
         await new Promise((r) => setTimeout(r, 600));
-        return postService.timelinePage(author);
+        return postService.timelinePage(author, undefined, filters);
       });
     try {
       const page = await fetchPage();
-      if (generation !== loadGeneration) return;
+      if (!current()) return;
       posts.value = page.data;
       cursor.value = page.page.next_cursor;
       hasMore.value = page.page.has_more;
     } catch {
-      if (generation === loadGeneration) postsError.value = true;
+      if (current()) postsError.value = true;
     } finally {
-      if (generation === loadGeneration) loadingPosts.value = false;
+      if (current()) loadingPosts.value = false;
     }
   }
 
   async function loadMore() {
     if (!userId.value || !cursor.value || loadingMore.value) return;
     const generation = loadGeneration;
+    const filters = postFilters.value;
     loadingMore.value = true;
     try {
-      const page = await postService.timelinePage(userId.value, cursor.value);
-      if (generation !== loadGeneration) return;
+      const page = await postService.timelinePage(userId.value, cursor.value, filters);
+      if (generation !== loadGeneration || filters !== postFilters.value) return;
       posts.value.push(...page.data);
       cursor.value = page.page.next_cursor;
       hasMore.value = page.page.has_more;
@@ -384,21 +398,48 @@ export function useProfile() {
 
   // ---- own avatar / cover: upload, change, remove (PATCH /profile/me/) ----
   const savingPhoto = ref<"" | "avatar" | "cover">("");
-  async function setPhoto(kind: "avatar" | "cover", file: File | null) {
-    if (!isSelf.value || savingPhoto.value) return;
+  /**
+   * Set or clear the avatar or cover: a new upload (`File`), one of the
+   * account's photos already uploaded (`{ mediaId }`, "Choose from your
+   * photos"), or `null` to remove it. A new cover starts centred. Resolves true
+   * when saved.
+   */
+  async function setPhoto(kind: "avatar" | "cover", file: File | { mediaId: string } | null): Promise<boolean> {
+    if (!isSelf.value || savingPhoto.value) return false;
     savingPhoto.value = kind;
     try {
-      const id = file ? (await mediaService.upload(file, "image")).id : null;
-      const field = kind === "avatar" ? "avatar_media_id" : "cover_media_id";
-      const fresh = await profileService.update({ [field]: id });
+      const id = file instanceof File ? (await mediaService.upload(file, "image")).id : (file?.mediaId ?? null);
+      const fresh = await profileService.update(
+        kind === "avatar" ? { avatar_media_id: id } : { cover_media_id: id, cover_offset_y: 50 },
+      );
       profile.value = { ...(profile.value ?? fresh), ...fresh };
       if (userId.value) directory.remember(userId.value, fresh.display_name, fresh.avatar_media_id, fresh.handle);
       void auth.loadProfile();
       toasts.success(t(file ? "people.hero.photoUpdated" : "people.hero.photoRemoved"));
+      return true;
     } catch (e) {
       const media = mediaErrorKey(e);
       if (media) toasts.push({ text: t(media), icon: "error" });
       else toasts.error(e);
+      return false;
+    } finally {
+      savingPhoto.value = "";
+    }
+  }
+
+  /** Save where the cover sits (drag to reposition), 0 = top … 100 = bottom. */
+  async function setCoverOffset(offset: number): Promise<boolean> {
+    if (!isSelf.value || savingPhoto.value) return false;
+    savingPhoto.value = "cover";
+    try {
+      const fresh = await profileService.update({ cover_offset_y: Math.round(Math.min(100, Math.max(0, offset))) });
+      profile.value = { ...(profile.value ?? fresh), ...fresh };
+      void auth.loadProfile();
+      toasts.success(t("profileTools.cover.saved"));
+      return true;
+    } catch (e) {
+      toasts.error(e);
+      return false;
     } finally {
       savingPhoto.value = "";
     }
@@ -453,10 +494,11 @@ export function useProfile() {
     shopChecked.value = false;
     if (!id) return;
     try {
-      await marketplaceService.seller(id);
-      if (userId.value === id) hasShop.value = true;
-    } catch {
-      // 404 (no public listings, blocked) or marketplace down: no tab.
+      const has = await marketplaceService.sellerHasShop(id);
+      if (userId.value === id) hasShop.value = has;
+    } catch (err) {
+      // Marketplace down: no tab, said once in the console rather than silently.
+      console.warn("[profile] shop check failed; the Marketplace tab stays hidden", err);
     } finally {
       if (userId.value === id) shopChecked.value = true;
     }
@@ -479,6 +521,14 @@ export function useProfile() {
   function setFriendsList(list: FriendsList) {
     friendsList.value = list;
   }
+  /** New Posts filters: the timeline reloads from the top with them. */
+  function setPostFilters(next: TimelineFilters) {
+    postFilters.value = { year: next.year || null, postedBy: next.postedBy === "others" ? "others" : "author" };
+    posts.value = [];
+    cursor.value = null;
+    hasMore.value = false;
+    void loadPosts();
+  }
   /** Merge a saved change from the About editors into the loaded profile. */
   function patchProfile(changes: Partial<Profile>) {
     if (profile.value) profile.value = { ...profile.value, ...changes };
@@ -487,6 +537,9 @@ export function useProfile() {
   return {
     openTab,
     setFriendsList,
+    postFilters,
+    activeFilterCount,
+    setPostFilters,
     patchProfile,
     profile,
     posts,
@@ -513,6 +566,7 @@ export function useProfile() {
     avatar,
     savingPhoto,
     setPhoto,
+    setCoverOffset,
     onFriendChange,
     onFollowChange,
     loadFollowLists,

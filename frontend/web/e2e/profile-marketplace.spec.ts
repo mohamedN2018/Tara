@@ -74,9 +74,13 @@ for (const lang of ["ar", "en"] as const) {
     await expect(page.getByTestId("profile-marketplace")).toBeVisible();
 
     // Visibility follows the server: where marketplace's seller page is a 404
-    // for this viewer, there is no tab and a deep link lands on Posts.
+    // for this viewer, there is no tab and a deep link lands on Posts. The
+    // profile asks `shop/`, which answers 200 {has_shop} in every case.
     const viewerApi = await apiAs(b);
     const status = (await viewerApi.get(`${API}/marketplace/sellers/${c.id}/`)).status();
+    const shopCheck = await viewerApi.get(`${API}/marketplace/sellers/${c.id}/shop/`);
+    expect(shopCheck.status()).toBe(200);
+    expect((await shopCheck.json()).data.has_shop).toBe(status === 200);
     await viewerApi.dispose();
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/u/id/${c.id}?tab=marketplace`);

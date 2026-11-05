@@ -85,8 +85,15 @@ CACHES = {
 if _TRANSCODER and not os.getenv("REDIS_URL"):
     CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
 
+_throttling = api_throttling()
 REST_FRAMEWORK = {
-    **api_throttling(),
+    **_throttling,
+    # The batch lookups (views.ResolveView, PlaybackResolveView) use their own
+    # scope: each call stands for up to 100 media.
+    "DEFAULT_THROTTLE_RATES": {
+        **_throttling["DEFAULT_THROTTLE_RATES"],
+        "media_resolve": "240/min",
+    },
     "DEFAULT_AUTHENTICATION_CLASSES": ["tara_common.auth.JWTAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "DEFAULT_PAGINATION_CLASS": "tara_common.pagination.CursorPagination",

@@ -41,6 +41,11 @@ urlpatterns = [
     path("pages/", views.PageCreateView.as_view(), name="page-create"),
     path("pages/<str:handle>/", views.PageByHandleView.as_view(), name="page-by-handle"),
     path("pages/id/<uuid:page_id>/", views.PageDetailView.as_view(), name="page-detail"),
+    path(
+        "pages/id/<uuid:page_id>/transparency/",
+        views.PageTransparencyView.as_view(),
+        name="page-transparency",
+    ),
     path("pages/id/<uuid:page_id>/members/", views.PageMembersView.as_view(), name="page-members"),
     path(
         "pages/id/<uuid:page_id>/members/<uuid:member_id>/",

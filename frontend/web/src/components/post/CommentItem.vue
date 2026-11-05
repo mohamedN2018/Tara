@@ -6,6 +6,7 @@ import { useI18n } from "vue-i18n";
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import ReactionPicker from "@/components/post/ReactionPicker.vue";
 import RichText from "@/components/post/RichText.vue";
+import NameHoverCard from "@/components/social/NameHoverCard.vue";
 import { relativeTime } from "@/lib/format";
 import { reactionByKey } from "@/lib/reactions";
 import { useEscapeKey } from "@/lib/useEscapeKey";
@@ -105,7 +106,9 @@ function toggleLike() {
       </div>
       <div v-else class="flex items-start gap-1">
         <div class="relative inline-block min-w-0 rounded-2xl bg-gray-100 px-3 py-1.5 dark:bg-gray-800">
-          <RouterLink :to="{ name: 'profile-by-id', params: { id: comment.author_id } }" class="block text-xs font-semibold hover:underline" dir="auto">{{ name }}</RouterLink>
+          <NameHoverCard :id="comment.author_id" class="block">
+            <RouterLink :to="{ name: 'profile-by-id', params: { id: comment.author_id } }" class="block text-start text-xs font-semibold hover:underline"><bdi>{{ name }}</bdi></RouterLink>
+          </NameHoverCard>
           <span class="whitespace-pre-wrap break-words text-sm" dir="auto">
             <span v-if="replyToName" class="font-medium text-brand-600 dark:text-brand-300">@{{ replyToName }} </span><RichText :body="comment.body" />
           </span>

@@ -190,6 +190,11 @@ test("a photo story goes through media and only its audience can open it", async
   test.setTimeout(180_000);
   const { a, b, c } = await sharedAccounts();
   await befriend(a, b);
+  // A run that failed before its cleanup leaves its story behind; the viewer
+  // would then stop on that one, so start from none.
+  const apiA = await apiAs(a);
+  const own = (await (await apiA.get(`${API}/stories/?author_id=${a.id}`)).json()).data as { id: string; text: string }[];
+  for (const s of own.filter((x) => x.text === "T9 photo")) await apiA.delete(`${API}/stories/${s.id}/`);
   const page = await pageAs(browser, a);
   await useLocale(page, "en");
   await page.setViewportSize(DESKTOP);
@@ -229,9 +234,12 @@ test("a photo story goes through media and only its audience can open it", async
   for (let i = 0; i < 60 && (await viewer.locator("[data-story]").getAttribute("data-story")) !== photo!.id; i++) {
     await pageB.keyboard.press("ArrowRight");
   }
-  await expect(viewer.locator(`[data-story="${photo!.id}"] img`)).toBeVisible();
+  // The story's own photo is the slide's direct child; the author's avatar in
+  // the header is an <img> too once that account has a profile photo.
+  const storyPhoto = viewer.locator(`[data-story="${photo!.id}"] > img`);
+  await expect(storyPhoto).toBeVisible();
   await expect
-    .poll(async () => viewer.locator(`[data-story="${photo!.id}"] img`).evaluate((img: HTMLImageElement) => img.naturalWidth))
+    .poll(async () => storyPhoto.evaluate((img: HTMLImageElement) => img.naturalWidth))
     .toBeGreaterThan(0);
 
   await (await apiAs(a)).delete(`${API}/stories/${photo!.id}/`);

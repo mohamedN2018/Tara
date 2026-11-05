@@ -25,12 +25,16 @@ urlpatterns = [
     path(
         "posts/studio/comments/", studio_views.StudioCommentsView.as_view(), name="studio-comments"
     ),
+    path("posts/studio/daily/", studio_views.StudioDailyView.as_view(), name="studio-daily"),
+    # The settings activity log: the signed-in account's own actions.
+    path("posts/activity/", studio_views.ActivityLogView.as_view(), name="activity-log"),
     path(
         "posts/studio/published/",
         studio_views.StudioPublishedView.as_view(),
         name="studio-published",
     ),
     # Groups (1.11): the group itself lives in profile under /api/v1/groups/.
+    path("posts/groups/activity/", group_views.GroupActivityView.as_view(), name="group-activity"),
     path("posts/groups/<uuid:group_id>/", group_views.GroupFeedView.as_view(), name="group-feed"),
     path(
         "posts/groups/<uuid:group_id>/reports/",

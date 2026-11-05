@@ -53,6 +53,7 @@ class MyProfileSerializer(serializers.ModelSerializer):
             "country",
             "avatar_media_id",
             "cover_media_id",
+            "cover_offset_y",
             "visibility",
             "searchable",
             "completion_pct",
@@ -79,6 +80,7 @@ MAX_PAGE_DESCRIPTION = 2000
 
 class ProfileUpdateSerializer(serializers.ModelSerializer):
     intro = serializers.CharField(max_length=MAX_INTRO, required=False, allow_blank=True)
+    cover_offset_y = serializers.IntegerField(min_value=0, max_value=100, required=False)
 
     class Meta:
         model = UserProfile
@@ -90,6 +92,7 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             "country",
             "avatar_media_id",
             "cover_media_id",
+            "cover_offset_y",
             "visibility",
             "searchable",
         ]

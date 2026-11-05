@@ -139,11 +139,11 @@ watch(() => props.role, (r) => setRole(r));
         <div class="min-w-0 flex-1">
           <p class="flex items-center gap-2 text-sm">
             <UserAvatar :name="directory.label(row.counterpart_id)" :media-id="directory.avatarOf(row.counterpart_id)" :size="20" />
-            <span class="truncate font-semibold" dir="auto">{{ directory.label(row.counterpart_id) }}</span>
+            <span class="truncate text-start font-semibold"><bdi>{{ directory.label(row.counterpart_id) }}</bdi></span>
             <span class="shrink-0 text-xs text-gray-500 dark:text-gray-400">· {{ relativeTime(row.last_activity_at) }}</span>
           </p>
-          <p v-if="row.listing" class="truncate text-sm" dir="auto">
-            <RouterLink :to="`/marketplace/${row.listing_id}`" class="hover:underline">{{ row.listing.title }}</RouterLink>
+          <p v-if="row.listing" class="truncate text-start text-sm">
+            <RouterLink :to="`/marketplace/${row.listing_id}`" class="hover:underline"><bdi>{{ row.listing.title }}</bdi></RouterLink>
           </p>
           <p v-else class="text-sm text-gray-500 dark:text-gray-400">{{ t("commerce.inbox.gone") }}</p>
           <div class="flex flex-wrap items-center gap-x-2 text-xs text-gray-500 dark:text-gray-400">

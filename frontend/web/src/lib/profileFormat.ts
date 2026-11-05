@@ -56,3 +56,9 @@ export function linkHost(url: string): string {
     return url;
   }
 }
+
+/** Two profile texts say the same thing (case, spacing and Unicode form aside). */
+export function sameText(a?: string | null, b?: string | null): boolean {
+  const norm = (s?: string | null) => (s ?? "").normalize("NFC").replace(/\s+/g, " ").trim().toLocaleLowerCase();
+  return !!norm(a) && norm(a) === norm(b);
+}

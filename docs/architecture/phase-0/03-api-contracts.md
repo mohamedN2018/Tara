@@ -171,6 +171,9 @@ POST   /api/v1/media/uploads/sign/      // → { upload_url, media_id, fields }
 POST   /api/v1/media/uploads/{id}/complete/
 GET    /api/v1/media/{id}/              // metadata + variant URLs
 GET    /api/v1/media/{id}/download-url/ // short-lived signed download URL
+POST   /api/v1/media/resolve/           // {ids: [..≤100]} → detail payloads the viewer may see; others absent (own throttle scope `media_resolve`)
+GET    /api/v1/media/{id}/playback/     // tokenised HLS playlist URL, poster, MP4 fallback
+POST   /api/v1/media/playback/resolve/  // {ids: [..≤100]} → playback for each watchable video; others absent
 ```
 
 ### Chat
@@ -194,6 +197,8 @@ PATCH  /api/v1/marketplace/listings/{id}/
 POST   /api/v1/marketplace/listings/{id}/save/
 POST   /api/v1/marketplace/listings/{id}/report/
 GET    /api/v1/marketplace/categories/
+GET    /api/v1/marketplace/sellers/{id}/        // seller summary; 404 when hidden or no public listings
+GET    /api/v1/marketplace/sellers/{id}/shop/   // always 200 {has_shop}: the profile's Shop tab
 ```
 
 ### Notifications & devices

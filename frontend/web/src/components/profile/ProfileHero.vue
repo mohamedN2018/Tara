@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { Briefcase, Camera, ChevronDown, Eye, ImageUp, Link2, MapPin, MessageCircle, Pencil, Trash2 } from "lucide-vue-next";
+import { Briefcase, Camera, ChevronDown, Eye, Images, ImageUp, Link2, MapPin, MessageCircle, Move, Pencil, Trash2 } from "lucide-vue-next";
 import { computed, ref, toRefs } from "vue";
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
+import AvatarCropDialog from "@/components/profile/AvatarCropDialog.vue";
+import PhotoPickerDialog from "@/components/profile/PhotoPickerDialog.vue";
 import FollowButton from "@/components/social/FollowButton.vue";
 import FriendButton from "@/components/social/FriendButton.vue";
 import PersonActionsMenu from "@/components/social/PersonActionsMenu.vue";
 import { IMAGE_ACCEPT } from "@/lib/heic";
+import { coverOffsetAfterDrag, coverPosition, normaliseCoverOffset } from "@/lib/photoFrame";
 import { linkHost } from "@/lib/profileFormat";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import type { FriendsList, ProfileState, ProfileTab } from "@/lib/useProfile";
@@ -84,7 +87,91 @@ function pick(kind: "avatar" | "cover", e: Event) {
   const file = input.files?.[0];
   input.value = "";
   photoMenu.value = "";
-  if (file) void props.state.setPhoto(kind, file);
+  if (!file) return;
+  // A new avatar is cropped first; a new cover is placed by dragging once it is up.
+  if (kind === "avatar") crop.value = { file, src: null, mediaId: null };
+  else void props.state.setPhoto("cover", file).then((ok) => ok && startReposition());
+}
+
+// ---- "Choose from your photos" (plan 08) ----
+const picker = ref<"" | "avatar" | "cover">("");
+function openPicker(kind: "avatar" | "cover") {
+  photoMenu.value = "";
+  picker.value = kind;
+}
+function picked(mediaId: string, url: string | null) {
+  const kind = picker.value;
+  picker.value = "";
+  if (kind === "avatar") crop.value = { file: null, src: url, mediaId };
+  else if (kind === "cover") void props.state.setPhoto("cover", { mediaId }).then((ok) => ok && startReposition());
+}
+
+// ---- avatar: crop and zoom before it is saved ----
+const crop = ref<{ file: File | null; src: string | null; mediaId: string | null } | null>(null);
+async function cropped(file: File) {
+  if (await props.state.setPhoto("avatar", file)) crop.value = null;
+}
+async function useAsIs() {
+  const c = crop.value;
+  if (!c) return;
+  let ok = false;
+  if (c.file) ok = await props.state.setPhoto("avatar", c.file);
+  else if (c.mediaId) ok = await props.state.setPhoto("avatar", { mediaId: c.mediaId });
+  if (ok) crop.value = null;
+}
+
+// ---- cover: drag to reposition, then Save or Cancel ----
+const coverFrame = ref<HTMLElement | null>(null);
+const coverNatural = ref({ width: 0, height: 0 });
+const repositioning = ref(false);
+const draftOffset = ref(50);
+const savedOffset = computed(() => normaliseCoverOffset(profile.value?.cover_offset_y));
+const coverStyle = computed(() => ({ objectPosition: coverPosition(repositioning.value ? draftOffset.value : savedOffset.value) }));
+function onCoverLoad(e: Event) {
+  const el = e.target as HTMLImageElement;
+  coverNatural.value = { width: el.naturalWidth, height: el.naturalHeight };
+}
+function startReposition() {
+  photoMenu.value = "";
+  if (!cover.value && !profile.value?.cover_media_id) return;
+  draftOffset.value = savedOffset.value;
+  repositioning.value = true;
+  requestAnimationFrame(() => coverFrame.value?.focus());
+}
+function cancelReposition() {
+  repositioning.value = false;
+}
+async function saveReposition() {
+  if (await props.state.setCoverOffset(draftOffset.value)) repositioning.value = false;
+}
+useEscapeKey(repositioning, cancelReposition);
+let coverDrag: { y: number; from: number } | null = null;
+function onCoverDown(e: PointerEvent) {
+  if (!repositioning.value) return;
+  coverDrag = { y: e.clientY, from: draftOffset.value };
+  (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+}
+function onCoverMove(e: PointerEvent) {
+  if (!coverDrag || !coverFrame.value) return;
+  const r = coverFrame.value.getBoundingClientRect();
+  draftOffset.value = coverOffsetAfterDrag(
+    coverDrag.from,
+    e.clientY - coverDrag.y,
+    { width: r.width, height: r.height },
+    coverNatural.value,
+  );
+}
+function onCoverUp() {
+  coverDrag = null;
+}
+function onCoverKey(e: KeyboardEvent) {
+  if (!repositioning.value) return;
+  const step = e.shiftKey ? 10 : 2;
+  if (e.key === "ArrowUp") draftOffset.value = Math.max(0, draftOffset.value - step);
+  else if (e.key === "ArrowDown") draftOffset.value = Math.min(100, draftOffset.value + step);
+  else if (e.key === "Enter") void saveReposition();
+  else return;
+  e.preventDefault();
 }
 function removePhoto(kind: "avatar" | "cover") {
   photoMenu.value = "";
@@ -108,7 +195,26 @@ const menuItem =
   <section class="card overflow-visible" data-testid="profile-hero">
     <!-- Cover -->
     <div class="relative">
-      <div class="relative h-44 overflow-hidden rounded-t-2xl bg-tara-gradient sm:h-64 lg:h-[22rem]">
+      <div
+        ref="coverFrame"
+        class="relative h-44 overflow-hidden rounded-t-2xl bg-tara-gradient sm:h-64 lg:h-[22rem]"
+        :class="repositioning ? 'cursor-grab touch-none select-none ring-4 ring-inset ring-brand-400 focus:outline-none active:cursor-grabbing' : ''"
+        :tabindex="repositioning ? 0 : undefined"
+        :role="repositioning ? 'slider' : undefined"
+        :aria-label="repositioning ? t('profileTools.cover.dragHint') : undefined"
+        :aria-valuenow="repositioning ? draftOffset : undefined"
+        :aria-valuemin="repositioning ? 0 : undefined"
+        :aria-valuemax="repositioning ? 100 : undefined"
+        :aria-orientation="repositioning ? 'vertical' : undefined"
+        :aria-describedby="repositioning ? 'cover-key-hint' : undefined"
+        data-testid="cover-frame"
+        :data-offset="repositioning ? draftOffset : savedOffset"
+        @pointerdown="onCoverDown"
+        @pointermove="onCoverMove"
+        @pointerup="onCoverUp"
+        @pointercancel="onCoverUp"
+        @keydown="onCoverKey"
+      >
         <div v-if="!cover" aria-hidden="true" class="absolute inset-0">
           <div class="absolute -top-24 end-10 h-72 w-72 rounded-full bg-white/20 blur-3xl" />
           <div class="absolute -bottom-24 start-0 h-72 w-96 rounded-full bg-ink/40 blur-3xl" />
@@ -120,12 +226,40 @@ const menuItem =
           :aria-label="t('people.hero.openCover', { name: displayName })"
           @click="emit('open-photo', cover)"
         >
-          <img :src="cover" class="h-full w-full object-cover" :alt="t('profile.coverAlt', { name: displayName })" />
+          <img :src="cover" class="h-full w-full object-cover" :style="coverStyle" :alt="t('profile.coverAlt', { name: displayName })" />
         </button>
-        <img v-else-if="cover" :src="cover" class="h-full w-full object-cover" :alt="t('profile.coverAlt', { name: displayName })" />
+        <img
+          v-else-if="cover"
+          :src="cover"
+          class="pointer-events-none h-full w-full object-cover"
+          :style="coverStyle"
+          :alt="t('profile.coverAlt', { name: displayName })"
+          draggable="false"
+          data-testid="cover-image"
+          @load="onCoverLoad"
+        />
+        <!-- Drag to reposition: the hint in the middle, Cancel / Save on top, as on the reference. -->
+        <template v-if="repositioning">
+          <span class="pointer-events-none absolute inset-0 m-auto flex h-10 w-fit items-center gap-2 rounded-full bg-gray-950/70 px-4 text-sm font-semibold text-white" aria-hidden="true">
+            <Move class="h-4 w-4" aria-hidden="true" /> {{ t("profileTools.cover.dragHint") }}
+          </span>
+          <span id="cover-key-hint" class="sr-only">{{ t("profileTools.cover.keyHint") }}</span>
+        </template>
+      </div>
+      <div
+        v-if="repositioning"
+        class="absolute inset-x-0 top-0 z-30 flex items-center justify-end gap-2 rounded-t-2xl bg-gray-950/60 p-3"
+        data-testid="cover-reposition-bar"
+      >
+        <button type="button" class="btn bg-white/20 px-4 py-2 text-white hover:bg-white/30" data-testid="cover-reposition-cancel" @click="cancelReposition">
+          {{ t("profileTools.cover.cancel") }}
+        </button>
+        <button type="button" class="btn-primary px-4 py-2" :disabled="savingPhoto === 'cover'" data-testid="cover-reposition-save" @click="saveReposition">
+          {{ savingPhoto === "cover" ? t("profileTools.cover.saving") : t("profileTools.cover.save") }}
+        </button>
       </div>
 
-      <div v-if="isSelf" class="absolute bottom-3 end-3 sm:end-6">
+      <div v-if="isSelf && !repositioning" class="absolute bottom-3 end-3 sm:end-6">
         <button
           type="button"
           class="btn bg-white/95 px-3 py-2 text-gray-900 shadow hover:bg-white dark:bg-gray-900/90 dark:text-white dark:hover:bg-gray-900"
@@ -143,10 +277,16 @@ const menuItem =
           <div class="fixed inset-0 z-40" @click="photoMenu = ''" />
           <div class="popover absolute end-0 top-full z-50 mt-2 w-56 p-1.5" role="menu">
             <button v-if="cover" role="menuitem" :class="menuItem" @click="view(cover)"><Eye class="h-4 w-4" /> {{ t("people.hero.viewPhoto") }}</button>
+            <button role="menuitem" :class="menuItem" data-testid="cover-choose" @click="openPicker('cover')">
+              <Images class="h-4 w-4" /> {{ t("profileTools.cover.choose") }}
+            </button>
             <label role="menuitem" :class="menuItem">
               <ImageUp class="h-4 w-4" /> {{ t("people.hero.uploadPhoto") }}
               <input type="file" :accept="IMAGE_ACCEPT" class="sr-only" data-testid="cover-input" @change="pick('cover', $event)" />
             </label>
+            <button v-if="cover" role="menuitem" :class="menuItem" data-testid="cover-reposition" @click="startReposition">
+              <Move class="h-4 w-4" /> {{ t("profileTools.cover.reposition") }}
+            </button>
             <button v-if="cover" role="menuitem" :class="menuItem" class="text-red-600 dark:text-red-400" @click="removePhoto('cover')">
               <Trash2 class="h-4 w-4" /> {{ t("people.hero.removePhoto") }}
             </button>
@@ -193,6 +333,9 @@ const menuItem =
               <div class="fixed inset-0 z-40" @click="photoMenu = ''" />
               <div class="popover absolute start-0 top-full z-50 mt-2 w-56 p-1.5" role="menu">
                 <button v-if="avatar" role="menuitem" :class="menuItem" @click="view(avatar)"><Eye class="h-4 w-4" /> {{ t("people.hero.viewPhoto") }}</button>
+                <button role="menuitem" :class="menuItem" data-testid="avatar-choose" @click="openPicker('avatar')">
+                  <Images class="h-4 w-4" /> {{ t("profileTools.avatar.choose") }}
+                </button>
                 <label role="menuitem" :class="menuItem">
                   <ImageUp class="h-4 w-4" /> {{ t("people.hero.uploadPhoto") }}
                   <input type="file" :accept="IMAGE_ACCEPT" class="sr-only" data-testid="avatar-input" @change="pick('avatar', $event)" />
@@ -386,5 +529,22 @@ const menuItem =
         />
       </div>
     </div>
+
+    <PhotoPickerDialog
+      v-if="picker && userId"
+      :account-id="userId"
+      :title="picker === 'cover' ? t('profileTools.cover.choose') : t('profileTools.avatar.choose')"
+      @close="picker = ''"
+      @pick="picked"
+    />
+    <AvatarCropDialog
+      v-if="crop"
+      :file="crop.file"
+      :src="crop.src"
+      :busy="savingPhoto === 'avatar'"
+      @close="crop = null"
+      @cropped="cropped"
+      @as-is="useAsIs"
+    />
   </section>
 </template>

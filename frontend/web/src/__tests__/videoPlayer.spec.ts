@@ -47,10 +47,11 @@ vi.mock("hls.js", () => {
 
 const MEDIA_ID = "01a1a55d-05d8-76fb-93a7-03b04162793a";
 
+// Players ask in one batch per tick (POST /media/playback/resolve/, services/video.ts).
 function playback(overrides: Record<string, unknown> = {}) {
   return {
     data: {
-      data: {
+      data: [{
         id: MEDIA_ID,
         status: "ready",
         failure_code: null,
@@ -62,7 +63,7 @@ function playback(overrides: Record<string, unknown> = {}) {
         poster_url: "http://minio:9000/tara-media/videos/o/i/poster.jpg?X-Amz-Signature=1",
         expires_in: 3600,
         ...overrides,
-      },
+      }],
     },
   };
 }
@@ -113,9 +114,9 @@ afterEach(() => {
 
 describe("VideoPlayer", () => {
   it("shows the poster and loads hls.js only on the first play", async () => {
-    const get = vi.spyOn(api, "get").mockResolvedValue(playback());
+    const get = vi.spyOn(api, "post").mockResolvedValue(playback());
     await mount();
-    expect(get).toHaveBeenCalledWith(`/media/${MEDIA_ID}/playback/`);
+    expect(get).toHaveBeenCalledWith("/media/playback/resolve/", { ids: [MEDIA_ID] });
     expect(q("[data-testid=video-player]")?.dataset.state).toBe("ready");
     // The poster goes through the storage proxy in dev/e2e builds.
     expect(q<HTMLVideoElement>("video")?.getAttribute("poster")).toBe("/__s3/tara-media/videos/o/i/poster.jpg?X-Amz-Signature=1");
@@ -131,7 +132,7 @@ describe("VideoPlayer", () => {
   });
 
   it("keeps the scrubber left to right in Arabic and seeks where it is dragged", async () => {
-    vi.spyOn(api, "get").mockResolvedValue(playback());
+    vi.spyOn(api, "post").mockResolvedValue(playback());
     await mount();
     q<HTMLButtonElement>("[data-testid=video-play]")!.click();
     await flush();
@@ -154,14 +155,14 @@ describe("VideoPlayer", () => {
 
   it("uses English labels in English", async () => {
     i18n.global.locale.value = "en";
-    vi.spyOn(api, "get").mockResolvedValue(playback());
+    vi.spyOn(api, "post").mockResolvedValue(playback());
     await mount();
     expect(q("[data-testid=video-play]")?.getAttribute("aria-label")).toBe("Play");
   });
 
   it("polls while the owner's video is processing, then becomes playable", async () => {
     const get = vi
-      .spyOn(api, "get")
+      .spyOn(api, "post")
       .mockResolvedValueOnce(playback({ status: "uploaded", hls_url: null, poster_url: null }))
       .mockResolvedValueOnce(playback({ status: "processing", hls_url: null, poster_url: null }))
       .mockResolvedValue(playback());
@@ -175,7 +176,7 @@ describe("VideoPlayer", () => {
   });
 
   it("explains why a video failed", async () => {
-    vi.spyOn(api, "get").mockResolvedValue(playback({ status: "failed", failure_code: "too_long", hls_url: null }));
+    vi.spyOn(api, "post").mockResolvedValue(playback({ status: "failed", failure_code: "too_long", hls_url: null }));
     await mount();
     expect(q("[data-testid=video-player]")?.dataset.state).toBe("failed");
     expect(q("[data-testid=video-failure]")?.textContent).toBe("الفيديو أطول من الحد المسموح.");
@@ -183,20 +184,21 @@ describe("VideoPlayer", () => {
 
   it("falls back to a generic reason for an unknown failure code", async () => {
     i18n.global.locale.value = "en";
-    vi.spyOn(api, "get").mockResolvedValue(playback({ status: "failed", failure_code: "weird", hls_url: null }));
+    vi.spyOn(api, "post").mockResolvedValue(playback({ status: "failed", failure_code: "weird", hls_url: null }));
     await mount();
     expect(q("[data-testid=video-failure]")?.textContent).toBe("Something went wrong while processing. Upload the video again.");
   });
 
   it("shows a hidden or removed video as unavailable", async () => {
-    vi.spyOn(api, "get").mockRejectedValue({ response: { status: 404 } });
+    // Media leaves out a video this viewer may not watch.
+    vi.spyOn(api, "post").mockResolvedValue({ data: { data: [] } });
     await mount();
     expect(q("[data-testid=video-player]")?.dataset.state).toBe("unavailable");
     expect(q("video")?.getAttribute("poster")).toBeNull();
   });
 
   it("sends only storage URLs through the dev storage proxy", async () => {
-    vi.spyOn(api, "get").mockResolvedValue(playback());
+    vi.spyOn(api, "post").mockResolvedValue(playback());
     await mount();
     q<HTMLButtonElement>("[data-testid=video-play]")!.click();
     await flush();
@@ -210,7 +212,7 @@ describe("VideoPlayer", () => {
   });
 
   it("fetches a fresh token once when the stream fails, and resumes", async () => {
-    const get = vi.spyOn(api, "get").mockResolvedValue(playback());
+    const get = vi.spyOn(api, "post").mockResolvedValue(playback());
     await mount();
     q<HTMLButtonElement>("[data-testid=video-play]")!.click();
     await flush();
@@ -230,7 +232,7 @@ describe("VideoPlayer", () => {
   it("refreshes again on every later expiry once playback resumed, but not in a tight loop", async () => {
     let now = 1_000_000;
     vi.spyOn(Date, "now").mockImplementation(() => now);
-    const get = vi.spyOn(api, "get").mockResolvedValue(playback());
+    const get = vi.spyOn(api, "post").mockResolvedValue(playback());
     await mount();
     q<HTMLButtonElement>("[data-testid=video-play]")!.click();
     await flush();
@@ -256,7 +258,7 @@ describe("VideoPlayer", () => {
   });
 
   it("builds no hls.js instance when unmounted while hls.js is still downloading", async () => {
-    vi.spyOn(api, "get").mockResolvedValue(playback());
+    vi.spyOn(api, "post").mockResolvedValue(playback());
     await mount();
     q<HTMLButtonElement>("[data-testid=video-play]")!.click();
     app!.unmount();
@@ -266,7 +268,7 @@ describe("VideoPlayer", () => {
   });
 
   it("does not attach a refreshed stream after unmount", async () => {
-    vi.spyOn(api, "get").mockResolvedValue(playback());
+    vi.spyOn(api, "post").mockResolvedValue(playback());
     await mount();
     q<HTMLButtonElement>("[data-testid=video-play]")!.click();
     await flush();
@@ -280,7 +282,7 @@ describe("VideoPlayer", () => {
 
   it("plays the MP4 fallback where neither hls.js nor native HLS works", async () => {
     hlsState.supported = false;
-    vi.spyOn(api, "get").mockResolvedValue(playback({ mp4_url: "http://minio:9000/tara-media/videos/o/i/mp4/video.mp4?s=1" }));
+    vi.spyOn(api, "post").mockResolvedValue(playback({ mp4_url: "http://minio:9000/tara-media/videos/o/i/mp4/video.mp4?s=1" }));
     await mount();
     q<HTMLButtonElement>("[data-testid=video-play]")!.click();
     await flush();

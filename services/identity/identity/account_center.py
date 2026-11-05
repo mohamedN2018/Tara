@@ -463,3 +463,83 @@ def personal_details(viewer_id: str, account_id: str) -> dict:
     if _visible(account.birthday_visibility, is_owner=is_owner, friend=friend):
         birthday = _birthday(account.date_of_birth)
     return {"account_id": str(account.id), "birthday": birthday, "gender": gender}
+
+
+# ---- friends' birthdays (plan 08, social shell) -----------------------------
+
+#: How far ahead "upcoming birthdays" may look.
+MAX_BIRTHDAY_DAYS = 31
+#: Friends looked up per query (``id IN``), so a huge list never makes one giant query.
+_BIRTHDAY_CHUNK = 1000
+
+
+def _friend_ids(account_id: str) -> list[str] | None:
+    """Graph's friends of the account (blocks either way already left out);
+    None when graph can't be reached."""
+    token = mint_internal_token(issuer="identity", audience="graph-internal")
+    request = urllib.request.Request(  # noqa: S310 - internal URL from settings
+        f"{settings.GRAPH_INTERNAL_URL}/internal/v1/friends/{account_id}/",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=settings.GRAPH_CALL_TIMEOUT) as resp:  # noqa: S310
+            body = json.loads(resp.read().decode())
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError):
+        logger.warning("graph friends lookup failed", exc_info=True)
+        return None
+    data = body.get("data") if isinstance(body, dict) else None
+    friends = data.get("friends") if isinstance(data, dict) else None
+    if not isinstance(friends, list):
+        return None
+    return [str(f) for f in friends if isinstance(f, str)]
+
+
+def _next_birthday(dob: date, today: date) -> date:
+    """This year's birthday, or next year's when it has passed. 29 February is
+    kept on 28 February in a common year."""
+    for year in (today.year, today.year + 1):
+        try:
+            when = dob.replace(year=year)
+        except ValueError:  # 29 Feb in a common year
+            when = date(year, 2, 28)
+        if when >= today:
+            return when
+    return when  # unreachable: next year's date is always >= today
+
+
+def friend_birthdays(viewer_id: str, *, today: date, days: int = 7) -> list[dict]:
+    """The viewer's friends whose birthday falls on ``today`` or within the next
+    ``days - 1`` days, soonest first. Only friends who share their birthday with
+    friends (decision 5.3), whose account is usable, and with no block either
+    way (graph leaves those out). Day and month only, never the year.
+
+    Graph down: 503, never a list built without knowing who the friends are."""
+    days = max(1, min(int(days), MAX_BIRTHDAY_DAYS))
+    friend_ids = _friend_ids(str(viewer_id))
+    if friend_ids is None:
+        raise TaraAPIError(
+            "Birthdays are unavailable right now.", code="unavailable", http_status_code=503
+        )
+    found: list[dict] = []
+    for start in range(0, len(friend_ids), _BIRTHDAY_CHUNK):
+        rows = Account.objects.filter(
+            id__in=friend_ids[start : start + _BIRTHDAY_CHUNK],
+            status=Account.Status.ACTIVE,
+            is_active=True,
+            birthday_visibility=PersonalVisibility.FRIENDS,
+            date_of_birth__isnull=False,
+        ).values_list("id", "date_of_birth")
+        for account_id, dob in rows:
+            upcoming = _next_birthday(dob, today)
+            delta = (upcoming - today).days
+            if delta < days:
+                found.append(
+                    {
+                        "account_id": str(account_id),
+                        "month": dob.month,
+                        "day": dob.day,
+                        "days_until": delta,
+                    }
+                )
+    found.sort(key=lambda r: (r["days_until"], r["account_id"]))
+    return found
