@@ -19,3 +19,12 @@ def synthetic_registry_check() -> tuple[bool, str]:
     if SyntheticAccount.objects.exists():
         return False, "intel_synthetic_account is not empty while INTEL_ACCEPT_SYNTHETIC=false"
     return True, "ok"
+
+
+def clock_check() -> tuple[bool, str]:
+    """Not ready while the test clock (WP 4b.15) is on outside development."""
+    from . import clock
+
+    if clock.misconfigured():
+        return False, "INTEL_TEST_CLOCK_ENABLED is true outside development"
+    return True, "ok"

@@ -68,6 +68,22 @@ def synthetic_in_production(app_configs: Any = None, **kwargs: Any) -> list:
     return errors
 
 
+def clock_outside_dev(app_configs: Any = None, **kwargs: Any) -> list:
+    """The test clock (WP 4b.15) moves "now" for seed accounts: development only."""
+    from . import clock
+
+    if clock.misconfigured():
+        return [
+            Error(
+                "INTEL_TEST_CLOCK_ENABLED must be false outside development "
+                f"(TARA_ENV={settings.TARA_ENV!r}).",
+                id="intel.E005",
+            )
+        ]
+    return []
+
+
 def register() -> None:
     _register(Tags.security)(serve_token_secret)
     _register(Tags.security, deploy=True)(synthetic_in_production)
+    _register(Tags.security, deploy=True)(clock_outside_dev)

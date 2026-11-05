@@ -93,3 +93,18 @@ groups:
         annotations:
           summary: "HPA {{ $labels.horizontalpodautoscaler }} at max replicas"
           description: "{{ $labels.horizontalpodautoscaler }} has been pinned at max replicas for 15m; consider raising the ceiling."
+
+  # Tara Intelligence (07 WP 4b.0): redis-hot runs noeviction, so a full instance
+  # refuses writes (ranking sessions, pools and first-page heads fail soft, and Home
+  # falls back to latest order). Alert at 80% of maxmemory (384 MB).
+  # Unit test: infra/observability/tests/intel-alerts.test.yml (promtool test rules).
+  - name: tara-intelligence
+    rules:
+      - alert: IntelRedisHotMemoryHigh
+        expr: max(intel_redis_hot_used_ratio) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "redis-hot above 80% of maxmemory"
+          description: "redis-hot is at {{ $value | humanizePercentage }} of maxmemory (noeviction: writes are refused when full). Re-measure (WP 13.2) and raise maxmemory or compress sessions."

@@ -17,6 +17,7 @@ import {
   PenSquare,
   Pin,
   PinOff,
+  Sparkles,
   Star,
   StarOff,
   Trash2,
@@ -61,7 +62,7 @@ import { useEscapeKey } from "@/lib/useEscapeKey";
 import { useImpression } from "@/lib/useImpression";
 import { useMediaViewer } from "@/lib/useMediaViewer";
 import { useRelationshipPrefs } from "@/lib/useRelationshipPrefs";
-import type { FeedReason } from "@/services/feed";
+import { type FeedReason, isSuggestedReason } from "@/services/feed";
 import { graphService } from "@/services/graph";
 import { groupPostsService } from "@/services/groups";
 import { type Comment, COMMENT_POLICIES, type CommentPolicy, postService, REPORT_ERRORS } from "@/services/post";
@@ -167,6 +168,8 @@ const canHide = computed(() => props.hideable && !isAuthor.value);
 const canSnooze = computed(() => props.snoozable && !isAuthor.value);
 // Unfollow only removes follow items (feed's rule), so it is offered for those only.
 const canUnfollow = computed(() => !isAuthor.value && props.feedReason === "follow");
+// 4b.6: a post from the popular or fresh pools, outside the viewer's circle.
+const suggested = computed(() => isSuggestedReason(props.feedReason));
 const canPeoplePrefs = computed(() => !isAuthor.value && isUserAuthor.value && !!auth.account);
 
 function closeMenu() {
@@ -638,6 +641,14 @@ const iconCls = "h-5 w-5 shrink-0 text-gray-600 dark:text-gray-300";
 
 <template>
   <article ref="cardEl" class="card p-4 sm:p-5" :data-post-id="post.id">
+    <p
+      v-if="suggested"
+      class="-mt-1 mb-3 flex items-center gap-1.5 border-b border-gray-100 pb-2 text-start text-xs font-semibold text-brand-700 dark:border-gray-800 dark:text-brand-200"
+      data-testid="post-suggested"
+    >
+      <Sparkles class="h-3.5 w-3.5 shrink-0 text-accent-500" aria-hidden="true" />
+      <span>{{ t("suggested.label") }}</span>
+    </p>
     <header class="flex items-center gap-3">
       <RouterLink :to="authorTo" :aria-label="authorDisplay">
         <UserAvatar :name="authorDisplay" :media-id="avatarId" :size="44" />

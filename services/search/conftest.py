@@ -28,6 +28,9 @@ def _isolated_settings(settings):
     settings.TARA_JWT_AUDIENCE = "tara"
     settings.SEARCH_USE_OPENSEARCH = False  # Postgres-backed in tests
     settings.CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+    from django.core.cache import cache
+
+    cache.clear()  # cached trending answers never leak from one test to the next
     return settings
 
 

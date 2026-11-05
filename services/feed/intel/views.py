@@ -13,7 +13,7 @@ from rest_framework.views import APIView
 
 from tara_common.exceptions import TaraAPIError
 
-from . import preferences, why
+from . import clock, preferences, why
 from .signals import ingest, validate
 from .signals.serializers import SignalBatchSerializer
 
@@ -51,7 +51,10 @@ class SignalIngestView(APIView):
         body = SignalBatchSerializer(data=request.data)
         if not body.is_valid():
             raise ValidationError(body.errors)
-        result = ingest.ingest(request.user.account_id, body.validated_data)
+        account = request.user.account_id
+        # WP 4b.15: the test clock (dev, flag on, seed or test account only).
+        now = clock.request_now(request, account)
+        result = ingest.ingest(account, body.validated_data, now=now)
         return Response({"data": result.as_dict()}, status=status.HTTP_202_ACCEPTED)
 
 

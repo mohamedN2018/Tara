@@ -13,6 +13,9 @@
 # 4. k8s: the feed overlay builds and routes /api/v1/feed/signals to feed-signals.
 # 5. Dev compose (live): Traefik sends /api/v1/feed/signals to feed-signals and
 #    /api/v1/feed to feed; feed-signals never ran "[feed] migrate".
+# 6. R1 (07 WP 4b.0, 4b.15): redis-hot is 384 MB noeviction (448m limit on Dokploy),
+#    live maxmemory 402653184, the test clock pinned off in Dokploy, REELS_SEEN_WINDOW_H
+#    on post, and the 80% alert fires at 0.81 (promtool unit test).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 fail=0
@@ -84,6 +87,36 @@ if [ -z "${SKIP_LIVE:-}" ]; then
     && bad "feed-signals ran migrations" || ok "feed-signals never migrated"
   env=$(docker exec tara-feed-signals-1 printenv RUN_MIGRATIONS 2>/dev/null || echo '?')
   [ "$env" = false ] && ok "feed-signals RUN_MIGRATIONS=$env (dev)" || bad "feed-signals dev env $env"
+fi
+
+# ---- 6: R1 deploy prerequisites ----------------------------------------------------
+r1=$(node -e '
+  const Y=require("./frontend/web/node_modules/js-yaml");const fs=require("fs");
+  const d=Y.load(fs.readFileSync("docker-compose.dokploy.yml","utf8"));
+  const v=Y.load(fs.readFileSync("infra/compose/docker-compose.yml","utf8"));
+  const cmd=s=>(s.command||[]).join(" ");
+  const h=d.services["redis-hot"], vh=v.services["redis-hot"];
+  console.log(JSON.stringify({
+    dokploy: /--maxmemory 384mb --maxmemory-policy noeviction/.test(cmd(h)), limit: h.mem_limit,
+    dev: /--maxmemory 384mb --maxmemory-policy noeviction/.test(cmd(vh)),
+    clock: d.services.feed.environment.INTEL_TEST_CLOCK_ENABLED,
+    reels: String(d.services.post.environment.REELS_SEEN_WINDOW_H||""),
+    relay_hot: Boolean(v.services["feed-relay"].environment.REDIS_HOT_URL)}));')
+echo "$r1" | grep -q '"dokploy":true' && ok "dokploy redis-hot 384mb noeviction" || bad "dokploy redis-hot maxmemory"
+echo "$r1" | grep -q '"limit":"448m"' && ok "dokploy redis-hot mem_limit 448m" || bad "dokploy redis-hot mem_limit"
+echo "$r1" | grep -q '"dev":true' && ok "dev redis-hot 384mb noeviction" || bad "dev redis-hot maxmemory"
+echo "$r1" | grep -q '"clock":"false"' && ok "dokploy INTEL_TEST_CLOCK_ENABLED=false" || bad "dokploy test clock"
+echo "$r1" | grep -q '"reels":"\${REELS_SEEN_WINDOW_H:-72}"' && ok "dokploy post REELS_SEEN_WINDOW_H" || bad "dokploy REELS_SEEN_WINDOW_H"
+echo "$r1" | grep -q '"relay_hot":true' && ok "dev feed-relay (beat) reaches redis-hot" || bad "dev feed-relay REDIS_HOT_URL"
+obs="$(pwd -W 2>/dev/null || pwd)/infra/observability"
+if MSYS_NO_PATHCONV=1 docker run --rm -v "$obs:/obs:ro" --entrypoint promtool prom/prometheus:v3.5.0     test rules /obs/tests/intel-alerts.test.yml > /dev/null 2>&1; then
+  ok "promtool: IntelRedisHotMemoryHigh fires at 0.81, not at 0.79"
+else
+  bad "promtool alert unit test (needs the prom/prometheus:v3.5.0 image)"
+fi
+if [ -z "${SKIP_LIVE:-}" ]; then
+  mm=$(docker exec tara-redis-hot-1 redis-cli CONFIG GET maxmemory 2>/dev/null | tail -1 | tr -d '')
+  [ "$mm" = 402653184 ] && ok "live redis-hot maxmemory $mm" || bad "live redis-hot maxmemory ${mm:-?}"
 fi
 
 exit "$fail"

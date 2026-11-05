@@ -38,6 +38,8 @@ const servedMode = ref<string | null>(null);
 const fallback = computed(() => {
   if (props.reason === "self") return t("postsFeed.why.self");
   if (props.reason === "friend") return t("postsFeed.why.friend", { name: props.name });
+  if (props.reason === "rec_popular") return t("suggested.why.popular");
+  if (props.reason === "rec_fresh") return t("suggested.why.fresh");
   return t(props.page ? "postsFeed.why.page" : "postsFeed.why.follow", { name: props.name });
 });
 
@@ -75,6 +77,10 @@ function sentence(f: WhyFactor): string | null {
       return f.topic ? t("postsFeed.why.topic", { topic: f.topic }) : null;
     case "rec_topic_sensitive":
       return t("postsFeed.why.topicSensitive");
+    case "rec_popular":
+      return t("suggested.why.popular");
+    case "rec_fresh":
+      return t("suggested.why.fresh");
     default:
       return null;
   }

@@ -42,8 +42,19 @@ def post(
     pending_reports: int = 0,
     moderation_open: bool = False,
     media_ids: list[str] | None = None,
+    author_age: str | None = "adult",
 ) -> str:
+    """A post in ``intel_content_ref``. A ``user`` author is recorded as an adult
+    (``author_ref.age_class``, rule E9b) unless ``author_age`` says otherwise; None
+    leaves the author without any age class (no ``author_ref`` row is written)."""
     post_id = uid()
+    if author_type == "user" and author_age is not None:
+        AuthorRef.objects.get_or_create(
+            account_id=author, defaults={"occurred_at": NOW, "age_class": author_age}
+        )
+        AuthorRef.objects.filter(account_id=author, kind="user", age_class="unknown").update(
+            age_class=author_age
+        )
     ContentRef.objects.create(
         post_id=post_id,
         author_id=author,
@@ -134,11 +145,11 @@ def page(owner: str, *, status: str = "published", deleted: bool = False) -> str
     return page_id
 
 
-def author(account: str, *, active=True, searchable=True) -> None:
-    AuthorRef.objects.update_or_create(
-        account_id=account,
-        defaults={"occurred_at": NOW, "active": active, "searchable": searchable},
-    )
+def author(account: str, *, active=True, searchable=True, age_class: str | None = None) -> None:
+    defaults = {"occurred_at": NOW, "active": active, "searchable": searchable}
+    if age_class is not None:
+        defaults["age_class"] = age_class
+    AuthorRef.objects.update_or_create(account_id=account, defaults=defaults)
 
 
 def restrict(account: str, kind: str = "shadow") -> None:

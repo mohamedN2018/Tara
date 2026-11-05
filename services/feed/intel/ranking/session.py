@@ -56,6 +56,8 @@ REASONS = (
     "new_follow",
     "public",
     "discovery",
+    "rec_popular",
+    "rec_fresh",
 )
 _FACTOR = struct.Struct(">BbBbBb")
 

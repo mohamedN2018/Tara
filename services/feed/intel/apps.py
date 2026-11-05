@@ -16,7 +16,9 @@ class IntelConfig(AppConfig):
     def ready(self) -> None:
         from tara_common import health
 
-        from . import checks, readiness
+        from . import checks, metrics, readiness
 
         checks.register()
+        metrics.register_collectors()
         health.register_readiness_check("intel_synthetic", readiness.synthetic_registry_check)
+        health.register_readiness_check("intel_test_clock", readiness.clock_check)

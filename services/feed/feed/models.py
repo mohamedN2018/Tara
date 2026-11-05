@@ -271,6 +271,16 @@ class AuthorRef(models.Model):
     # ``account.registered`` time (WP 4.4, suspect engagement). Null for accounts
     # that registered before feed consumed the event: never treated as new.
     registered_at = models.DateTimeField(null=True, blank=True)
+    # The author's age class (WP 4b.14, rule E9b, owner decisions 9b and 37), taken
+    # from the author's own access-token claims on their feed requests. Never a date
+    # of birth. ``unknown`` until seen, and fail closed: a ``kind=user`` author that
+    # is ``minor`` or ``unknown`` never reaches a stranger's discovery or pools.
+    age_class = models.CharField(
+        max_length=8,
+        choices=[("adult", "adult"), ("minor", "minor"), ("unknown", "unknown")],
+        default="unknown",
+        db_default="unknown",
+    )
 
     class Meta:
         db_table = "author_ref"

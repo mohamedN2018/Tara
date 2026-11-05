@@ -158,6 +158,22 @@ class BlockedPair(models.Model):
         ]
 
 
+class SearchAccountRestriction(models.Model):
+    """A moderation ``restrict`` or ``shadow`` on an account, from
+    ``moderation.actioned`` (Tara Intelligence 4b.20-B3): its public posts stop
+    counting toward trending hashtags. Sensitive: never shown to anyone.
+    ``active=False`` is the tombstone of a ``reinstate``; the newest event wins."""
+
+    account_id = models.UUIDField(primary_key=True)
+    kind = models.CharField(max_length=8, blank=True, default="")  # restrict | shadow
+    active = models.BooleanField(default=True)
+    case_id = models.UUIDField(null=True, blank=True)
+    event_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "search_account_restriction"
+
+
 class ProcessedEvent(AbstractProcessedEvent):
     class Meta(AbstractProcessedEvent.Meta):
         abstract = False

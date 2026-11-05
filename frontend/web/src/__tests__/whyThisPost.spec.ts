@@ -82,6 +82,25 @@ describe("Why am I seeing this post? (WP 4.8)", () => {
     expect(lines(dialog)).toEqual(["It's from a group you're in.", "It's about a topic you follow."]);
   });
 
+  it("explains a suggestion from the popular or fresh pools (4b.6)", async () => {
+    vi.spyOn(api, "get").mockResolvedValue(explanation([{ code: "rec_popular" }, { code: "rec_fresh" }]));
+    const dialog = await open({ reason: "rec_popular", name: "Mona", postId: "p1", authorId: "a1" });
+    expect(lines(dialog)).toEqual(["A public post people are engaging with", "A new public post"]);
+  });
+
+  it("falls back to the suggestion's own reason, never 'you follow', when the server is silent", async () => {
+    vi.spyOn(api, "get").mockRejectedValue({ response: { status: 404 } });
+    let dialog = await open({ reason: "rec_fresh", name: "Mona", postId: "p1" });
+    expect(lines(dialog)).toEqual(["A new public post"]);
+    expect(dialog.textContent).not.toContain("Mona");
+    app?.unmount();
+    host?.remove();
+    setLocale("ar");
+    dialog = await open({ reason: "rec_popular", name: "منى", postId: "p1" });
+    expect(document.documentElement.dir).toBe("rtl");
+    expect(lines(dialog)).toEqual(["منشور عام الناس بتتفاعل معاه"]);
+  });
+
   it("speaks Arabic, right to left", async () => {
     setLocale("ar");
     vi.spyOn(api, "get").mockResolvedValue(

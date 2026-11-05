@@ -112,10 +112,13 @@ export interface RecentSearch {
   created_at: string;
 }
 
+// Tara Intelligence 4b.20-B3: the server never sends a raw count. `posts_floor`
+// is the largest of 20, 50, 100, 500, 1K, 5K, 10K the tag's post count reaches,
+// or null below 20 (show no count then); `window` names the rolling window.
 export interface TrendingTag {
   tag: string;
-  authors: number;
-  posts: number;
+  posts_floor: number | null;
+  window: "day" | "week";
 }
 
 interface SearchResponse {

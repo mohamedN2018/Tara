@@ -270,6 +270,7 @@ x-post-env: &post-env
   POST_EMIT_HIDE_EVENTS: ${POST_EMIT_HIDE_EVENTS:-true}
   POST_EMIT_SAVE_EVENTS: ${POST_EMIT_SAVE_EVENTS:-true}
   POST_REPORT_RATE: ${POST_REPORT_RATE:-20/hour}
+  REELS_SEEN_WINDOW_H: ${REELS_SEEN_WINDOW_H:-72}
 
 x-feed-env: &feed-env
   <<: *common-env
@@ -293,6 +294,7 @@ x-feed-env: &feed-env
   INTEL_SIGNAL_RETENTION_DAYS: ${INTEL_SIGNAL_RETENTION_DAYS:-30}
   INTEL_ENGAGEMENT_RETENTION_DAYS: ${INTEL_ENGAGEMENT_RETENTION_DAYS:-30}
   INTEL_EMIT_CONFIG_CHANGED: ${INTEL_EMIT_CONFIG_CHANGED:-true}
+  INTEL_TEST_CLOCK_ENABLED: "false"
 
 x-chat-env: &chat-env
   <<: *common-env
@@ -523,8 +525,8 @@ services:
     <<: *backing
     image: redis:7.4.11-alpine
     command: ["redis-server", "--save", "", "--appendonly", "no", "--requirepass", "${REDIS_PASSWORD:?}",
-              "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
-    mem_limit: 160m
+              "--maxmemory", "384mb", "--maxmemory-policy", "noeviction"]
+    mem_limit: 448m
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?}", "--no-auth-warning", "ping"]
       interval: 10s

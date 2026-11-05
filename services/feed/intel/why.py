@@ -15,7 +15,8 @@ the viewer's own fan-out row, after hides, snoozes and mutes; any other source g
 back through the eligibility filter (fail closed), with the viewer's age claims.
 
 Factors are honest and the viewer's own: the relationship that brought the item
-(fan-out reason, followed page, joined group, or a public pool), and in ``for_you``
+(fan-out reason, followed page, joined group, a public pool, or a Home discovery
+pool: ``rec_popular`` / ``rec_fresh``, WP 4b.6), and in ``for_you``
 only, the ranking terms that moved it: the factor codes the session stored at
 ranking time when the session proves serving, else the ``home@1`` terms that apply
 to the author now (favorite author, frequent interaction, the viewer's own "don't
@@ -31,7 +32,7 @@ from dataclasses import dataclass
 
 from django.utils import timezone
 
-from . import config, eligibility, hot
+from . import config, discovery, eligibility, hot
 from .models import ContentRef, ItemType
 from .ranking import serve_tokens
 from .ranking import session as rank_session
@@ -49,6 +50,8 @@ class Served:
     cfg_version: str | None
     # Factor names stored in the ranking session (session proof only), else None.
     factors: tuple[str, ...] | None = None
+    # The candidate reason when the proof carries it (session v2 entries do).
+    reason: str | None = None
 
 
 # Session factor names -> why codes. ``reason`` is the relationship line; terms not
@@ -83,7 +86,7 @@ def _from_session(viewer_id, post_id) -> Served | None:
             stored = {}
         names = tuple(name for name, _ in rank_session.factor_names(entry))
         mode = "for_you" if surface == "home" else None
-        return Served(entry.source or "", mode, surface, stored.get("cfg"), names)
+        return Served(entry.source or "", mode, surface, stored.get("cfg"), names, entry.reason)
     return None
 
 
@@ -91,7 +94,20 @@ def _served(viewer_id, item_type: str, item_id: str, token: str | None) -> Serve
     if token:
         claims = serve_tokens.verify(token, viewer_id, item_type, item_id)
         if claims is not None:
-            return Served(claims.source or "", claims.reason, claims.surface, claims.cfg_version)
+            served = Served(claims.source or "", claims.reason, claims.surface, claims.cfg_version)
+            if served.source == discovery.SOURCE:
+                # The token names the source, not the pool: the session entry does.
+                entry = _from_session(viewer_id, item_id)
+                if entry is not None and entry.source == discovery.SOURCE:
+                    served = Served(
+                        served.source,
+                        served.mode,
+                        served.surface,
+                        served.cfg_version,
+                        None,
+                        entry.reason,
+                    )
+            return served
     return _from_session(viewer_id, item_id)
 
 
@@ -126,8 +142,13 @@ def explain(claims: dict, item_type: str, item_id: str, token: str | None) -> di
         ref = ContentRef.objects.filter(post_id=item_id).first()
         if ref is None or ref.author_id is None:
             return None  # fail closed: nothing to check visibility against
+        reason = served.source
+        if served.source == discovery.SOURCE:
+            # rec_popular / rec_fresh: from the session entry, else the pool that holds
+            # it now; never guessed (a post in neither pool explains as a public pool).
+            reason = served.reason or discovery.reason_of(item_id, ref.lang) or served.source
         candidate = Candidate(
-            item_id, str(ref.author_id), served.source, served.source, ref.created_at, ref.type
+            item_id, str(ref.author_id), served.source, reason, ref.created_at, ref.type
         )
         author_type = ref.author_type
     else:
@@ -194,4 +215,6 @@ def _relationship(c: Candidate, author_type: str, author: str, viewer_id: str) -
         return {"code": code, "author_id": author}
     if c.source == GROUPS:
         return {"code": "group_member"}
+    if c.source == discovery.SOURCE and c.reason in discovery.BUCKET_OF:
+        return {"code": c.reason}
     return {"code": "public_pool", "format": c.type or "post"}

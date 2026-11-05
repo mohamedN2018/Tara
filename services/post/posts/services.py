@@ -15,9 +15,9 @@ from django.utils import timezone
 from tara_common.exceptions import Conflict, TaraAPIError
 from tara_events.envelope import uuid7
 
-from . import composer, events, linkpreview, media_client, pages
+from . import composer, events, keyset, linkpreview, media_client, pages
 from . import groups as group_rm
-from .clients import get_relationship, resolve_handles
+from .clients import Relationship, get_relationship, resolve_handles
 from .models import (
     REACTION_TYPES,
     ApprovalState,
@@ -896,6 +896,98 @@ def video_posts_queryset(author_id: str | None = None):
         except ValueError as exc:
             raise _bad_request("author_id must be a UUID.") from exc
     return with_detail(qs)
+
+
+# Full video pages (Tara Intelligence 4b.9): at most this many fetches of
+# ``VIDEO_OVERFETCH`` x the page size before a page is returned short.
+VIDEO_MAX_FETCHES = 3
+VIDEO_OVERFETCH = 2
+# Distinct recent authors of followers-only videos asked about in one graph batch.
+VIDEO_FOLLOW_CANDIDATES = 50
+
+
+def _video_audience(viewer: str, qs, author_id: str | None) -> tuple[Q, dict, set[str]]:
+    """The audience rule in SQL (the predicate the reels feed uses), plus the
+    relationship cache it learned and the blocked set. Graph down: friends and
+    follows are unknown, so only public videos and the viewer's own pass (fail
+    closed); the per-item check still runs on every returned post."""
+    from gatherings import graph  # noqa: PLC0415 - gatherings imports this module
+    from reels.services import _relations  # noqa: PLC0415 - reels imports this module
+
+    blocked = blocked_ids(viewer)
+    friends = (graph.friend_ids(viewer) or set()) - blocked - {viewer}
+    if author_id:
+        users = [author_id] if author_id not in friends | blocked | {viewer} else []
+    else:
+        users = []
+        rows = (
+            qs.filter(author_type="user", audience=Audience.FOLLOWERS)
+            .exclude(author_id__in=[viewer, *friends, *blocked])
+            .order_by("-created_at")
+            .values_list("author_id", flat=True)[: VIDEO_FOLLOW_CANDIDATES * 10]
+        )
+        for author in rows:
+            if str(author) not in users:
+                users.append(str(author))
+                if len(users) >= VIDEO_FOLLOW_CANDIDATES:
+                    break
+    rel_cache: dict = {}
+    followed: set[str] = set()
+    results = _relations(viewer, users, []) if users else {}
+    for account in users:
+        row = (results or {}).get(account)
+        if results is not None and row is None:  # a block either way
+            rel_cache[account] = Relationship(blocked_either_way=True)
+        elif row and row.get("following"):
+            followed.add(account)
+        if row and row.get("state") == "friends":
+            friends.add(account)
+    for account in friends | followed:
+        rel_cache[account] = Relationship(
+            are_friends=account in friends, a_follows_b=account in followed
+        )
+    rule = (
+        Q(author_id=viewer)
+        | Q(audience=Audience.PUBLIC)
+        | Q(author_id__in=list(friends), audience__in=(Audience.FRIENDS, Audience.FOLLOWERS))
+        | Q(author_id__in=list(followed), audience=Audience.FOLLOWERS)
+    )
+    return rule, rel_cache, blocked
+
+
+def video_page(viewer_id: str, author_id: str | None, token: str | None, size: int):
+    """One full page of video posts the viewer may see, newest first.
+
+    The audience rule and the post's own state run in SQL; the checks that stay
+    in Python (pages, blocks, relationships) run on a bounded over-fetch: at most
+    ``VIDEO_MAX_FETCHES`` fetches of ``VIDEO_OVERFETCH`` x ``size`` candidates.
+    The keyset cursor ``(created_at, id)`` points after the last candidate
+    looked at, so nothing is skipped or repeated. ``only_visible`` never runs on
+    an unpaged queryset. Returns the posts and the next cursor (``None`` at the end).
+    """
+    viewer = str(viewer_id)
+    data = keyset.decode(token)
+    position = keyset.position(data) if data else None
+    qs = video_posts_queryset(author_id).exclude(moderation_status=Post.ModerationStatus.REMOVED)
+    author = str(uuid.UUID(str(author_id))) if author_id else None  # validated above
+    rule, rel_cache, blocked = _video_audience(viewer, qs, author)
+    qs = qs.filter(rule).exclude(author_id__in=list(blocked)).order_by("-created_at", "-id")
+    batch = VIDEO_OVERFETCH * size
+    out: list[Post] = []
+    for _ in range(VIDEO_MAX_FETCHES):
+        rows = list((qs.filter(keyset.after(*position)) if position else qs)[: batch + 1])
+        more, rows = len(rows) > batch, rows[:batch]
+        _prefetch_pages(viewer, rows, rel_cache)
+        for index, post in enumerate(rows):
+            position = (post.created_at, post.id)
+            if visible_to_viewer(viewer, post, rel_cache, blocked):
+                out.append(post)
+                if len(out) == size:
+                    left = more or index < len(rows) - 1
+                    return out, keyset.encode(keyset.mark(*position)) if left else None
+        if not more:
+            return out, None
+    return out, keyset.encode(keyset.mark(*position)) if position else None
 
 
 def only_visible(viewer_id: str, posts) -> list[Post]:

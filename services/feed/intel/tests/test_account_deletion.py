@@ -1,6 +1,5 @@
 """WP 2.10: no ``intel_*`` row, ``redis-hot`` key or pool member survives account deletion."""
 
-import os
 import uuid
 from datetime import timedelta
 
@@ -113,31 +112,6 @@ def test_redis_session_and_profile_keys_are_gone():
     assert cache.get(f"feed:rank:{kept}") == b"x"
 
 
-@pytest.fixture
-def redis_hot(settings):
-    """A real Redis behind the hot cache (pools are sorted sets: no local-memory stand-in)."""
-    url = os.getenv("REDIS_URL", "")
-    if not url.startswith("redis://"):
-        pytest.skip("needs Redis (REDIS_URL)")
-    settings.CACHES = {
-        **settings.CACHES,
-        "hot": {
-            "BACKEND": "django.core.cache.backends.redis.RedisCache",
-            "LOCATION": url,
-            "KEY_PREFIX": f"feed-test-{uuid.uuid4().hex[:8]}",
-        },
-    }
-    # Changing CACHES resets Django's cache handler (django.test.signals).
-    try:
-        hot.raw_client().ping()
-    except Exception:  # noqa: BLE001
-        pytest.skip("Redis unreachable")
-    yield caches["hot"]
-    client = hot.raw_client()
-    for key in client.scan_iter(match=caches["hot"].make_key("*")):
-        client.delete(key)
-
-
 def test_pool_members_are_removed_at_once(redis_hot):
     gone, other = acct(), acct()
     mine = [str(uuid.uuid4()) for _ in range(3)]
@@ -166,3 +140,56 @@ def test_pool_members_are_removed_at_once(redis_hot):
     for key in keys:
         assert client.zrange(key, 0, -1) == [theirs.encode()]
     assert redis_hot.get(hot.profile_key(gone)) is None
+
+
+def test_raw_keys_are_gone_as_stored(redis_hot):
+    """WP 4b.0: feed:exp, feed:sess, feed:si, feed:head:* and intel:age, written with
+    the raw client under make_key, are deleted with the account (exists == 0)."""
+    gone, kept = acct(), acct()
+    client = hot.raw_client()
+    names = {a: hot.raw_keys(a) for a in (gone, kept)}
+    assert {n.split(":")[1] for n in names[gone] if n.startswith("feed:")} == {
+        "exp",
+        "sess",
+        "si",
+        "head",
+    }
+    assert hot.head_key("home", gone) in names[gone]
+    for keys in names.values():
+        for name in keys:
+            client.set(redis_hot.make_key(name), b"x" * 16, ex=600)
+    deletion.erase_account(gone)
+    for name in names[gone]:
+        assert client.exists(redis_hot.make_key(name)) == 0, name
+    for name in names[kept]:
+        assert client.exists(redis_hot.make_key(name)) == 1, name
+
+
+def test_home_pool_members_of_the_account_are_removed(redis_hot):
+    """WP 4b.6: the popular / fresh pools are under the pool_key shape, so deletion's
+    ZREM reaches them at once."""
+    from intel import discovery
+
+    gone = acct()
+    post_id = str(uuid.uuid4())
+    FeedItem.objects.create(
+        recipient_id=acct(),
+        post_id=post_id,
+        author_id=gone,
+        reason="follow",
+        snapshot={},
+        post_created_at=timezone.now(),
+    )
+    client = hot.raw_client()
+    keys = [
+        redis_hot.make_key(hot.pool_key("home", lang, bucket))
+        for lang in ("ar", "en")
+        for bucket in discovery.BUCKETS
+    ]
+    for key in keys:
+        client.zadd(key, {post_id: 1.0, str(uuid.uuid4()): 0.5})
+    client.set(redis_hot.make_key(discovery.STAMP), b"1")
+    counts = deletion.erase_account(gone)
+    assert counts["pool_members"] == len(keys)
+    for key in keys:
+        assert client.zscore(key, post_id) is None

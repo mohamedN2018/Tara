@@ -26,6 +26,12 @@ cursor continues in latest order below its oldest row. When the session is gone
 (expired, replaced by a newer first page, or ``redis-hot`` down), the cursor falls
 back to latest order from the session's start time and the page says
 ``fallback: true`` (the client drops posts it already shows).
+
+Recommended pool items (WP 4b.6) are ordinary session entries (source
+``discovery``, reason ``rec_popular`` / ``rec_fresh``) re-checked on later pages
+like any other non-connection item. The session stores ``cu``, the index of the
+first item after the connection inventory ran out; the page that holds it says so
+in ``caught_up_index`` (its index in the page's ``data``).
 """
 
 from __future__ import annotations
@@ -136,9 +142,10 @@ def _pulled_item(viewer_id, ref: dict, reason: str) -> FeedItem:
 
 
 def _materialize(viewer_id, entries: list[tuple[str, str, str]], refs: dict | None = None):
-    """``[(post_id, source, reason)]`` as items, in order; a post no longer visible is
-    left out. Connections come from ``FeedItem`` (one query), the rest from
-    ``intel_content_ref`` (``refs`` when the caller already read them)."""
+    """``[(post_id, source, reason)]`` as ``(item, source, index)``, in order (``index``
+    is the entry's position in ``entries``); a post no longer visible is left out.
+    Connections come from ``FeedItem`` (one query), the rest from ``intel_content_ref``
+    (``refs`` when the caller already read them: no query)."""
     conn = [p for p, s, _ in entries if s == CONNECTIONS]
     rows = {str(i.post_id): i for i in visible_items(viewer_id).filter(post_id__in=conn)}
     others = [p for p, s, _ in entries if s != CONNECTIONS]
@@ -150,12 +157,12 @@ def _materialize(viewer_id, entries: list[tuple[str, str, str]], refs: dict | No
             )
         }
     out = []
-    for post_id, source, reason in entries:
+    for n, (post_id, source, reason) in enumerate(entries):
         if source == CONNECTIONS:
             if post_id in rows:
-                out.append((rows[post_id], source))
+                out.append((rows[post_id], source, n))
         elif refs and post_id in refs and refs[post_id]["author_id"]:
-            out.append((_pulled_item(viewer_id, refs[post_id], reason), source))
+            out.append((_pulled_item(viewer_id, refs[post_id], reason), source, n))
     return out
 
 
@@ -163,7 +170,7 @@ def rank_items(viewer_id, now: datetime, window: int | None = None, claims=None)
     """The viewer's ranked items, best first. Same rows and ``now``, same order."""
     ranking = home_ranker.rank(_viewer(viewer_id, claims), now, home_config(window))
     entries = [(s.feats.post_id, s.feats.source, s.feats.reason) for s in ranking.items]
-    return [item for item, _ in _materialize(viewer_id, entries)]
+    return [item for item, _, _ in _materialize(viewer_id, entries, ranking.content or None)]
 
 
 # ---- cursor and session --------------------------------------------------------
@@ -209,6 +216,11 @@ class Page:
     # Ranked pages: each item's candidate source and the config version that ranked it.
     sources: list[str] = field(default_factory=list)
     cfg_version: str | None = None
+    # WP 4b.6: the index in ``items`` of the first item served after the connection
+    # inventory ran out, else None; ``caught_up`` is true on the page where it ran
+    # out (that index, or the last page of a session without continuation).
+    caught_up_index: int | None = None
+    caught_up: bool = False
 
     @property
     def has_more(self) -> bool:
@@ -249,6 +261,21 @@ def _after_slice(session: dict, sid: str, end: int, as_of: str) -> str | None:
     return None
 
 
+def _caught_up(
+    session: dict, positions: list[int], start: int, end: int
+) -> tuple[int | None, bool]:
+    """``(caught_up_index, caught_up)`` for a page that read session entries
+    ``[start, end)`` and serves items at ``positions``. With a continuation (``cu``)
+    the page holding ``cu`` ran out (its index may be None when the re-check dropped
+    that very item); without one, the last page of a session that ends there."""
+    cu = session.get("cu")
+    if cu is not None:
+        if not start <= cu < end:
+            return None, False
+        return next((i for i, p in enumerate(positions) if p >= cu), None), True
+    return None, end >= session["n"] and not session.get("edge")
+
+
 def first_page(viewer_id, size: int, now: datetime, claims: dict | None = None) -> Page:
     cfg = home_config()
     ranking = home_ranker.rank(_viewer(viewer_id, claims), now, cfg)
@@ -266,11 +293,25 @@ def first_page(viewer_id, size: int, now: datetime, claims: dict | None = None) 
         "items": rank_session.pack(entries),
         "n": len(entries),
         "edge": list(ranking.edge) if ranking.edge else None,
+        "cu": ranking.caught_up,
     }
-    head = _materialize(viewer_id, [(e.post_id, e.source, e.reason) for e in entries[:size]])
-    items, sources = [i for i, _ in head], [s for _, s in head]
+    head = _materialize(
+        viewer_id,
+        [(e.post_id, e.source, e.reason) for e in entries[:size]],
+        ranking.content or None,
+    )
+    items, sources = [i for i, _, _ in head], [s for _, s, _ in head]
+    index, caught = _caught_up(session, [n for _, _, n in head], 0, size)
     if rank_session.save(SURFACE, viewer_id, session, cfg.get("session.ttl_s"), _hot()):
-        return Page(items, _after_slice(session, sid, size, as_of), False, sources, cfg.version)
+        return Page(
+            items,
+            _after_slice(session, sid, size, as_of),
+            False,
+            sources,
+            cfg.version,
+            index,
+            caught,
+        )
     # No session: later pages go on in latest order from now (the client drops repeats).
     more = len(entries) > size or session["edge"] is not None
     return Page(
@@ -279,6 +320,8 @@ def first_page(viewer_id, size: int, now: datetime, claims: dict | None = None) 
         True,
         sources,
         cfg.version,
+        index,
+        caught,
     )
 
 
@@ -307,7 +350,8 @@ def next_page(viewer_id, token: str, size: int, claims: dict | None = None) -> P
             )
     # Fail closed between pages: E1 to E5, E1b, E1c and E6b again (WP 4.10).
     checked = recheck(viewer, candidates, cfg)
-    items, sources = [], []
+    position = {e.post_id: offset + k for k, e in enumerate(entries)}
+    items, sources, positions = [], [], []
     for c in checked.kept:
         if c.source == CONNECTIONS:
             items.append(rows[c.post_id])
@@ -317,10 +361,15 @@ def next_page(viewer_id, token: str, size: int, claims: dict | None = None) -> P
                 continue
             items.append(_pulled_item(viewer_id, ref, c.reason))
         sources.append(c.source)
+        positions.append(position[c.post_id])
+    end = offset + len(entries)
+    index, caught = _caught_up(session, positions, offset, end)
     return Page(
         items,
-        _after_slice(session, sid, offset + len(entries), as_of),
+        _after_slice(session, sid, end, as_of),
         False,
         sources,
         session.get("cfg"),
+        index,
+        caught,
     )

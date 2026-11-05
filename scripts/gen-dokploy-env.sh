@@ -279,6 +279,9 @@ MODERATION_EMIT_AUDIT_EVENTS=true
 MODERATION_EMIT_REINSTATE=true
 # Feed: ranking config changes to admin's audit log (Tara Intelligence WP 4.1).
 INTEL_EMIT_CONFIG_CHANGED=true
+# INTEL_TEST_CLOCK_ENABLED is pinned to false in docker-compose.dokploy.yml (WP 4b.15).
+# Post: reels watched in the last N hours go after unwatched ones (WP 4b.9).
+REELS_SEEN_WINDOW_H=72
 # MODERATION_INTERNAL_URL is fixed in docker-compose.dokploy.yml (WP 3.3 backfills).
 IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS=true
 PROFILE_EMIT_PAGE_UPDATED=true

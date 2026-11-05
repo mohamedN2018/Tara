@@ -275,7 +275,7 @@ describe("Search home: recent and trending", () => {
             ],
           },
         };
-      if (url === "/search/trending/") return { data: { data: [{ tag: "cairo", authors: 3, posts: 5 }] } };
+      if (url === "/search/trending/") return { data: { data: [{ tag: "cairo", posts_floor: null, window: "week" }] } };
       return { data: { data: [] } };
     });
     const del = vi.spyOn(api, "delete").mockResolvedValue({ data: {} });
@@ -296,7 +296,7 @@ describe("Search home: recent and trending", () => {
     await flush();
     expect(del).toHaveBeenCalledWith("/search/recent/");
 
-    byText(el, "Today")!.click();
+    byText(el, "Last 24 h")!.click();
     await flush();
     expect(get).toHaveBeenCalledWith("/search/trending/", { params: { window: "day" } });
   });

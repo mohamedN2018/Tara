@@ -9,7 +9,7 @@ from __future__ import annotations
 from django.db import transaction
 from django.utils.decorators import method_decorator
 from drf_spectacular.utils import OpenApiParameter, extend_schema
-from posts import hydration
+from posts import hydration, keyset
 from posts.models import IdempotencyRecord
 from posts.serializers import PostSerializer
 from posts.services import viewer_state
@@ -74,7 +74,9 @@ class ReelListCreateView(APIView):
     )
     def get(self, request: Request) -> Response:
         """``?tab=for_you`` (default) or ``following``; ``?author_id=`` lists one
-        profile's or page's reels instead (their Reels tab). Newest first.
+        profile's or page's reels instead (their Reels tab). Newest first, except
+        ``for_you`` serves reels the viewer did not watch in the last
+        ``REELS_SEEN_WINDOW_H`` hours before the watched ones.
 
         Every item is checked with the post's visibility rule after paging, so a
         page can be short; keep following ``page.next_cursor`` while ``has_more``.
@@ -90,6 +92,16 @@ class ReelListCreateView(APIView):
             if tab not in services.TABS:
                 raise TaraAPIError("Unknown tab.", code="validation_error", http_status_code=400)
             ctx = services.FeedContext(me, tab=tab)
+            if tab == services.TAB_FOR_YOU:
+                # Reels not watched in the window first (4b.9): a two-phase keyset pager.
+                size = keyset.page_size(
+                    request, ReelPagination.page_size, ReelPagination.max_page_size
+                )
+                reels, next_cursor = services.seen_last_page(
+                    ctx, request.query_params.get("cursor"), size
+                )
+                return Response(keyset.envelope(serialize(me, reels), next_cursor))
+            # ``following`` stays chronological.
             page = paginator.paginate_queryset(services.feed_queryset(ctx, tab), request)
             reels = ctx.visible(list(page))
         return paginator.get_paginated_response(serialize(me, reels))

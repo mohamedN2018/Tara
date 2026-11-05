@@ -13,7 +13,9 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
-from intel import config, preferences
+from intel import age, clock, config, preferences
+from intel import head as first_page_head
+from intel import metrics as intel_metrics
 from intel.models import EventType, ItemType
 from intel.ranking import serve_tokens
 from intel.signals.server import record as menu_signal
@@ -133,6 +135,9 @@ class HomeFeedView(generics.ListAPIView):
         tags=["feed"],
     )
     def get(self, request, *args, **kwargs):
+        # WP 4b.14: the requesting account's own age class (rule E9b), from its own
+        # token claims; safety data, captured whatever the personalization setting.
+        age.capture(request.user.account_id, getattr(request.user, "claims", None))
         mode = _mode(request)
         if request.query_params.get("peek") in ("1", "true"):
             return self._peek(request, mode)
@@ -181,7 +186,9 @@ class HomeFeedView(generics.ListAPIView):
         claims = getattr(request.user, "claims", None)  # age claims for eligibility
         try:
             if token is None:
-                page, offset = ranking.first_page(viewer, size, timezone.now(), claims), 0
+                # WP 4b.15: the test clock (dev, flag on, seed or test account only).
+                now = clock.request_now(request, viewer)
+                page, offset = ranking.first_page(viewer, size, now, claims), 0
             else:
                 cursor = ranking.decode_cursor(token)
                 page = ranking.next_page(viewer, token, size, claims)
@@ -205,6 +212,14 @@ class HomeFeedView(generics.ListAPIView):
             ranked=ranked,
             cfg_version=page.cfg_version if ranked else None,
         )
+        if page.caught_up and ranked:
+            intel_metrics.caught_up()
+        if token is None:
+            # WP 4b.11: overlap with the previous first page (ids only; nothing stored
+            # under personalization_off or a version without the head block).
+            first_page_head.record(
+                viewer, ranking.SURFACE, [i["post_id"] for i in data], ranking.home_config()
+            )
         return Response(
             {
                 "data": data,
@@ -214,6 +229,8 @@ class HomeFeedView(generics.ListAPIView):
                     "has_more": page.has_more,
                     "fallback": page.fallback,
                 },
+                # WP 4b.6: where this page's items leave the connection inventory.
+                "meta": {"caught_up_index": page.caught_up_index if ranked else None},
             }
         )
 

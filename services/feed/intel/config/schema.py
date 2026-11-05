@@ -10,7 +10,9 @@ or activated. The rules:
 - ratios that share a whole (``mix``, ``diversity.sim_weights``) sum to 1;
 - ``schema_version`` names the schema the params were written for. A new block
   (``exposure``, ``session`` v2, ``delivery`` ...) arrives with a schema bump and its
-  own spec, never by accepting unknown keys.
+  own spec, never by accepting unknown keys. Version 2 (07 WP 4b.6, 4b.11) adds
+  ``mix``, ``continuation``, ``head`` and the ``popular`` / ``fresh`` pool keys; a
+  version-1 params set that carries any of them is rejected.
 
 The specs are frozen dataclasses (``Num``, ``Int``, ``Bool``, ``Section``, ``Map``,
 ``ListOf``); ``validate(surface, params)`` returns the list of problems (empty when
@@ -23,7 +25,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SURFACES = ("home", "reels", "video", "groups")
 POST_TYPES = ("text", "image", "video", "link", "share", "poll", "reel")
 SOURCES = ("connections", "follow_pull", "groups", "reels", "video")
@@ -39,6 +41,9 @@ REASONS = (
     "new_follow",
     "public",
     "discovery",
+    # Home pools (WP 4b.6): the bucket a recommended item came from.
+    "rec_popular",
+    "rec_fresh",
 )
 
 
@@ -222,7 +227,48 @@ RETRIEVAL = Section(
         }
     ),
 )
-POOLS = Section({"window_days": Int(1, 180)})
+# Home discovery pools (07 WP 4b.6). ``popular``: smoothed engagement per hour,
+# (non-suspect reactions, comments, shares, weighted by ``engagement``, + prior) /
+# (age_h + prior_hours), within ``window_d``; ``fresh``: the freshness decay times
+# the integrity multipliers, within ``max_age_h``, kept at or above ``min_score``.
+# ``cap`` members per (surface, lang, bucket) sorted set (<= 128 keeps Redis's
+# compact listpack encoding); ``max_members`` of each are read per first page.
+POOL_POPULAR = Section(
+    {
+        "window_d": Int(1, 90),
+        "prior_engagement": Num(0.0, 1_000.0),
+        "prior_hours": Num(0.0, 24 * 30, gt=True),
+        "min_engagement": Int(0, 100_000),
+    }
+)
+POOL_FRESH = Section({"max_age_h": Int(1, 24 * 30), "min_score": UNIT})
+POOL_V2 = frozenset({"popular", "fresh", "rebuild_s", "cap", "max_members"})
+POOLS = Section(
+    {
+        "window_days": Int(1, 180),
+        "popular": POOL_POPULAR,
+        "fresh": POOL_FRESH,
+        "rebuild_s": Int(60, 24 * 3600),
+        "cap": Int(1, 128),
+        "max_members": Int(1, 128),
+    },
+    optional=POOL_V2,
+)
+# The recommended share of a Home session (decisions 4 and 23): ``recommended`` is
+# the variant's arm (0.0 control, 0.15, 0.30); a viewer whose eligible connection
+# candidates are below ``thin_inventory.below_candidates`` gets at least
+# ``thin_inventory.share`` (the decision-23 cap of 10% in the control).
+MIX = Section(
+    {
+        "recommended": UNIT,
+        "thin_inventory": Section({"below_candidates": Int(0, 100_000), "share": UNIT}),
+    }
+)
+# After the connection inventory ends, the session goes on into pool items (only
+# when the variant recommends anything), at most ``max_items`` of them.
+CONTINUATION = Section({"pools": Bool(), "max_items": Int(0, 2_000)})
+# The ids of a viewer's last first page (``feed:head``, WP 4b.11): kept this long.
+HEAD = Section({"ttl_s": Int(60, 30 * 24 * 3600)})
 ELIGIBILITY = Section({"minor_allowed_topics": ListOf(Int(0, 32_767), max_len=500, unique=True)})
 MEDIA_QUALITY = Section(
     {
@@ -357,8 +403,9 @@ DIVERSITY = Section(
     }
 )
 RANKING = Section({"sources": ListOf(Str(SOURCES), min_len=1, max_len=len(SOURCES), unique=True)})
-# The sources the Home ranker can retrieve (``intel.ranking.home.SOURCE_FUNCS``).
-HOME_SOURCES = ("connections", "follow_pull", "groups")
+# The sources the Home ranker can retrieve (``intel.ranking.home.SOURCE_FUNCS``);
+# ``discovery`` is the popular / fresh pools of WP 4b.6.
+HOME_SOURCES = ("connections", "follow_pull", "groups", "discovery")
 HOME_RANKING = Section(
     {"sources": ListOf(Str(HOME_SOURCES), min_len=1, max_len=len(HOME_SOURCES), unique=True)}
 )
@@ -417,8 +464,23 @@ SCHEMAS: dict[str, Section] = {
             "peek": PEEK,
             "ads": ADS,
             "why": WHY,
+            "mix": MIX,
+            "continuation": CONTINUATION,
+            "head": HEAD,
         },
-        optional=frozenset({"retrieval", "pools", "modes", "peek", "ads", "why"}),
+        optional=frozenset(
+            {
+                "retrieval",
+                "pools",
+                "modes",
+                "peek",
+                "ads",
+                "why",
+                "mix",
+                "continuation",
+                "head",
+            }
+        ),
     ),
     **{
         s: Section(
@@ -438,6 +500,37 @@ def validate(surface: str, params: Any) -> list[str]:
     SCHEMAS[surface].check(params, "", out)
     if isinstance(params, dict) and params.get("surface") not in (None, surface):
         out.append(f"surface: {params.get('surface')!r} is not {surface!r}")
+    if isinstance(params, dict):
+        out += _version_rules(params)
+    return out
+
+
+# Blocks and pool keys that schema version 2 introduced (WP 4b.6, 4b.11).
+V2_SECTIONS = ("mix", "continuation", "head")
+
+
+def _version_rules(params: dict) -> list[str]:
+    out = []
+    version = params.get("schema_version")
+    if isinstance(version, int) and not isinstance(version, bool) and version < 2:
+        for name in V2_SECTIONS:
+            if name in params:
+                out.append(f"{name}: needs schema_version 2")
+        pools = params.get("pools")
+        if isinstance(pools, dict):
+            for key in sorted(POOL_V2 & set(pools)):
+                out.append(f"pools.{key}: needs schema_version 2")
+    ranking = params.get("ranking")
+    sources = ranking.get("sources") if isinstance(ranking, dict) else None
+    if isinstance(sources, list) and "discovery" in sources:
+        # The pools' retriever reads these: a version naming the source must carry them.
+        pools = params.get("pools") if isinstance(params.get("pools"), dict) else {}
+        for key in ("popular", "fresh", "max_members"):
+            if key not in pools:
+                out.append(f"pools.{key}: required with the discovery source")
+        for name in ("mix", "continuation"):
+            if name not in params:
+                out.append(f"{name}: required with the discovery source")
     return out
 
 

@@ -74,3 +74,16 @@ def set_default_mode(account_id, mode: str, *, expected_version: int | None = No
         UserPreference.objects.filter(pk=row.pk).update(default_mode=mode, version=F("version") + 1)
         row.refresh_from_db()
         return row
+
+
+def personalization_off(account_id) -> bool:
+    """The viewer turned personalization off (decision 24: then nothing behavioural is
+    stored). Fail closed: an unreadable preference counts as off."""
+    try:
+        return bool(
+            UserPreference.objects.filter(account_id=account_id)
+            .values_list("personalization_off", flat=True)
+            .first()
+        )
+    except Exception:  # noqa: BLE001 - never store behaviour we cannot prove is allowed
+        return True

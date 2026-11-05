@@ -15,3 +15,5 @@ data:
   TARA_JWKS_URL: "https://api.tara.example/.well-known/jwks.json"
   LOG_LEVEL: "INFO"
   LOG_FORMAT: "json"
+  # Tara Intelligence WP 4b.9: watched reels go last for this many hours (1 to 720).
+  REELS_SEEN_WINDOW_H: "72"

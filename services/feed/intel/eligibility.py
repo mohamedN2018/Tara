@@ -15,9 +15,10 @@ Where each rule applies (``SOURCE CLASSES``):
   blocks, hides, page status). A pending group post keeps only its author's own row.
 - pull sources (``follow_pull``, ``groups``) never went through the fan-out check:
   E1, E1b, E1c, E2b, E3, E4, E5, E6 (active), E6b.
-- discovery sources (``reels``, ``video`` public pools; WP 9.1's pools later): every
-  rule, including E2 (public, or a public active group), E6 (searchable), E7
-  (pending integrity), E8 (dislikes), E9 (age), E10 (languages), E11 (restriction).
+- discovery sources (``reels``, ``video`` public pools, the Home ``discovery`` pools
+  of WP 4b.6; WP 9.1's pools later): every rule, including E2 (public, or a public
+  active group), E6 (searchable), E7 (pending integrity), E8 (dislikes), E9 (the
+  viewer's age), E9b (the author's age), E10 (languages), E11 (restriction).
 
 All data comes from feed_db in a fixed number of batched queries (one ``IN`` per
 table), never one call per candidate and never another service.
@@ -279,6 +280,20 @@ def e9_age(c: Candidate, ctx: Context) -> bool:
     return bool(ctx.topics.get(c.post_id, set()) & allowed)
 
 
+def e9b_author_age(c: Candidate, ctx: Context) -> bool:
+    """WP 4b.14 (owner decisions 9b and 37): a ``kind=user`` author reaches strangers'
+    discovery only when their own token said adult (``author_ref.age_class``). A
+    minor, an unknown age or no ``author_ref`` row at all is dropped (fail closed).
+    Pages carry no age class and are not excluded; connection and pull items never
+    run this rule, so friends and followers still see a minor's posts."""
+    if ctx.is_page(c):
+        return True
+    author = ctx.author(c)
+    if author is None:
+        return False
+    return (ctx.authors.get(author) or {}).get("age_class") == "adult"
+
+
 def e10_language(c: Candidate, ctx: Context) -> bool:
     v = ctx.viewer
     if v.languages is None or v.other_languages:
@@ -314,6 +329,7 @@ RULES: tuple[tuple[str, frozenset[str], Rule], ...] = (
     ("E7", DISCOVERY, e7_pending_integrity),
     ("E8", DISCOVERY, e8_dislikes),
     ("E9", DISCOVERY, e9_age),
+    ("E9b", DISCOVERY, e9b_author_age),
     ("E10", DISCOVERY, e10_language),
     ("E11", DISCOVERY, e11_restriction),
 )
@@ -339,10 +355,13 @@ def load_context(viewer: Viewer, candidates: list[Candidate], cfg: SurfaceConfig
     content = {
         _s(r["post_id"]): r
         for r in _fetch(
-            "SELECT post_id, author_id, author_type, type, audience, group_id, approval_state,"
-            " reel_state, lang, state, moderation_state, pending_reports, moderation_open"
-            " FROM intel_content_ref WHERE post_id = ANY(%s::uuid[])",
-            [post_ids],
+            "SELECT c.post_id, c.author_id, c.author_type, c.type, c.audience, c.group_id,"
+            " c.approval_state, c.reel_state, c.lang, c.state, c.moderation_state,"
+            " c.pending_reports, c.moderation_open, c.created_at,"
+            " EXISTS (SELECT 1 FROM feed_item i WHERE i.recipient_id = %s"
+            " AND i.post_id = c.post_id) AS in_feed"
+            " FROM intel_content_ref c WHERE c.post_id = ANY(%s::uuid[])",
+            [viewer.id, post_ids],
         )
     }
     authors = sorted(
@@ -433,7 +452,7 @@ def load_context(viewer: Viewer, candidates: list[Candidate], cfg: SurfaceConfig
 class Result:
     kept: list[Candidate]
     dropped: Counter = field(default_factory=Counter)  # {rule: n}
-    content: dict = field(default_factory=dict)  # recheck: the content rows it read
+    content: dict = field(default_factory=dict)  # the content rows the rules read
 
 
 def evaluate(c: Candidate, ctx: Context) -> str | None:
@@ -454,7 +473,7 @@ def filter(  # noqa: A001 - the stage's name in 02 section 6
     if not items:
         return Result([])
     ctx = load_context(viewer, items, cfg)
-    result = Result([])
+    result = Result([], content=ctx.content)
     for c in items:
         rule = evaluate(c, ctx)
         if rule is None:
@@ -471,7 +490,9 @@ def filter(  # noqa: A001 - the stage's name in 02 section 6
 # A later page re-runs the rules that can change between pages (02 section 22):
 # deletion and moderation, group approval, reel playability, audience, group access,
 # blocks, the viewer's hides, snoozes and mutes, and page status.
-RECHECK = frozenset({"E1", "E1b", "E1c", "E2", "E2b", "E3", "E4", "E5", "E6b"})
+# E9b (WP 4b.14) too: an author's age class only ever leaves ``unknown``, and a
+# discovery item is re-checked fail closed like every other rule here.
+RECHECK = frozenset({"E1", "E1b", "E1c", "E2", "E2b", "E3", "E4", "E5", "E6b", "E9b"})
 
 _RECHECK_CONTENT_SQL = """
 SELECT c.post_id, c.author_id, c.author_type, c.type, c.audience, c.group_id,
@@ -521,7 +542,7 @@ UNION ALL
 SELECT 'muted', target_id::text, NULL FROM relationship_flag
 WHERE actor_id = %(v)s AND kind = 'mute' AND active AND target_id = ANY(%(authors)s::uuid[])
 UNION ALL
-SELECT 'author', account_id::text, kind FROM author_ref
+SELECT 'author', account_id::text, kind || ':' || age_class FROM author_ref
 WHERE account_id = ANY(%(authors)s::uuid[])
 """
 
@@ -562,7 +583,13 @@ def recheck_context(viewer: Viewer, candidates: list[Candidate], cfg: SurfaceCon
             if kind == "owner":
                 group_owners.setdefault(key, set()).add(value)
             elif kind == "author":
-                kinds[key] = {"kind": value, "active": True, "searchable": True}
+                author_kind, _, age_class = (value or "").partition(":")
+                kinds[key] = {
+                    "kind": author_kind,
+                    "active": True,
+                    "searchable": True,
+                    "age_class": age_class or "unknown",
+                }
             else:
                 sets[kind].add(key)
     return Context(

@@ -11,7 +11,12 @@ export interface FeedResponse {
   /** The ranking mode the server applied (2A). Absent from a server without modes. */
   mode?: string;
   /** First pages: the ad positions from the server's config, and the server time. */
-  meta?: { ad_slots?: number[]; as_of?: string };
+  meta?: {
+    ad_slots?: number[];
+    as_of?: string;
+    /** For-you pages (4b.6): where the viewer's own circle ran out and suggestions begin. */
+    caught_up_index?: number | null;
+  };
 }
 
 /** `?peek=1` (WP 4.7): new rows for the "new posts" pill, no session or ads touched. */
@@ -55,8 +60,12 @@ export interface WhyExplanation {
 export const HIDE_REASONS = ["not_interested", "spam", "sexual", "annoying", "dislike_creator", "other"] as const;
 export type HideReason = (typeof HIDE_REASONS)[number];
 
-/** Why a post is in this viewer's feed (feed's FeedItem.Reason). */
-export type FeedReason = "self" | "friend" | "follow";
+/** Why a post is in this viewer's feed (feed's FeedItem.Reason). `rec_*` (4b.6):
+ * a suggestion from the popular or fresh pools (`source: "discovery"`). */
+export type FeedReason = "self" | "friend" | "follow" | "rec_popular" | "rec_fresh";
+
+/** A suggestion from outside the viewer's circle (shows the "Suggested" label). */
+export const isSuggestedReason = (r: FeedReason | null | undefined): boolean => !!r && r.startsWith("rec_");
 
 export interface Snooze {
   author_id: string;
@@ -81,6 +90,8 @@ export interface HydratedFeedPage {
   adSlots?: number[];
   /** Server time of the first page: later peeks ask for rows after it. */
   asOf?: string;
+  /** For-you (4b.6): index in this page's items where suggestions begin; null when none. */
+  caughtUpIndex?: number | null;
 }
 
 // Upper bound on fully-filtered pages followed in a row.
@@ -163,10 +174,12 @@ export const feedService = {
       note(resp.data);
       posts = await hydrateFeed(resp.data);
     }
+    const caught = resp.meta?.caught_up_index;
     return {
       posts,
       reasons,
       sponsored,
+      caughtUpIndex: Number.isInteger(caught) ? (caught as number) : null,
       nextCursor: resp.page.next_cursor,
       hasMore: resp.page.has_more,
       modeApplied,

@@ -8,7 +8,9 @@ deleted pages, unplayable reels, restricted and shadowed authors, friends-only,
 followers-only and ``only_me`` posts reached through **every pull source** (capped
 fan-outs, new follows and new friends, groups), deactivated authors, removed posts,
 and minor or unknown-age viewers. Every account is checked as the viewer on every
-surface.
+surface. WP 4b.14 adds the authors' own age class (adult, minor, unknown, or no
+``author_ref`` row at all): no discovery item, the Home ``discovery`` pools included,
+is ever by a user author who is not a known adult (rule E9b).
 """
 
 from __future__ import annotations
@@ -63,6 +65,7 @@ class World:
     new_follows: set[tuple[str, str]]
     blocks: set[tuple[str, str]]
     restricted: dict[str, str]
+    ages: dict[str, str | None]  # author_ref.age_class; None: the column's default
     pages: dict[str, dict]
     groups: dict[str, dict]
     members: dict[tuple[str, str], dict]
@@ -123,6 +126,9 @@ def worlds(draw):
             for u in users
             if draw(st.integers(0, 4)) == 0
         },
+        ages={
+            u: draw(st.sampled_from(["adult", "adult", "minor", "unknown", None])) for u in users
+        },
         pages=pages,
         groups=groups,
         members=members,
@@ -165,12 +171,14 @@ def _store(world: World) -> None:
     long_ago = NOW - timedelta(days=30)
     recent = NOW - timedelta(hours=1)
     for u in world.users:
+        extra = {"age_class": world.ages[u]} if world.ages[u] else {}
         AuthorRef.objects.create(
             account_id=u,
             occurred_at=long_ago,
             active=world.active[u],
             deactivated=not world.active[u],
             searchable=world.searchable[u],
+            **extra,
         )
     for f in world.friends:
         a, b = sorted(f)
@@ -332,6 +340,9 @@ def _assert_authorized(world, viewer, limited, kept, posts, surface) -> None:
             owner = world.pages.get(p["author"], {}).get("owner")
             assert owner not in world.restricted
             assert p["moderation"] == "ok" and p["reports"] < 3
+            # E9b: a user author reaches strangers only as a known adult.
+            if p["author_type"] == "user":
+                assert world.ages[p["author"]] == "adult", (surface, c, p)
         if p["approval"] == "pending":
             assert c.source == "connections" and p["author"] == viewer
         if p["type"] == "reel":  # playability is feed's rule (E1c), not post's

@@ -134,8 +134,38 @@ class _Beyond:
         return True
 
 
-def rerank(items: Sequence[Item], block: dict, page_size: int | None = None) -> list[Item]:
-    """``items`` (best first) re-ordered page by page. Same input, same output."""
+Insert = Callable[[int, "_Page"], "Item | None"]
+# ``relief(position, page, names)``: an outside item keeping the constraints ``names``.
+Relief = Callable[[int, "_Page", Sequence[str]], "Item | None"]
+
+
+def _place(page: _Page, extra: Item, out: list, window: Sequence[Item], best_sim: dict) -> None:
+    """An outside item (``insert`` / ``relief``) takes the slot as is."""
+    page.add(extra)
+    out.append(extra)
+    for it in window:
+        s = page.sim_pair(it, extra)
+        if s > best_sim.get(id(it), 0.0):
+            best_sim[id(it)] = s
+
+
+def rerank(
+    items: Sequence[Item],
+    block: dict,
+    page_size: int | None = None,
+    insert: Insert | None = None,
+    relief: Relief | None = None,
+) -> list[Item]:
+    """``items`` (best first) re-ordered page by page. Same input, same output.
+
+    ``insert(position, page)`` (07 WP 4b.6) may claim a slot for an item from outside
+    ``items`` (a recommended pool item): it is placed as is, counts on its page like
+    any pick, and the re-ranker goes on around it. ``relief(position, page, names)``
+    is asked when no item of ``items`` keeps the constraints ``names`` at a slot,
+    before one more is relaxed: an outside item it returns (one that keeps them)
+    takes the slot, so the author cap and the format run hold "when alternatives
+    exist" outside ``items`` too (R1 verifier, 07 WP 4b.10). Without either nothing
+    changes."""
     size = page_size or block["page_size"]
     block = {**block, "page_size": size}
     window = block["window_factor"] * size
@@ -152,7 +182,14 @@ def rerank(items: Sequence[Item], block: dict, page_size: int | None = None) -> 
     while remaining:
         page = _Page(block, out[-carry:] if carry else ())
         best_sim: dict[int, float] = {}  # id(item) -> max sim to this page's picks
-        for _ in range(min(size, len(remaining))):
+
+        for _ in range(size):
+            extra = insert(len(out), page) if insert is not None and remaining else None
+            if extra is not None:
+                _place(page, extra, out, remaining[:window], best_sim)
+                continue
+            if not remaining:
+                break
             pool = remaining[:window]
             choice = None
             for relaxed in range(len(RELAX_ORDER) + 1):
@@ -180,6 +217,15 @@ def rerank(items: Sequence[Item], block: dict, page_size: int | None = None) -> 
                     )
                     if choice is not None:
                         break
+                if relief is not None and names:
+                    # Nothing in ``items`` keeps these constraints here: an outside
+                    # item that does beats relaxing one more.
+                    extra = relief(len(out), page, names)
+                    if extra is not None:
+                        break
+            if choice is None and extra is not None:
+                _place(page, extra, out, remaining[:window], best_sim)
+                continue
             index, _ = choice
             picked = beyond.take(remaining, index)
             page.add(picked)

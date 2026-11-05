@@ -142,6 +142,9 @@ CELERY_BEAT_SCHEDULE = {
     # (idempotent, so hourly is safe and survives a beat restart), batch dedupe purge.
     "intel-partitions": {"task": "intel.maintain_partitions", "schedule": 3600.0},
     "intel-purge-signal-batches": {"task": "intel.purge_signal_batches", "schedule": 3600.0},
+    # WP 4b.6: a one-minute tick; the task rebuilds the Home pools only when the
+    # active version's pools.rebuild_s has passed (the period lives in the config).
+    "intel-rebuild-pools": {"task": "intel.rebuild_pools", "schedule": 60.0},
 }
 
 # ---- Tara Intelligence (docs/intelligence) ---------------------------------------
@@ -163,6 +166,9 @@ INTEL_ENGAGEMENT_RETENTION_DAYS = min(
 # Emit intel.config.changed (admin's audit log) on every ranking config change
 # (WP 4.1). Default on; off only while admin's consumer is not deployed yet.
 INTEL_EMIT_CONFIG_CHANGED = env_bool("INTEL_EMIT_CONFIG_CHANGED", True)
+# Dev only (WP 4b.15): honour X-Tara-Test-Now for seed and test accounts. The deploy
+# check intel.E005 and /readyz/ refuse it outside development.
+INTEL_TEST_CLOCK_ENABLED = env_bool("INTEL_TEST_CLOCK_ENABLED", False)
 
 CORS_ALLOWED_ORIGINS = env_list("FEED_CORS_ORIGINS", "http://localhost:5173")
 CORS_ALLOW_CREDENTIALS = True

@@ -166,7 +166,10 @@ def test_seed_command_writes_backdated_synthetic_rows(settings):
 def test_seed_command_scale_and_replace(settings):
     settings.INTEL_ACCEPT_SYNTHETIC = True
     settings.INTEL_SIGNAL_RETENTION_DAYS = 90
-    seed = acct()
+    # A fixed id: the command seeds its RNG with "{seed}:{account}", so a random id
+    # made the row counts, and so this comparison, a random draw (it failed now and
+    # then; the command itself is unchanged since phase 2).
+    seed = "00000000-0000-4000-8000-00000000a11d"
     _register(seed)
     for d in range(1, 20):
         _feed(seed, days_ago=d)

@@ -15,7 +15,7 @@ from tara_common.pagination import CursorPagination
 from tara_common.responses import data_response
 from tara_resilience.idempotency import idempotent
 
-from . import composer, hydration, saved, services
+from . import composer, hydration, keyset, saved, services
 from .models import IdempotencyRecord, PostState
 from .serializers import (
     CommentCreateSerializer,
@@ -94,9 +94,19 @@ class PostCreateView(APIView):
         """
         hashtag = request.query_params.get("hashtag")
         if request.query_params.get("type") == "video" and not hashtag:
-            # The home "Videos" rail and /videos (T4): video posts the viewer may see.
-            queryset = services.video_posts_queryset(request.query_params.get("author_id"))
-        elif hashtag:
+            # The home "Videos" rail and /videos (T4): full pages of video posts
+            # the viewer may see (4b.9: audience in SQL, bounded over-fetch).
+            size = keyset.page_size(
+                request, CursorPagination.page_size, CursorPagination.max_page_size
+            )
+            posts, next_cursor = services.video_page(
+                _me(request),
+                request.query_params.get("author_id"),
+                request.query_params.get("cursor"),
+                size,
+            )
+            return Response(keyset.envelope(_serialize(_me(request), posts), next_cursor))
+        if hashtag:
             queryset = services.hashtag_posts_queryset(hashtag)
         else:
             # A profile timeline: the author's own posts, or (``tagged_id``)

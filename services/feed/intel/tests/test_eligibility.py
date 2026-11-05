@@ -360,6 +360,48 @@ def test_e9_allow_listed_topics_on_pages_reach_limited_viewers():
     assert eligibility.evaluate(c, ctx) is None
 
 
+# ---- E9b: the author's age (WP 4b.14) ----------------------------------------------------
+
+
+@pytest.mark.parametrize("age_class", ["minor", "unknown", None])
+@pytest.mark.parametrize("source", ["discovery", "reels", "video"])
+def test_e9b_minor_or_unknown_user_authors_never_reach_strangers(age_class, source):
+    viewer, author = w.uid(), w.uid()
+    kind = {"reels": "reel", "video": "video"}.get(source, "text")
+    p = w.post(author, type=kind, author_age=age_class)
+    assert dropped_by(viewer, cand(p, author, source, type=kind)) == {"E9b"}
+
+
+@pytest.mark.parametrize("source", ["connections", "follow_pull", "groups"])
+def test_e9b_leaves_friends_and_followers_untouched(source):
+    viewer, author = w.uid(), w.uid()
+    g = None
+    if source == "groups":
+        g = w.group()
+        w.member(viewer, g)
+    p = w.post(author, author_age="minor", group=g, audience="group" if g else "public")
+    assert kept(viewer, cand(p, author, source)) == {p}
+
+
+def test_e9b_pages_carry_no_age_and_are_not_excluded():
+    viewer, owner = w.uid(), w.uid()
+    pg = w.page(owner)
+    p = w.post(pg, author_type="page")
+    assert kept(viewer, cand(p, pg, "discovery", reason="rec_popular")) == {p}
+
+
+def test_e9b_an_adult_author_is_discovered_and_the_rule_is_re_checked_between_pages():
+    viewer, author = w.uid(), w.uid()
+    p = w.post(author, author_age="adult")
+    c = cand(p, author, "discovery", reason="rec_fresh")
+    assert kept(viewer, c) == {p}
+    v = Viewer(viewer, **ADULT)
+    assert [k.post_id for k in eligibility.recheck(v, [c], HOME).kept] == [p]
+    w.author(author, age_class="minor")  # the author's own token said minor since
+    result = eligibility.recheck(v, [c], HOME)
+    assert result.kept == [] and dict(result.dropped) == {"E9b": 1}
+
+
 # ---- E10: languages ---------------------------------------------------------------------
 
 
@@ -440,6 +482,7 @@ def test_every_rule_has_a_function_and_the_rule_set_is_complete():
         "E7",
         "E8",
         "E9",
+        "E9b",
         "E10",
         "E11",
     )

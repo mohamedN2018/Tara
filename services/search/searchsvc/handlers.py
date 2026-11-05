@@ -14,7 +14,7 @@ from django.utils import timezone
 from tara_events import on_event
 from tara_events.envelope import EventEnvelope
 
-from . import backend, clients, indexing, posts
+from . import backend, clients, indexing, posts, restrictions
 from .models import BlockedPair, DocState, RecentSearch, SearchDocument
 
 # ---- people and pages (profile service) -----------------------------------------
@@ -260,3 +260,22 @@ def on_account_deleted(e: EventEnvelope) -> None:
             Q(account_id=account_id) | Q(doc_type="user", doc_id=account_id)
         ).delete()
         BlockedPair.objects.filter(Q(blocker_id=account_id) | Q(blocked_id=account_id)).delete()
+        restrictions.forget(account_id)
+
+
+# ---- moderation (Tara Intelligence 4b.20-B3) ----------------------------------------
+
+
+@on_event("moderation.actioned")
+def on_moderation_actioned(e: EventEnvelope) -> None:
+    """A ``restrict`` or ``shadow`` on a user takes their public posts out of the
+    trending counts; ``reinstate`` puts them back. Other actions and target
+    types are ignored (content removals arrive as ``post.deleted``). Newest
+    event wins, so a redelivered or out-of-order event changes nothing."""
+    p = e.payload if isinstance(e.payload, dict) else {}
+    action = p.get("action")
+    if p.get("target_type") != "user":
+        return
+    if action not in (restrictions.RESTRICTING_ACTIONS | {restrictions.REINSTATE}):
+        return
+    restrictions.set_restriction(p.get("target_id"), action, p.get("case_id"), indexing.occurred(e))

@@ -25,6 +25,8 @@ x-feed-intel-env: &feed-intel-env
   INTEL_SIGNAL_RETENTION_DAYS: ${INTEL_SIGNAL_RETENTION_DAYS:-90}
   INTEL_ENGAGEMENT_RETENTION_DAYS: ${INTEL_ENGAGEMENT_RETENTION_DAYS:-30}
   INTEL_EMIT_CONFIG_CHANGED: ${INTEL_EMIT_CONFIG_CHANGED:-true}
+  # X-Tara-Test-Now for seed/test accounts (WP 4b.15); development only, default off.
+  INTEL_TEST_CLOCK_ENABLED: ${INTEL_TEST_CLOCK_ENABLED:-false}
 
 services:
   # ---- Backing services ----------------------------------------------------
@@ -98,14 +100,17 @@ services:
       timeout: 3s
       retries: 10
 
-  # Heavy, rebuildable state (feed ranking sessions, 1.7) kept out of the shared
-  # Redis. noeviction: a full redis-hot refuses writes and feed falls back to
-  # latest order; nothing is persisted.
+  # Heavy, rebuildable state (feed ranking sessions 1.7, pools and first-page heads
+  # of Tara Intelligence) kept out of the shared Redis. noeviction: a full redis-hot
+  # refuses writes and feed falls back to latest order; nothing is persisted.
+  # 384 MB: budget about 190 MB worst case at 10k DAU, >= 2x headroom (07 WP 4b.0).
   redis-hot:
     image: redis:7-alpine
     profiles: ["core"]
     command: ["redis-server", "--save", "", "--appendonly", "no",
-              "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
+              "--maxmemory", "384mb", "--maxmemory-policy", "noeviction"]
+    # Same limit as Dokploy (07 WP 4b.0): maxmemory plus Redis overhead.
+    mem_limit: 448m
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -627,6 +632,8 @@ services:
       <<: *feed-intel-env
       POSTGRES_HOST: postgres
       REDIS_URL: redis://redis:6379/5
+      # Beat's intel.rebuild_pools writes the discovery pools here (WP 4b.6).
+      REDIS_HOT_URL: ${REDIS_HOT_URL:-redis://redis-hot:6379/0}
       RABBITMQ_URL: ${RABBITMQ_URL}
       RUN_MIGRATIONS: "false"
     depends_on:

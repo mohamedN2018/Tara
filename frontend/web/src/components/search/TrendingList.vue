@@ -6,8 +6,10 @@ import { useI18n } from "vue-i18n";
 import { tagRoute } from "@/lib/searchRoutes";
 import { searchService, type TrendingTag } from "@/services/search";
 
-// "Trending on Tara" with a Today / This week toggle (GET /search/trending/).
+// "Trending on Tara" with a Last 24 h / Last 7 days toggle (GET /search/trending/).
 // `compact` (the right rail) hides itself when nothing is trending.
+// Counts (4b.20-B3): the server sends only `posts_floor` (20, 50, 100, 500, 1K,
+// 5K, 10K) or null; null shows no count line, and the window is always named.
 const props = withDefaults(defineProps<{ compact?: boolean; limit?: number }>(), { compact: false, limit: 10 });
 
 const { t } = useI18n();
@@ -17,6 +19,17 @@ const win = ref<Window>("week");
 const tags = ref<TrendingTag[]>([]);
 const loading = ref(true);
 let generation = 0;
+
+// 1000 -> "1K", 5000 -> "5K", 10000 -> "10K"; the floors below 1000 as they are.
+function floorText(n: number): string {
+  return n >= 1000 && n % 1000 === 0 ? `${n / 1000}K` : String(n);
+}
+
+function countLine(tag: TrendingTag): string | null {
+  if (tag.posts_floor == null) return null;
+  const key = tag.window === "day" ? "postsFeed.search.postsFloorDay" : "postsFeed.search.postsFloorWeek";
+  return t(key, { n: floorText(tag.posts_floor) });
+}
 
 async function load() {
   const run = ++generation;
@@ -72,7 +85,7 @@ onMounted(load);
                English layout (or the reverse) doesn't pull its line to the other side. -->
           <span class="min-w-0 flex-1 text-start">
             <span class="block truncate text-start text-sm font-semibold" data-testid="trending-tag">#<bdi>{{ tag.tag }}</bdi></span>
-            <span class="block text-start text-xs text-gray-600 dark:text-gray-400">{{ t("postsFeed.search.posts", { n: tag.posts }, tag.posts) }}</span>
+            <span v-if="countLine(tag)" class="block text-start text-xs text-gray-600 dark:text-gray-400" data-testid="trending-count">{{ countLine(tag) }}</span>
           </span>
         </RouterLink>
       </li>

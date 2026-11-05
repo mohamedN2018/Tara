@@ -5,7 +5,7 @@
   autocomplete over people, pages, groups and hashtags, one SQL query.
 - ``/search/recent/``: the caller's own search history (list, add, clear;
   ``/search/recent/<id>/`` deletes one entry).
-- ``GET /search/trending/``: hashtags trending in public posts.
+- ``GET /search/trending/``: hashtags trending in public posts (bucketed counts).
 
 All reads are non-atomic (no write, so no transaction or savepoint per request).
 """
@@ -189,4 +189,11 @@ class TrendingView(APIView):
         tags=["search"],
     )
     def get(self, request: Request) -> Response:
+        """``?window=day|week`` (the week by default): ``[{tag, posts_floor, window}]``.
+
+        Tags with at least ``SEARCH_TRENDING_MIN_AUTHORS`` distinct authors of
+        public posts, restricted and shadowed authors not counted. Raw counts
+        never leave the service: ``posts_floor`` is the largest of 20, 50, 100,
+        500, 1K, 5K, 10K the post count reaches, or ``null`` below 20.
+        """
         return data_response(history.trending(request.query_params.get("window") or "week"))

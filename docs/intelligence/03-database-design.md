@@ -525,7 +525,7 @@ The label alone decides the origin: `seed-*` gives `synthetic`, `test-*` gives `
 | `intel:prof:{account}` | string | 600 s | About 2 KB |
 | `intel:pool:{surface}:{lang}:{topic\|_trending\|_new}` | zset (post_id → pool score) | 900 s | ≤ 128 members, so the zset stays in listpack encoding (about 4 KB per key). About 960 keys, about **4 MB**, a fixed budget |
 
-There is no Redis dedupe key: batch dedupe lives in Postgres (`intel_signal_batch`). The full `redis-hot` budget (128 MB, `noeviction`) is worked out in [02](02-architecture.md) section 22: about 78 MB at 10k DAU with 2,000 viewers active per 30 minutes; WP 13.2 raises `maxmemory` if measurements require.
+There is no Redis dedupe key: batch dedupe lives in Postgres (`intel_signal_batch`). The full `redis-hot` budget (128 MB, `noeviction`) is worked out in [02](02-architecture.md) section 22: about 78 MB at 10k DAU with 2,000 viewers active per 30 minutes; 07 WP 4b.0 raises `maxmemory` to 384 MB (06 §5.2) and WP 13.2 re-measures.
 
 ## 3. Changes to existing tables and services
 

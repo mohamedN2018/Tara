@@ -114,7 +114,17 @@ GRAPH_INTERNAL_URL = os.getenv("GRAPH_INTERNAL_URL", "http://graph:8000")
 POST_INTERNAL_URL = os.getenv("POST_INTERNAL_URL", "http://post:8000")
 PROFILE_INTERNAL_URL = os.getenv("PROFILE_INTERNAL_URL", "http://profile:8000")
 MARKETPLACE_INTERNAL_URL = os.getenv("MARKETPLACE_INTERNAL_URL", "http://marketplace:8000")
+# The standing account restrictions export (``search_backfill_restrictions``).
+MODERATION_INTERNAL_URL = os.getenv("MODERATION_INTERNAL_URL", "http://moderation:8000")
 SEARCH_INTERNAL_TIMEOUT = float(os.getenv("SEARCH_INTERNAL_TIMEOUT", "1.5"))
+
+# Trending hashtags honesty rules (Tara Intelligence 4b.20-B3, 08 §3 and §9.4).
+# Not intel ranking: plain settings, no env vars. A tag needs this many distinct
+# authors; a post count is shown only as the largest floor it reaches (never a
+# number below the first floor); answers are cached per window.
+SEARCH_TRENDING_MIN_AUTHORS = 3
+SEARCH_TRENDING_COUNT_FLOORS = (20, 50, 100, 500, 1000, 5000, 10000)
+SEARCH_TRENDING_CACHE_S = 300
 
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")
 TARA_EVENT_PUBLISHER = "null"  # Search is read-only-derived; it does not publish events

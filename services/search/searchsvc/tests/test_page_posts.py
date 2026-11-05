@@ -90,7 +90,7 @@ def test_hidden_page_takes_its_posts_out_and_republish_restores(api, hidden):
     page_event(page, 10, **hidden)  # a redelivered event is a no-op
     assert post_ids(api, "booksale") == ["up1"]
     assert tag_count(api, "nilebooks") == 1  # only the user's post backs it now
-    assert {r["tag"]: r["posts"] for r in history.trending()}["nilebooks"] == 1
+    assert {r["tag"]: r["posts"] for r in history.counted()}["nilebooks"] == 1
     assert SearchDocument.objects.filter(doc_type=PARKED_POST, doc_id="pp1").count() == 1
     assert not PublicPostHashtag.objects.filter(post_id="pp1").exists()
 

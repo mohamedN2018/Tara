@@ -16,7 +16,9 @@ The rules a reel follows, all enforced here:
   friends, followed accounts and followed pages. Both leave out the viewer's
   own reels, anyone blocked either way, accounts the viewer muted, and reels
   the viewer marked "not interested". Graph down: no friends or follows (fail
-  closed: public reels only); mutes unknown are not applied.
+  closed: public reels only); mutes unknown are not applied. ``for_you``
+  serves reels not watched in the last ``REELS_SEEN_WINDOW_H`` hours first
+  (``seen_last_page``, 4b.9); ``following`` stays newest first.
 - **Views.** One per viewer per reel per UTC day; the author's are not counted,
   and neither is a play shorter than ``MIN_VIEW_WATCH_MS`` (D12). A counted
   view emits ``reel.viewed``; "not interested" emits ``reel.hidden`` /
@@ -29,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime, timedelta
 
 import requests
 from django.conf import settings
@@ -37,7 +40,7 @@ from django.db.models import Exists, F, OuterRef, Q
 from django.utils import timezone
 from gatherings import graph
 from posts import clients as post_clients
-from posts import events, media_client, pages
+from posts import events, keyset, media_client, pages
 from posts import services as post_services
 from posts.clients import Relationship
 from posts.models import Audience, CommentPolicy, Post, PostMedia, PostState
@@ -391,6 +394,77 @@ def feed_queryset(ctx: FeedContext, tab: str):
             | Q(author_id__in=followed, post__audience=Audience.FOLLOWERS)
         )
     return qs.order_by("-created_at", "-post_id")
+
+
+def _seen_reel_ids(viewer: str, snapshot: datetime):
+    """Reels the viewer watched in the window before ``snapshot`` (a subquery on
+    ``reel_view_viewer_idx``). Fixing the snapshot for the whole scroll keeps the
+    two phases stable: a view recorded between pages moves nothing."""
+    since = snapshot - timedelta(hours=settings.REELS_SEEN_WINDOW_H)
+    return ReelView.objects.filter(
+        viewer_id=viewer, viewed_at__gte=since, viewed_at__lt=snapshot
+    ).values("reel_id")
+
+
+def _snapshot(data: dict | None, now: datetime) -> tuple[int, datetime, tuple | None]:
+    """The cursor's phase, snapshot time and keyset position (first page: phase 1, now)."""
+    if data is None:
+        return 1, now, None
+    phase = data.get("p")
+    if phase not in (1, 2):
+        raise keyset.invalid_cursor()
+    try:
+        snapshot = datetime.fromisoformat(str(data["s"]))
+    except (KeyError, TypeError, ValueError):
+        raise keyset.invalid_cursor() from None
+    if snapshot.tzinfo is None:
+        raise keyset.invalid_cursor()
+    position = keyset.position(data) if "t" in data else None
+    return phase, min(snapshot, now), position
+
+
+def seen_last_page(ctx: FeedContext, token: str | None, size: int, *, now=None):
+    """One page of the ``for_you`` tab, reels not watched in the window first
+    (Tara Intelligence 4b.9).
+
+    Phase 1 is the tab's reels with no ``ReelView`` in the window, phase 2 the
+    watched ones, each newest first by ``(created_at, post_id)``. The opaque
+    cursor carries ``(phase, snapshot, created_at, post_id)``: the snapshot
+    pins which reels count as watched, so paging while views are recorded
+    neither repeats nor skips a reel. Returns the visible reels (the post rule
+    per item, as before) and the next cursor, or ``None`` at the end.
+    """
+    phase, snapshot, position = _snapshot(keyset.decode(token), now or timezone.now())
+    seen = _seen_reel_ids(ctx.viewer, snapshot)
+    base = feed_queryset(ctx, TAB_FOR_YOU)
+
+    def candidates(phase_: int, position_):
+        qs = base.exclude(pk__in=seen) if phase_ == 1 else base.filter(pk__in=seen)
+        return qs.filter(keyset.after(*position_)) if position_ else qs
+
+    def cursor(phase_: int, position_) -> str:
+        fields = {"p": phase_, "s": snapshot.isoformat()}
+        if position_:
+            fields.update(keyset.mark(*position_))
+        return keyset.encode(fields)
+
+    out: list[Reel] = []
+    next_cursor = None
+    while phase <= 2:
+        need = size - len(out)
+        if need == 0:  # the page filled exactly at the end of phase 1
+            if candidates(phase, position).exists():
+                next_cursor = cursor(phase, position)
+            break
+        rows = list(candidates(phase, position)[: need + 1])
+        if len(rows) > need:
+            out.extend(rows[:need])
+            last = out[-1]
+            next_cursor = cursor(phase, (last.created_at, last.pk))
+            break
+        out.extend(rows)
+        phase, position = phase + 1, None
+    return ctx.visible(out), next_cursor
 
 
 def author_queryset(author_id) -> object:

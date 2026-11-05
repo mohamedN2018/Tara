@@ -1029,6 +1029,48 @@ it does not conflict.
   (24 bytes per item). Sessions from the old key are ignored, so a viewer in the
   middle of a "for you" scroll at deploy time gets one latest-order fallback page.
 
+### Upgrading: Tara Intelligence R1, repetition quick wins (WP 4b.0, 4b.1, 4b.6, 4b.10, 4b.11, 4b.14, 4b.15)
+
+- **Check the host first:** `redis-hot` grows from 128 MB to **384 MB**
+  (`--maxmemory 384mb`, still `noeviction`; `mem_limit` 160m to **448m**). Before
+  deploying, check that the Dokploy host has at least 512 MB free (`docker stats`,
+  `free -m`). The budget is about 151 MB typical and 190 MB worst case at 10k DAU
+  (docs/intelligence/06 section 5.2), so 384 MB keeps the 2x headroom of WP 13.2.
+  The new gauge `intel_redis_hot_used_ratio` (feed `/metrics`) and the alert
+  `IntelRedisHotMemoryHigh` (above 0.8 for 5 minutes) watch it. Redis-hot keeps no
+  data on disk: recreating it costs the ranking sessions in flight (one
+  latest-order fallback page per active viewer), nothing else. To apply the new
+  limit without a recreate: `redis-cli -a "$REDIS_PASSWORD" CONFIG SET maxmemory 402653184`.
+- **New variables:**
+  - feed `INTEL_TEST_CLOCK_ENABLED`: pinned to `"false"` in the compose file. The
+    `X-Tara-Test-Now` header is honoured only in development, only for seed and
+    test accounts; `manage.py check --deploy` fails (`intel.E005`) and `/readyz/`
+    returns 503 if it is ever true outside development.
+  - post `REELS_SEEN_WINDOW_H` (default `72`, 1 to 720): reels the viewer watched
+    in the last N hours go after the unwatched ones in the reels "for you" tab.
+- **Migrations (feed, additive, run at boot):** `feed.0011_author_age_class`
+  (`author_ref.age_class`: `adult`, `minor` or `unknown`, database default
+  `unknown`; never a date of birth) and `intel.0006_home_v2b_drafts` (three home
+  ranking versions stored as **drafts**: `home@2b`, `home@2b-r15`, `home@2b-r30`,
+  versions 3, 4 and 5 on an install that holds `home@1` and `home@2`).
+- **Behaviour: none by default.** `home@1` stays active, so "for you" is today's
+  feed. Nothing is activated by the migration. The author age class starts to fill
+  in from each account's own token on its next feed request (no backfill). The new
+  beat task `intel.rebuild_pools` (feed-worker, every minute) does nothing until a
+  version with pools is active. Activating `home@2b` (the decision-4 control: no
+  recommendations for viewers with enough connection inventory, a capped 10% share
+  for thin ones) is a staff step with a reason:
+
+  ```bash
+  docker compose exec feed python manage.py intel_config activate home 3 --reason "..." --actor <staff uuid>
+  ```
+
+  The pools are built within a minute of the activation; until then the share is 0.
+- **Measuring:** on the dev stack `python scripts/intel/measure_repetition.py -- --variant home@N`
+  (in a deployment: `docker compose exec feed python manage.py intel_measure_repetition --variant home@N`)
+  runs the repetition harness read-only (any stored version, never activated; ranking
+  sessions in a throwaway redis-hot database; no account ids in the output).
+
 ### Backups
 
 `scripts/backup.sh` saves all databases, media and the JWT keys. Run it daily from

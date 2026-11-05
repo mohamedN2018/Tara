@@ -673,12 +673,16 @@ def test_recent_searches_need_authentication(client):
 
 
 def test_trending_counts_distinct_authors_in_the_window(api):
-    a, b = acct(), acct()
+    # 4b.20-B3: at least 3 distinct authors, and only a bucketed post count
+    # (test_trending_floor.py covers the floors and restrictions).
+    a, b, c = acct(), acct(), acct()
     public_post("p1", "#nile", author=a, hashtags=["nile"])
     public_post("p2", "#nile", author=a, hashtags=["nile"])
     public_post("p3", "#cairo", author=a, hashtags=["cairo"])
     public_post("p4", "#cairo", author=b, hashtags=["cairo"])
-    public_post("p5", "#old", author=b, hashtags=["old"])
+    public_post("p5", "#cairo", author=c, hashtags=["cairo"])
+    for i, author in enumerate((a, b, c)):
+        public_post(f"o{i}", "#old", author=author, hashtags=["old"])
     PublicPostHashtag.objects.filter(tag="old").update(
         created_at=timezone.now() - timedelta(days=3)
     )
@@ -686,14 +690,14 @@ def test_trending_counts_distinct_authors_in_the_window(api):
         ev(
             "post.created",
             "p6",
-            {"post_id": "p6", "author_id": a, "audience": "friends", "hashtags": ["secret"]},
+            {"post_id": "p6", "author_id": b, "audience": "friends", "hashtags": ["nile"]},
         )
     )
 
     day = api.get(reverse("searchsvc:trending"), {"window": "day"}).json()["data"]
-    assert [(t["tag"], t["authors"], t["posts"]) for t in day] == [("cairo", 2, 2), ("nile", 1, 2)]
+    assert day == [{"tag": "cairo", "posts_floor": None, "window": "day"}]
     week = api.get(reverse("searchsvc:trending")).json()["data"]
-    assert {t["tag"] for t in week} == {"cairo", "nile", "old"}
+    assert {t["tag"] for t in week} == {"cairo", "old"}  # nile: one author (p6 is friends-only)
 
 
 def test_hashtag_results_carry_post_counts(api):

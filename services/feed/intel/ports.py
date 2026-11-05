@@ -127,7 +127,7 @@ def viewer_exclusions(viewer_id, author_ids, post_ids) -> dict[str, set[str]]:
 
 
 def author_refs(author_ids) -> dict[str, dict]:
-    """``{author_id: {kind, active, searchable}}`` for the authors feed knows."""
+    """``{author_id: {kind, active, searchable, age_class}}`` for the authors feed knows."""
     from feed.models import AuthorRef
 
     ids = [a for a in author_ids if a]
@@ -136,7 +136,7 @@ def author_refs(author_ids) -> dict[str, dict]:
     return {
         str(r["account_id"]): r
         for r in AuthorRef.objects.filter(account_id__in=ids).values(
-            "account_id", "kind", "active", "searchable"
+            "account_id", "kind", "active", "searchable", "age_class"
         )
     }
 

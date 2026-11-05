@@ -200,3 +200,53 @@ test("no horizontal overflow on a phone, and search opens from the bar icon", as
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(0);
 });
+
+// Tara Intelligence 4b.20-B3: the trending rail never shows a raw or small count.
+const FLOOR_LINE = {
+  ar: /^(20|50|100|500|1K|5K|10K) منشور أو أكثر في آخر (24 ساعة|7 أيام)$/,
+  en: /^(20|50|100|500|1K|5K|10K)\+ posts in the last (24 h|7 days)$/,
+};
+
+for (const locale of ["ar", "en"] as const) {
+  test(`the sidebar trending block shows only bucketed counts (${locale})`, async ({ browser }) => {
+    const { b } = await sharedAccounts();
+    const api = await apiAs(b);
+    for (const window of ["day", "week"]) {
+      const res = await api.get(`${API}/search/trending/`, { params: { window } });
+      expect(res.ok()).toBe(true);
+      for (const item of (await res.json()).data as Record<string, unknown>[]) {
+        expect(Object.keys(item).sort()).toEqual(["posts_floor", "tag", "window"]);
+        expect(item.window).toBe(window);
+        if (item.posts_floor !== null) expect([20, 50, 100, 500, 1000, 5000, 10000]).toContain(item.posts_floor);
+      }
+    }
+    await api.dispose();
+
+    const page = await pageAs(browser, b);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    if (locale === "en") await useLocale(page, "en");
+    await page.goto("/home");
+    await expect(page.locator("html")).toHaveAttribute("dir", locale === "ar" ? "rtl" : "ltr");
+    const rail = page.getByTestId("rail-trending");
+    await expect(rail).toBeVisible();
+    await expect(rail.getByRole("button", { name: locale === "ar" ? "آخر 7 أيام" : "Last 7 days" })).toHaveAttribute("aria-pressed", "true");
+    for (const window of ["week", "day"] as const) {
+      if (window === "day") await rail.getByRole("button", { name: locale === "ar" ? "آخر 24 ساعة" : "Last 24 h" }).click();
+      await expect(rail.getByTestId("trending-tag").first()).toBeVisible();
+      const lines = await rail.getByTestId("trending-count").allTextContents();
+      for (const line of lines) expect(line.trim()).toMatch(FLOOR_LINE[locale]);
+      // Each row is the tag and, at most, one floor line: no other number anywhere.
+      const rest = await rail.locator("li").evaluateAll((items) =>
+        items.map((li) => {
+          const tag = li.querySelector('[data-testid="trending-tag"]')?.textContent ?? "";
+          const count = li.querySelector('[data-testid="trending-count"]')?.textContent ?? "";
+          return (li.textContent ?? "").replace(tag, "").replace(count, "").trim();
+        }),
+      );
+      expect(rest.every((r) => r === "")).toBe(true);
+      await expect(rail).not.toContainText(locale === "ar" ? "اليوم" : "Today");
+    }
+    expect(await seriousViolations(page, '[data-testid="rail-trending"]')).toEqual([]);
+    await page.context().close();
+  });
+}

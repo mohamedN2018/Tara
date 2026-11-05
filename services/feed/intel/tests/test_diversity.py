@@ -156,3 +156,93 @@ def test_alternatives_past_the_window_keep_the_author_cap():
     # The prolific author's best items still lead: the first slot is theirs.
     assert out[0].key == "p0"
     assert sorted(i.key for i in out) == sorted(i.key for i in items)
+
+
+# ---- home@2b (07 WP 4b.10) ---------------------------------------------------------------
+
+
+def _v2b_block():
+    import json
+
+    with (config.store.DEFAULTS_DIR / "home.v2b.json").open(encoding="utf-8") as fh:
+        return json.load(fh)["diversity"]
+
+
+def test_home_v2b_keeps_the_author_cap_and_the_run_of_two():
+    block = _v2b_block()
+    assert block == BLOCK  # 4b.10: the WP 4.5 vs 02:347 run length was settled in phase 4
+    for seed in range(8):
+        out = diversity.rerank(_synthetic(seed=seed), block)
+        for page in _pages(out[: 3 * PAGE]):  # the pages where alternatives exist
+            authors = [i.author for i in page]
+            assert max(authors.count(a) for a in set(authors)) <= block["max_per_author_page"]
+            assert len(set(authors)) >= 8
+        types = [i.type for i in out[: 3 * PAGE]]
+        runs = [types[i : i + 3] for i in range(len(types) - 2)]
+        assert not any(len(set(r)) == 1 for r in runs)
+
+
+def test_recommended_slots_keep_the_rules_and_the_exact_share():
+    """home.mix takes, at each recommended slot, the best pool item that keeps the
+    author cap, the author gap and the format run on the merged list; the share of
+    every page stays exactly floor(share x page) (decision 23's cap is never exceeded)."""
+    from types import SimpleNamespace
+
+    from intel.ranking import home
+
+    block = _v2b_block()
+
+    def item(key, author, kind, value=0.0):
+        return SimpleNamespace(
+            key=key, value=value, feats=SimpleNamespace(author_id=author, type=kind)
+        )
+
+    conn = [item(f"c{i}", f"a{i % 12}", ["text", "image"][i % 2]) for i in range(60)]
+    # Pool items: three prolific strangers first, all videos, then varied ones.
+    recs = [item(f"r{i}", f"s{i % 3}", "video") for i in range(12)]
+    recs += [item(f"q{i}", f"t{i}", ["text", "image", "link"][i % 3]) for i in range(30)]
+    for share in (0.10, 0.15, 0.30):
+        out, _cu = home.mix(conn, recs, share, 0, home._fits(block))
+        for start in range(0, 60, 20):
+            page = out[start : start + 20]
+            assert sum(1 for p in page if p.key[0] in "rq") == int(20 * share + 1e-9)
+            authors = [p.feats.author_id for p in page]
+            assert max(authors.count(a) for a in set(authors)) <= block["max_per_author_page"]
+            assert len(set(authors)) >= 8
+        kinds = [p.feats.type for p in out[:60]]
+        assert not any(len(set(kinds[i : i + 3])) == 1 for i in range(len(kinds) - 2))
+
+
+def test_recommended_slots_inside_the_re_ranker_keep_pages_whole():
+    """The path home.rank takes (diversity on): the connection items are diversified
+    around the claimed slots, so a prolific friend never gets 3 on a page because the
+    recommendations shifted the page boundaries."""
+    from types import SimpleNamespace
+
+    from intel.ranking import home
+
+    block = _v2b_block()
+
+    def item(key, author, kind, value):
+        return SimpleNamespace(
+            key=key, value=value, feats=SimpleNamespace(author_id=author, type=kind)
+        )
+
+    # The worst case: one friend dominates the top of the connection list.
+    conn = [
+        item(f"c{i}", "f0" if i < 30 else f"a{i % 15}", ["text", "image"][i % 2], 100 - i)
+        for i in range(120)
+    ]
+    recs = [item(f"r{i}", f"s{i}", ["video", "link"][i % 2], 50 - i) for i in range(40)]
+    for share in (0.10, 0.15, 0.30):
+        out, cu = home._mix_diverse(conn, recs, share, 10, block)
+        # A tail follows the last connection item only while pool items are left.
+        left = 40 - sum(1 for p in out if p.key[0] == "r" and out.index(p) < (cu or len(out)))
+        assert (cu is not None) == (left > 0)
+        for start in range(0, 100, 20):
+            page = out[start : start + 20]
+            assert sum(1 for p in page if p.key[0] == "r") == int(20 * share + 1e-9)
+            authors = [p.feats.author_id for p in page]
+            assert max(authors.count(a) for a in set(authors)) <= block["max_per_author_page"]
+        kinds = [p.feats.type for p in out[:100]]
+        assert not any(len(set(kinds[i : i + 3])) == 1 for i in range(len(kinds) - 2))

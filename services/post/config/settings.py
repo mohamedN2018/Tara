@@ -122,6 +122,21 @@ GRAPH_CALL_TIMEOUT = float(os.getenv("GRAPH_CALL_TIMEOUT", "2.0"))
 MEDIA_INTERNAL_URL = os.getenv("MEDIA_INTERNAL_URL", "http://media:8000")
 MEDIA_CALL_TIMEOUT = float(os.getenv("MEDIA_CALL_TIMEOUT", "2.0"))
 
+
+def _clamped_int(name: str, default: int, low: int, high: int) -> int:
+    """An int env var kept inside ``low..high``; garbage reads as the default."""
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        value = default
+    return max(low, min(high, value))
+
+
+# Reels "seen last" (Tara Intelligence 4b.9): the for_you tab serves reels the
+# viewer did not watch in this many hours first. The fallback for the reels
+# config ``seen.window_h`` until phase 5 publishes ``intel.config.published``.
+REELS_SEEN_WINDOW_H = _clamped_int("REELS_SEEN_WINDOW_H", 72, 1, 720)
+
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")
 TARA_EVENT_PUBLISHER = "rabbitmq" if RABBITMQ_URL else "null"
 TARA_EVENT_BROKER_URL = RABBITMQ_URL

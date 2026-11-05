@@ -1,0 +1,29 @@
+# promtool test rules infra/observability/tests/intel-alerts.test.yml
+# (run by scripts/intel/check_deploy.sh through the prom/prometheus image).
+rule_files:
+  - ../alerts.yml
+evaluation_interval: 1m
+tests:
+  # 0.81 for 10 minutes: fires once the 5-minute "for" has passed.
+  - interval: 1m
+    input_series:
+      - series: 'intel_redis_hot_used_ratio{service="feed", instance="feed:8000"}'
+        values: '0.81x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: IntelRedisHotMemoryHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "redis-hot above 80% of maxmemory"
+              description: "redis-hot is at 81% of maxmemory (noeviction: writes are refused when full). Re-measure (WP 13.2) and raise maxmemory or compress sessions."
+  # 0.79 never fires.
+  - interval: 1m
+    input_series:
+      - series: 'intel_redis_hot_used_ratio{service="feed", instance="feed:8000"}'
+        values: '0.79x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: IntelRedisHotMemoryHigh
+        exp_alerts: []

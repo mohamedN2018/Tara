@@ -78,3 +78,36 @@ def batch(*events, session=None, batch_id=None) -> dict:
 
 def ago(**kw):
     return timezone.now() - timedelta(**kw)
+
+
+ADULT_CLAIMS = {"is_minor": False, "age_band": "25-34"}
+
+
+def client_with_claims(account, **claims):
+    """An API client whose access token carries extra claims (age: ``is_minor``,
+    ``age_band``), signed with the test key of the root ``conftest``."""
+    import time
+
+    import jwt
+    from conftest import _PRIVATE_PEM
+    from rest_framework.test import APIClient
+
+    now = int(time.time())
+    token = jwt.encode(
+        {
+            "sub": str(account),
+            "type": "access",
+            "scope": "user",
+            "iss": "tara-identity",
+            "aud": "tara",
+            "iat": now,
+            "exp": now + 900,
+            **claims,
+        },
+        _PRIVATE_PEM,
+        algorithm="RS256",
+        headers={"kid": "test-key"},
+    )
+    client = APIClient()
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+    return client

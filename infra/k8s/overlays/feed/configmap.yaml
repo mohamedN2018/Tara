@@ -23,3 +23,8 @@ data:
   INTEL_ENGAGEMENT_RETENTION_DAYS: "30"
   # WP 4.1: ranking config changes are audited in admin (intel.config.changed).
   INTEL_EMIT_CONFIG_CHANGED: "true"
+  # WP 4b.15: the test clock is development only (intel.E005 refuses it here).
+  INTEL_TEST_CLOCK_ENABLED: "false"
+  # Ranking sessions, first-page heads and the discovery pools (WP 4b.0, 4b.6). The
+  # cluster has no separate redis-hot: its own database of the shared Redis.
+  REDIS_HOT_URL: "redis://redis.tara.svc.cluster.local:6379/6"
