@@ -553,6 +553,8 @@ def test_internal_lookup_reports_purpose(client_for):
     asset = _ready_row(_acct())
     row = services.internal_lookup([str(asset.id)])[0]
     assert (row["kind"], row["status"], row["purpose"]) == ("video", "ready", "post")
+    # Post's reel rules (5.5) read the playable size and length from here.
+    assert (row["duration_ms"], row["width"], row["height"]) == (3000, 640, 360)
 
 
 def test_bucket_signing_matches_boto3(settings, monkeypatch):

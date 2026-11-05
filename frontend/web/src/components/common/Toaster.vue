@@ -15,6 +15,10 @@ function activate(t: Toast) {
   if (t.to) router.push(t.to);
   toasts.dismiss(t.id);
 }
+function runAction(t: Toast) {
+  toasts.dismiss(t.id);
+  t.action?.run();
+}
 </script>
 
 <template>
@@ -37,6 +41,15 @@ function activate(t: Toast) {
             :class="t.icon === 'error' ? 'text-red-400' : t.icon === 'success' ? 'text-green-400' : 'text-brand-300'"
           />
           <span class="min-w-0 flex-1 truncate" dir="auto">{{ t.text }}</span>
+        </button>
+        <button
+          v-if="t.action"
+          type="button"
+          class="shrink-0 rounded-lg px-2 py-1 font-semibold text-brand-200 transition hover:bg-white/10 hover:text-white"
+          :data-testid="t.action.testid"
+          @click="runAction(t)"
+        >
+          {{ t.action.label }}
         </button>
         <button
           class="shrink-0 opacity-60 transition hover:opacity-100"

@@ -101,7 +101,10 @@ class KindsView(APIView):
     @extend_schema(responses={200: None}, tags=["notifications"])
     def get(self, request: Request) -> Response:
         return data_response(
-            {"categories": list(registry.CATEGORIES), "kinds": registry.describe()}
+            {
+                "categories": list(registry.CATEGORIES),
+                "kinds": registry.describe(getattr(request.user, "capabilities", ())),
+            }
         )
 
 

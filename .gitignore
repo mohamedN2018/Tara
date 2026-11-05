@@ -232,3 +232,7 @@ id_rsa*
 
 # Local test dataset seeder state (scripts/seed): manifest + media cache
 .seed-state/
+
+# Owner reference screenshots and seed source media: never committed
+frontend/Desgin/Captures/
+.seed-state/

@@ -374,7 +374,8 @@ def forget_message(conversation_id: str, message_id: str, *, deleted: bool) -> i
     source is unknown. Idempotent. Returns the number of rows changed.
     """
     rows = Notification.objects.filter(
-        kind__in=("message", "message.page"), subject_ref=f"conversation:{conversation_id}"
+        kind__in=("message", "message.page", "message.support"),
+        subject_ref=f"conversation:{conversation_id}",
     )
     latest = rows.filter(data__message_id=str(message_id))
     removed = 0

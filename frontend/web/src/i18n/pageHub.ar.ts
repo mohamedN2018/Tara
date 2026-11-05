@@ -62,6 +62,7 @@ export default {
     posts: "المنشورات",
     about: "حول",
     team: "الفريق",
+    reels: "ريلز",
   },
   about: {
     title: "نبذة",

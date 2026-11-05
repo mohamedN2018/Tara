@@ -137,7 +137,7 @@ const section = railSection;
               >
                 {{ directory.label(r.from_user_id) }}
               </RouterLink>
-              <span class="shrink-0 text-xs text-gray-500 dark:text-gray-400">{{ relativeTime(r.created_at) }}</span>
+              <span class="shrink-0 text-xs text-gray-600 dark:text-gray-400">{{ relativeTime(r.created_at) }}</span>
             </div>
             <div class="mt-2 flex gap-2">
               <button
@@ -188,7 +188,7 @@ const section = railSection;
             </span>
             <span class="min-w-0 flex-1">
               <span class="block truncate text-sm font-semibold" dir="auto">{{ e.title }}</span>
-              <span class="block truncate text-xs text-gray-500 dark:text-gray-400">
+              <span class="block truncate text-xs text-gray-600 dark:text-gray-400">
                 {{ formatRange(e.starts_at, e.ends_at, locale) }}
               </span>
             </span>
@@ -205,7 +205,7 @@ const section = railSection;
           {{ t("friends.all") }}
         </RouterLink>
       </h2>
-      <p v-if="!friendIds.length" class="px-2 text-sm text-gray-500 dark:text-gray-400">{{ t("shell.rail.noContacts") }}</p>
+      <p v-if="!friendIds.length" class="px-2 text-sm text-gray-600 dark:text-gray-400">{{ t("shell.rail.noContacts") }}</p>
       <ul v-else class="space-y-0.5">
         <li v-for="id in contacts" :key="id" class="group flex items-center gap-3 rounded-xl p-2 transition hover:bg-gray-200/60 dark:hover:bg-gray-800/60">
           <RouterLink

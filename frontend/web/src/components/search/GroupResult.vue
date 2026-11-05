@@ -49,8 +49,8 @@ async function join() {
       <UsersRound class="h-7 w-7" />
     </RouterLink>
     <div class="min-w-0 flex-1">
-      <RouterLink :to="path" class="block truncate font-semibold hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400" dir="auto">
-        {{ name }}
+      <RouterLink :to="path" class="block truncate font-semibold hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400" data-testid="group-result-name">
+        <bdi>{{ name }}</bdi>
       </RouterLink>
       <p class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
         <span class="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-200" data-testid="group-privacy">

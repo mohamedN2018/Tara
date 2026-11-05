@@ -55,6 +55,9 @@ class Kind:
     # False while no consumer writes this kind: Settings does not offer a
     # toggle that would do nothing (``describe`` leaves it out).
     live: bool = True
+    # Only for holders of this capability (staff kinds): Settings offers the
+    # toggle to them alone (``describe``).
+    capability: str | None = None
 
 
 _KINDS = [
@@ -93,6 +96,16 @@ _KINDS = [
         aggregate=PER_SUBJECT,
         window=timedelta(days=7),
         push_on_merge=True,
+    ),
+    # A member's message to Tara Support, for the support team (holders of
+    # moderation.case.view): one row per thread, opening the support inbox on it.
+    Kind(
+        "message.support",
+        "messages",
+        aggregate=PER_SUBJECT,
+        window=timedelta(days=7),
+        push_on_merge=True,
+        capability="moderation.case.view",
     ),
     # Calls (3.7). `call` is the push-only ring: no rows, but its push setting
     # silences ringing. `call.missed` is the in-app row; its own push is off by
@@ -261,6 +274,8 @@ def build_url(
     if kind == "message.page" and sid and data.get("page_id"):
         page = quote(str(data["page_id"]), safe="")
         return f"/pages/id/{page}/inbox?conversation={sid}"
+    if kind == "message.support" and sid:
+        return f"/admin/support?conversation={sid}"
     if subject == "conversation" and sid:
         return f"/messages/{sid}"
     if subject == "group" and sid:
@@ -300,8 +315,9 @@ def url_for(notification) -> str:
     )
 
 
-def describe() -> list[dict]:
-    """The registry as the Settings screen needs it."""
+def describe(capabilities=None) -> list[dict]:
+    """The registry as the Settings screen needs it (staff kinds only for staff)."""
+    held = set(capabilities or ())
     return [
         {
             "kind": k.name,
@@ -311,5 +327,5 @@ def describe() -> list[dict]:
             "resolutions": sorted(k.resolutions),
         }
         for k in _KINDS
-        if k.live
+        if k.live and (k.capability is None or k.capability in held)
     ]

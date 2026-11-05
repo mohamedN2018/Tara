@@ -27,9 +27,9 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
-from django.db.models import BooleanField, DecimalField, Exists, OuterRef, Q, QuerySet
+from django.db.models import BooleanField, CharField, DecimalField, Exists, OuterRef, Q, QuerySet
 from django.db.models.expressions import RawSQL
-from django.db.models.functions import Coalesce
+from django.db.models.functions import Cast, Coalesce
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -183,12 +183,23 @@ def _match_sql(qn: str) -> tuple[str, list, str, list]:
 
 
 def _visible(qs: QuerySet, viewer_id: str) -> QuerySet:
-    """Drop documents whose owner is in a block with the viewer, either way (in SQL)."""
+    """Drop documents whose owner is in a block with the viewer, either way (in SQL).
+
+    A post published as a page is owned by the page, so it also goes when the
+    page's owner is in a block with the viewer: post answers 404 for it then
+    (profile's page visibility), and search must not show its excerpt either.
+    """
     blocked = BlockedPair.objects.filter(
         Q(blocker_id=viewer_id, blocked_id=OuterRef("owner_id"))
         | Q(blocked_id=viewer_id, blocker_id=OuterRef("owner_id"))
     )
-    return qs.filter(~Exists(blocked))
+    blocked_owner_pages = SearchDocument.objects.filter(
+        Q(owner_id__in=BlockedPair.objects.filter(blocker_id=viewer_id).values("blocked_id"))
+        | Q(owner_id__in=BlockedPair.objects.filter(blocked_id=viewer_id).values("blocker_id")),
+        doc_type="page",
+        doc_id=Cast(OuterRef("owner_id"), CharField()),
+    )
+    return qs.filter(~Exists(blocked)).filter(~Q(doc_type="post") | ~Exists(blocked_owner_pages))
 
 
 def _matching(qn: str, viewer_id: str, doc_types: list[str]) -> QuerySet:

@@ -19,9 +19,9 @@ import { useDirectoryStore } from "@/stores/directory";
 import { useToastStore } from "@/stores/toasts";
 import type { Post, Profile } from "@/types";
 
-export type ProfileTab = "posts" | "about" | "friends" | "photos" | "marketplace";
+export type ProfileTab = "posts" | "about" | "friends" | "photos" | "reels" | "marketplace";
 export type FriendsList = "all" | "mutual" | "followers" | "following";
-const TABS: readonly ProfileTab[] = ["posts", "about", "friends", "photos", "marketplace"];
+const TABS: readonly ProfileTab[] = ["posts", "about", "friends", "photos", "reels", "marketplace"];
 const LISTS: readonly FriendsList[] = ["all", "mutual", "followers", "following"];
 
 export function tabFromQuery(q: unknown): ProfileTab {

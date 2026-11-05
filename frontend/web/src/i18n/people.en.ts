@@ -19,7 +19,7 @@ export default {
     moreActions: "More actions for this profile",
     privacy: "Privacy settings",
   },
-  tabs: { posts: "Posts", about: "About", friends: "Friends", photos: "Photos", more: "More", marketplace: "Marketplace" },
+  tabs: { posts: "Posts", about: "About", friends: "Friends", photos: "Photos", more: "More", marketplace: "Marketplace", reels: "Reels" },
   posts: { title: "Posts" },
   intro: {
     title: "Intro",

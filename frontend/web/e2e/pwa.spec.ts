@@ -43,7 +43,7 @@ test("the build is installable and its shell works offline", async ({ browser })
   await page.goto(`${PREVIEW}/settings`);
   await expect(page.getByText("أنت غير متصل. جارٍ إعادة الاتصال…")).toBeVisible();
   const cached = await page.evaluate(async () => (await caches.keys()).sort());
-  expect(cached).toEqual(["tara-assets-v2", "tara-prefs", "tara-shell-v2"]);
+  expect(cached).toEqual(["tara-assets-v3", "tara-prefs", "tara-shell-v3"]);
   await page.context().setOffline(false);
 });
 
@@ -99,8 +99,8 @@ test("a delivered push shows a localised notification that opens the app", async
     .toEqual([["تارا", "لديك متابع جديد"]]);
 
   const urls = await page.evaluate(async () => {
-    const shell = await caches.open("tara-shell-v2");
-    const assets = await caches.open("tara-assets-v2");
+    const shell = await caches.open("tara-shell-v3");
+    const assets = await caches.open("tara-assets-v3");
     return [...(await shell.keys()), ...(await assets.keys())].map((r) => new URL(r.url).pathname);
   });
   expect(urls.some((u) => u.startsWith("/api/") || u.startsWith("/tara-media/"))).toBe(false);

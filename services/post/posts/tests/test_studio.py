@@ -133,6 +133,27 @@ def test_calendar_returns_only_my_scheduled_and_published_posts_in_range(client_
     assert [p["id"] for p in later] == [far["id"]]
 
 
+def test_calendar_keeps_scheduled_posts_when_published_ones_fill_the_cap(client_for, monkeypatch):
+    from posts import studio
+
+    monkeypatch.setattr(studio, "MAX_CALENDAR_POSTS", 3)
+    mine = client_for(_acct())
+    now = timezone.now()
+    published = [_create(mine, body=f"out {i}") for i in range(4)]
+    later = _create(mine, body="later", publish_at=_iso(now + timedelta(days=3)))
+    soon = _create(mine, body="soon", publish_at=_iso(now + timedelta(days=2)))
+
+    body = _calendar(mine, now - timedelta(days=1), now + timedelta(days=10)).json()
+    # Both scheduled posts stay; the earliest published post fills the room left.
+    assert [p["id"] for p in body["data"]] == [published[0]["id"], soon["id"], later["id"]]
+    assert body["meta"]["truncated"] is True
+
+    Post.objects.filter(id__in=[p["id"] for p in published[1:]]).update(deleted_at=now)
+    body = _calendar(mine, now - timedelta(days=1), now + timedelta(days=10)).json()
+    assert [p["id"] for p in body["data"]] == [published[0]["id"], soon["id"], later["id"]]
+    assert body["meta"]["truncated"] is False
+
+
 def test_calendar_validates_its_range(client_for):
     mine = client_for(_acct())
     now = timezone.now()

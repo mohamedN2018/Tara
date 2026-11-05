@@ -54,16 +54,19 @@ test("the fifth mobile tab opens /menu, whose items are the built services", asy
   await page.goto("/home");
 
   const tabs = page.getByTestId("mobile-nav").locator("a, button");
-  await expect(tabs).toHaveCount(5);
-  await expect(tabs.nth(4)).toHaveAttribute("data-testid", "mobile-tab-menu");
-  await tabs.nth(4).click();
+  // Home, Friends | Create | Reels, Notifications, Menu.
+  await expect(tabs).toHaveCount(6);
+  await expect(tabs.nth(3)).toHaveAttribute("data-testid", "mobile-tab-reels");
+  await expect(tabs.nth(5)).toHaveAttribute("data-testid", "mobile-tab-menu");
+  await tabs.nth(5).click();
   await expect(page).toHaveURL(/\/menu$/);
   await expect(page.getByTestId("mobile-menu")).toBeVisible();
   // The tab shows as current, and the profile card leads to the account's profile.
   await expect(page.getByTestId("mobile-tab-menu")).toHaveAttribute("aria-current", "page");
   await expect(page.getByTestId("menu-profile")).toHaveAttribute("href", `/u/${a.handle}`);
   // Unbuilt modules never show, and a regular account gets no admin entry.
-  await expect(page.getByTestId("menu-item-reels")).toHaveCount(0);
+  await expect(page.getByTestId("menu-item-memories")).toHaveCount(0);
+  await expect(page.getByTestId("menu-item-reels")).toHaveCount(1);
   await expect(page.getByTestId("menu-item-admin")).toHaveCount(0);
 
   await page.getByTestId("menu-item-friends").click();

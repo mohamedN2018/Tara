@@ -202,3 +202,38 @@ def test_reconcile_parks_posts_indexed_before_the_rule(api):
     assert post_ids(api, "legacy leak") == []
     assert "legacyleak" not in tag_docs()
     assert reconcile_page_posts() == {"parked": 0, "restored": 0}  # idempotent
+
+
+@pytest.mark.parametrize(
+    "viewer_blocks", [True, False], ids=["viewer-blocked-owner", "owner-blocked-viewer"]
+)
+def test_a_block_with_the_pages_owner_hides_its_posts(api, viewer, viewer_blocks):
+    """r3: post answers 404 for a page post when the viewer and the page's owner
+    are in a block (profile's page visibility); live search must agree."""
+    page, owner = str(uuid.uuid4()), acct()
+    payload = {
+        "handle": f"pg{page[:8]}",
+        "name": "Nile Books",
+        "owner": owner,
+        "category": "books",
+        "location": "",
+        "status": "published",
+        "avatar_media_id": None,
+        "deleted": False,
+    }
+    handlers.on_page_created(ev("page.created", page, payload, 0))
+    page_post("pp1", page, "Blockcheck sale")
+    public_post("up1", "Blockcheck at home")
+    assert set(post_ids(api, "blockcheck")) == {"pp1", "up1"}
+
+    pair = (
+        {"blocker_id": viewer, "blocked_id": owner}
+        if viewer_blocks
+        else {"blocker_id": owner, "blocked_id": viewer}
+    )
+    handlers.on_user_blocked(ev("user.blocked", owner, pair, 5))
+    assert post_ids(api, "blockcheck") == ["up1"]
+    assert ids(search(api, "blockcheck")) == ["up1"]  # the all tab too
+
+    handlers.on_user_unblocked(ev("user.unblocked", owner, pair, 6))
+    assert set(post_ids(api, "blockcheck")) == {"pp1", "up1"}

@@ -41,8 +41,9 @@ Finding = tuple[str, str, str]
 # Caller-specific secrets (roadmap 1.0d): each is held only by one privileged
 # endpoint and its named caller, never by every service. A service is checked
 # for one only when its settings declare it (identity and admin declare
-# ADMIN_IDENTITY_SECRET; post, chat and the rest do not).
-_CALLER_SECRET_SETTINGS = ("ADMIN_IDENTITY_SECRET",)
+# ADMIN_IDENTITY_SECRET; identity and chat declare CHAT_IDENTITY_SECRET; post
+# and the rest declare neither).
+_CALLER_SECRET_SETTINGS = ("ADMIN_IDENTITY_SECRET", "CHAT_IDENTITY_SECRET")
 # RFC 7518 section 3.2: an HS256 key needs at least 256 bits.
 _MIN_CALLER_SECRET_LENGTH = 32
 

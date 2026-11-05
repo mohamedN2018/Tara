@@ -128,10 +128,21 @@ for (const lang of LANGS) {
       const { a, b } = await sharedAccounts();
       const titles = [`Oak desk ${lang}${unique()}`, `Red bike ${lang}${unique()}`];
       const buyer = await apiAs(b);
+      const sellerApi = await apiAs(a);
       for (const title of titles) {
         const id = await publishedListing(a, title);
         expect((await buyer.post(`${API}/marketplace/listings/${id}/contact/`, { data: { message: "Still available?" } })).ok()).toBe(true);
+        // Contact is asynchronous (202): chat opens the thread from the event, and
+        // a thread with no message yet reaches an open list only on a reload.
+        await expect
+          .poll(
+            async () =>
+              ((await (await sellerApi.get(`${API}/conversations/`, { params: { listing_id: id } })).json()).data as unknown[]).length,
+            { timeout: 20_000 },
+          )
+          .toBe(1);
       }
+      await sellerApi.dispose();
       const seller = await open(browser, a, lang);
       await seller.goto("/messages?folder=marketplace");
       for (const title of titles) {
@@ -148,6 +159,26 @@ for (const lang of LANGS) {
       await befriend(a, b);
       const aApi = await apiAs(a);
       const dm = (await (await aApi.post(`${API}/conversations/`, { data: { type: "dm", other_id: b.id } })).json()).data.id as string;
+      // An unread row for this chat (earlier runs, the other language) folds the
+      // new message into "sent you N messages", which has no excerpt. b reads the
+      // chat first, which marks that row read, so this message starts a new row.
+      const bApi = await apiAs(b);
+      const earlier = (await (await bApi.get(`${API}/conversations/${dm}/messages/`)).json()).data as { id: string }[];
+      if (earlier.length) {
+        const latest = earlier.map((m) => m.id).sort().at(-1);
+        expect((await bApi.post(`${API}/conversations/${dm}/read/`, { data: { up_to_message_id: latest } })).ok()).toBe(true);
+        await expect
+          .poll(async () => {
+            const rows = (await (await bApi.get(`${API}/notifications/?limit=50`)).json()).data as {
+              kind: string;
+              read_at: string | null;
+              data?: { conversation_id?: string };
+            }[];
+            return rows.some((n) => n.kind === "message" && n.data?.conversation_id === dm && !n.read_at);
+          }, { timeout: 20_000 })
+          .toBe(false);
+      }
+      await bApi.dispose();
       const body = lang === "ar" ? `seen? ${unique()}` : `شفت؟ ${unique()}`;
       expect((await aApi.post(`${API}/conversations/${dm}/messages/`, { data: { body } })).ok()).toBe(true);
       const reader = await open(browser, b, lang);

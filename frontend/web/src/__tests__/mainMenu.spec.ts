@@ -54,7 +54,9 @@ describe("menu catalogue", () => {
     const all = ids([...CONSOLE_CAPS, "ads.review"]);
     for (const item of MENU_CATALOG.filter((i) => !i.built)) expect(all).not.toContain(item.id);
     expect(all).not.toContain("memories");
-    expect(all).not.toContain("reels");
+    // Reels are built (5.8): a destination of their own, apart from Videos.
+    expect(all).toContain("reels");
+    expect(all).toContain("videos");
     const categories = menuSections([]).map((s) => s.category);
     // The creator studio is built (T8) with its insights; monetization stays hidden.
     expect(categories).toContain("creator");
@@ -100,7 +102,7 @@ describe("menu catalogue", () => {
   });
 
   it("only offers creation flows that exist", () => {
-    expect(createItems([]).map((i) => i.id)).toEqual(["post", "story", "page", "group", "event", "listing"]);
+    expect(createItems([]).map((i) => i.id)).toEqual(["post", "story", "reel", "page", "group", "event", "listing"]);
   });
 
   it("has every label in both languages", () => {

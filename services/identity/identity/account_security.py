@@ -63,15 +63,37 @@ def _reauthenticate(account: Account, password: object, *, ip_region: str) -> No
     _require_password(account, str(password), field="password", ip_region=ip_region)
 
 
+# Wrong current passwords per account, across every re-auth (change password or
+# email, sign-in methods, 2FA, deactivate, delete). The endpoints' own throttles
+# are per scope and looser (``account_security`` is 30/hour), so without this a
+# stolen session could guess the password far faster than the 5/hour of
+# ``auth_password``. A correct password clears it.
+REAUTH_MAX_FAILURES = 5
+REAUTH_LOCK_SECONDS = 3600
+
+
+def _reauth_lock_key(account: Account) -> str:
+    return f"reauth-failures:{account.pk}"
+
+
 def _require_password(account: Account, password: str, *, field: str, ip_region: str) -> None:
     """Re-authenticate a sensitive change with the current password."""
     if not account.has_usable_password():
         raise _field_error(
             field, "no_password", "Set a password first (use 'Forgot password' to create one)."
         )
+    lock_key = _reauth_lock_key(account)
+    if (cache.get(lock_key) or 0) >= REAUTH_MAX_FAILURES:
+        # Checked before the password, so a locked account is no oracle either.
+        raise TaraAPIError(
+            "Too many failed attempts. Try again later.", code="throttled", http_status_code=429
+        )
     if not account.check_password(password or ""):
+        cache.add(lock_key, 0, REAUTH_LOCK_SECONDS)
+        cache.incr(lock_key)
         emit_security_event(account, "reauth_failed", {"field": field}, ip_region=ip_region)
         raise _field_error(field, "invalid_password", "The current password is incorrect.")
+    cache.delete(lock_key)
 
 
 # ---- Google -----------------------------------------------------------------

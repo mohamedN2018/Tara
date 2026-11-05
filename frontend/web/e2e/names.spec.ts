@@ -166,7 +166,7 @@ test("modals are dialogs that trap focus, and Escape gives it back", async ({ br
   const { a } = await sharedAccounts();
   const page = await pageAs(browser, a);
   await page.goto("/marketplace");
-  const open = page.getByRole("button", { name: "أضف إعلان" });
+  const open = page.getByRole("button", { name: "إنشاء إعلان جديد" });
   await open.focus();
   await open.press("Enter");
 

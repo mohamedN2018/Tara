@@ -91,6 +91,9 @@ class Post(models.Model):
         LINK = "link", "Link"
         SHARE = "share", "Shared post"
         POLL = "poll", "Poll"
+        # A short vertical video (roadmap 5.5): one transcoded video plus a
+        # ``reels.Reel`` row; created only through ``/reels/``.
+        REEL = "reel", "Reel"
 
     class ModerationStatus(models.TextChoices):
         OK = "ok", "OK"

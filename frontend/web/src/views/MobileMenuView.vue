@@ -73,7 +73,7 @@ async function logout() {
 
       <!-- Your shortcuts (pages and groups), scrolled sideways inside their own box -->
       <section v-if="shortcuts.length" aria-labelledby="mm-shortcuts">
-        <h2 id="mm-shortcuts" class="px-1 pb-2 text-sm font-semibold text-gray-500 dark:text-gray-400">
+        <h2 id="mm-shortcuts" class="px-1 pb-2 text-sm font-semibold text-gray-600 dark:text-gray-400">
           {{ t("shell.menu.shortcuts") }}
         </h2>
         <ul class="-mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-1" data-testid="menu-shortcuts">
@@ -88,7 +88,7 @@ async function logout() {
 
       <!-- Every built service, by category -->
       <section v-for="section in sections" :key="section.category" :aria-labelledby="`mm-${section.category}`" :data-testid="`menu-section-${section.category}`">
-        <h2 :id="`mm-${section.category}`" class="px-1 pb-2 text-sm font-semibold text-gray-500 dark:text-gray-400">
+        <h2 :id="`mm-${section.category}`" class="px-1 pb-2 text-sm font-semibold text-gray-600 dark:text-gray-400">
           {{ t(section.labelKey) }}
         </h2>
         <ul class="grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -120,7 +120,7 @@ async function logout() {
         <LogOut class="h-4 w-4" aria-hidden="true" /> {{ t("nav.logout") }}
       </button>
 
-      <p class="px-1 text-xs text-gray-500 dark:text-gray-400">
+      <p class="px-1 text-xs text-gray-600 dark:text-gray-400">
         <RouterLink :to="legalPath('privacy')" class="hover:underline">{{ t("shell.footer.privacy") }}</RouterLink>
         <span aria-hidden="true"> · </span>
         <RouterLink :to="legalPath('terms')" class="hover:underline">{{ t("shell.footer.terms") }}</RouterLink>

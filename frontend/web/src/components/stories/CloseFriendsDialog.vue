@@ -90,7 +90,7 @@ async function toggle(id: string) {
       <ErrorState v-else-if="failed" @retry="load" />
       <div v-else class="-mx-1 min-h-0 flex-1 space-y-4 overflow-y-auto px-1">
         <section>
-          <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+          <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400">
             {{ t("stories.closeFriends.onList", { n: onList.size }) }}
           </h3>
           <p v-if="!onList.size" class="py-2 text-sm text-gray-500 dark:text-gray-400">{{ t("stories.closeFriends.empty") }}</p>
@@ -109,7 +109,7 @@ async function toggle(id: string) {
         </section>
 
         <section>
-          <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+          <h3 class="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-400">
             {{ t("stories.closeFriends.others") }}
           </h3>
           <p v-if="!friends.length" class="py-2 text-sm text-gray-500 dark:text-gray-400">{{ t("stories.closeFriends.noFriends") }}</p>

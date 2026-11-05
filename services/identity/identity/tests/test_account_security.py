@@ -103,6 +103,41 @@ def test_change_password_rejects_wrong_current_password(api_client, active_accou
     assert SecurityEvent.objects.filter(account=active_account, type="reauth_failed").exists()
 
 
+def test_wrong_current_passwords_lock_every_reauth_for_the_account(active_account):
+    """r3: the re-auth endpoints share a per-account failure budget, so a stolen
+    session cannot guess the password at the looser account_security rate."""
+    from identity import account_center, account_security
+    from tara_common.exceptions import TaraAPIError
+
+    def wrong():
+        with pytest.raises(TaraAPIError) as exc:
+            account_security.change_password(
+                active_account,
+                current_password="NotMyPassw0rd!",
+                new_password=NEW_PASSWORD,
+                current_session_id=None,
+            )
+        return exc.value
+
+    for _ in range(account_security.REAUTH_MAX_FAILURES - 1):
+        assert wrong().http_status == 400
+    # A correct password clears the count ...
+    account_security._require_password(  # noqa: SLF001
+        active_account, PASSWORD, field="password", ip_region=""
+    )
+    for _ in range(account_security.REAUTH_MAX_FAILURES):
+        assert wrong().http_status == 400
+    # ... and once it is spent even the right password is refused, on every re-auth.
+    locked = wrong()
+    assert (locked.http_status, locked.code) == (429, "throttled")
+    with pytest.raises(TaraAPIError) as exc:
+        account_center.deactivate(active_account, password=PASSWORD)
+    assert exc.value.http_status == 429
+    active_account.refresh_from_db()
+    assert active_account.check_password(PASSWORD)
+    assert active_account.status == Account.Status.ACTIVE
+
+
 def test_change_password_rejects_weak_and_unchanged_passwords(api_client, active_account):
     _auth(api_client, active_account.email)
     url = reverse("identity:me-password")

@@ -107,8 +107,20 @@ def query(
     if settings.SEARCH_USE_OPENSEARCH:
         try:
             hidden_ids = {str(i) for i in blocked_ids(viewer_id)}
-            results = _os_query(q, doc_type, limit + len(hidden_ids))
-            return [r for r in results if r.get("owner_id") not in hidden_ids][:limit], False
+            # A page's posts are owned by the page: hidden with its blocked owner too.
+            hidden_pages = {
+                str(i)
+                for i in SearchDocument.objects.filter(
+                    doc_type="page", owner_id__in=hidden_ids
+                ).values_list("doc_id", flat=True)
+            }
+            results = _os_query(q, doc_type, limit + len(hidden_ids) + len(hidden_pages))
+            return [
+                r
+                for r in results
+                if r.get("owner_id") not in hidden_ids
+                and not (r.get("type") == "post" and r.get("owner_id") in hidden_pages)
+            ][:limit], False
         except Exception:  # noqa: BLE001 - degrade to DB
             logger.warning("OpenSearch query failed; falling back to Postgres", exc_info=True)
             return _db_query(q, doc_type, limit, viewer_id), True

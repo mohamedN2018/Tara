@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Bell, Home, Menu, Plus, Users } from "lucide-vue-next";
+import { Bell, Clapperboard, Home, Menu, Plus, Users } from "lucide-vue-next";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 
@@ -11,12 +11,13 @@ const router = useRouter();
 const ui = useUiStore();
 const notifications = useNotificationStore();
 
-// Home, Friends | Create | Notifications, Menu (the menu is its own page on mobile).
+// Home, Friends | Create | Reels, Notifications, Menu (the menu is its own page on mobile).
 const start = [
   { name: "home", route: "/home", icon: Home, label: "nav.home" },
   { name: "friends", route: "/friends", icon: Users, label: "nav.friends" },
 ];
 const end = [
+  { name: "reels", route: "/reels", icon: Clapperboard, label: "menu.items.reels" },
   { name: "notifications", route: "/notifications", icon: Bell, label: "nav.notifications" },
   { name: "menu", route: "/menu", icon: Menu, label: "nav.menu" },
 ];

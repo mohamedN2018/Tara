@@ -50,3 +50,10 @@ spec:
                 name: service
                 port:
                   number: 80
+          - path: /api/v1/reels
+            pathType: Prefix
+            backend:
+              service:
+                name: service
+                port:
+                  number: 80

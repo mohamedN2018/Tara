@@ -15,6 +15,11 @@ import { API, apiAs, befriend, dmWith, pageAs, sharedAccounts, unfriend, useLoca
 const DESKTOP = { width: 1440, height: 900 };
 
 async function axe(page: Page, selector: string): Promise<string[]> {
+  // Dialogs pop in (animate-pop-in); measuring contrast mid-fade reports
+  // blended colours, so let finite animations finish first.
+  await page.waitForFunction(() =>
+    document.getAnimations().every((a) => a.playState !== "running" || a.effect?.getComputedTiming().endTime === Infinity),
+  );
   const result = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).include(selector).analyze();
   return result.violations
     .filter((v) => v.impact === "serious" || v.impact === "critical")

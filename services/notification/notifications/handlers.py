@@ -224,6 +224,20 @@ def on_message_created(e: EventEnvelope) -> None:
                     body=p.get("preview") or "",
                     data=team_data,
                 )
+    # A member wrote to Tara Support: the support team (chat asks identity who
+    # holds moderation.case.view) hears of it, opening the support inbox.
+    elif team.get("kind") == "support":
+        for recipient in team.get("recipients") or []:
+            if str(recipient) != str(sender):
+                notify(
+                    recipient,
+                    "message.support",
+                    actor_id=sender,
+                    subject_ref=f"conversation:{conversation_id}",
+                    group_key=str(conversation_id),
+                    body=p.get("preview") or "",
+                    data=data,
+                )
 
 
 @on_event("message.deleted")

@@ -12,6 +12,7 @@ from .internal_views import (
     AccountSummariesView,
     AccountSuspensionView,
     AccountVerificationView,
+    CapabilityHoldersView,
     CapabilityMatrixView,
     RoleHoldersView,
 )
@@ -26,6 +27,11 @@ urlpatterns = [
         name="internal-account-roles",
     ),
     path("capabilities/", CapabilityMatrixView.as_view(), name="internal-capabilities"),
+    path(
+        "capability-holders/",
+        CapabilityHoldersView.as_view(),
+        name="internal-capability-holders",
+    ),
     # Admin's user management console (8.6) and suspensions (8.4).
     path("accounts/search/", AccountSearchView.as_view(), name="internal-account-search"),
     path("accounts/summaries/", AccountSummariesView.as_view(), name="internal-account-summaries"),

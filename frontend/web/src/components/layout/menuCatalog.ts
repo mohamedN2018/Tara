@@ -151,7 +151,7 @@ export const MENU_CATALOG: readonly MenuItem[] = [
   { id: "pages", route: "/pages", labelKey: "nav.pages", descKey: d("pages"), icon: Flag, category: "social", built: true },
   { id: "followedPages", route: { path: "/pages", query: { tab: "followed" } }, labelKey: "pageHub.manager.followed", descKey: "pageHub.menu.followedDesc", icon: Flag, category: "social", built: true },
   { id: "stories", route: "/stories", labelKey: "menu.items.stories", descKey: "stories.hub.subtitle", icon: CircleDot, category: "social", built: true },
-  { id: "reels", route: "/reels", labelKey: "menu.items.reels", icon: Clapperboard, category: "social", built: false },
+  { id: "reels", route: "/reels", labelKey: "menu.items.reels", descKey: "menu.desc.reels", icon: Clapperboard, category: "social", built: true },
   { id: "videos", route: "/videos", labelKey: "menu.items.videos", icon: Video, category: "social", built: true },
   { id: "feeds", route: { path: "/home", query: { mode: "for_you" } }, labelKey: "postsFeed.feeds.nav", icon: Newspaper, category: "social", built: true },
   { id: "feedPreferences", route: "/feeds/manage", labelKey: "postsFeed.manage.title", icon: SlidersHorizontal, category: "social", built: true },
@@ -206,6 +206,7 @@ export const MENU_CATALOG: readonly MenuItem[] = [
 export const CREATE_CATALOG: readonly CreateItem[] = [
   { id: "post", route: "/home", labelKey: "menu.createItems.post", icon: PenSquare, built: true },
   { id: "story", route: { path: "/stories", query: { create: "1" } }, labelKey: "stories.create.title", icon: CircleDot, built: true },
+  { id: "reel", route: { path: "/reels", query: { create: "1" } }, labelKey: "reels.create.title", icon: Clapperboard, built: true },
   { id: "page", route: { path: "/pages", query: { create: "1" } }, labelKey: "menu.createItems.page", icon: FilePlus2, built: true },
   { id: "group", route: "/groups/new", labelKey: "menu.createItems.group", icon: UsersRound, built: true },
   { id: "event", route: "/events/new", labelKey: "menu.createItems.event", icon: CalendarPlus, built: true },

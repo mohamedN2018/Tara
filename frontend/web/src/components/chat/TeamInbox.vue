@@ -153,7 +153,7 @@ onUnmounted(() => window.clearInterval(timer));
     <!-- The list -->
     <div class="flex min-h-0 flex-col border-gray-200 dark:border-gray-800 md:border-e" :class="activeId ? 'hidden md:flex' : 'flex'">
       <div class="flex items-center justify-between gap-2 px-4 pb-2 pt-3">
-        <h2 class="truncate text-lg font-bold" dir="auto">{{ teamName }}</h2>
+        <h2 class="truncate text-lg font-bold" data-testid="team-inbox-name"><bdi>{{ teamName }}</bdi></h2>
         <button type="button" class="icon-btn h-9 w-9" :aria-label="t('chatTeam.refresh')" :title="t('chatTeam.refresh')" data-testid="team-inbox-refresh" @click="load()">
           <RefreshCw class="h-4 w-4" aria-hidden="true" />
         </button>

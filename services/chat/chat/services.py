@@ -20,7 +20,7 @@ from django.utils import timezone
 
 from tara_common.exceptions import Conflict, TaraAPIError
 
-from . import events, graph_client, media_client, profile_client, text
+from . import events, graph_client, identity_client, media_client, profile_client, text
 from .models import (
     MESSAGE_REACTION_TYPES,
     BlockedPair,
@@ -1171,7 +1171,8 @@ def _record_message(
             }
         elif conversation.type in TEAM_TYPES:
             # A member wrote to the team: the team is told (notification) and
-            # its inbox badge counts it. Support staff are not listed yet.
+            # its inbox badge counts it. A page's team comes from profile, the
+            # support team (moderation.case.view holders) from identity.
             payload["team"] = {
                 "kind": conversation.type,
                 "page_id": str(conversation.page_id) if conversation.page_id else None,
@@ -1217,6 +1218,9 @@ def send_message(
     if conversation.type == Conversation.Type.PAGE and conversation.page_id:
         # Asked before the row lock; a failure only loses the team's notice.
         team = profile_client.page_team(str(conversation.page_id))
+    elif conversation.type == Conversation.Type.SUPPORT and settings.CHAT_NOTIFY_SUPPORT_TEAM:
+        # Who answers the support inbox (identity, cached); the same rule.
+        team = identity_client.support_staff()
     return _record_message(
         conversation_id,
         actor_id,

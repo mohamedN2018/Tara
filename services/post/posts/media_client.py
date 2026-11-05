@@ -30,6 +30,14 @@ class MediaInfo:
     status: str
     # "post" for a video transcoded by media's pipeline (5.2); "" otherwise.
     purpose: str = ""
+    # The playable result of a transcoded video (None until media knows it):
+    # the reel rules (5.5) are checked against these, never the client's word.
+    duration_ms: int | None = None
+    width: int | None = None
+    height: int | None = None
+    # The post media say this asset is attached to (None while unbound); the
+    # reels reconcile job (5.5) compares it with the reel's own post.
+    post_id: str | None = None
 
 
 def _internal_token() -> str:
@@ -77,6 +85,10 @@ def lookup(media_ids: list[str]) -> dict[str, MediaInfo]:
             kind=r["kind"],
             status=r["status"],
             purpose=r.get("purpose") or "",
+            duration_ms=r.get("duration_ms"),
+            width=r.get("width"),
+            height=r.get("height"),
+            post_id=r.get("post_id") or None,
         )
         for r in rows
     }

@@ -36,6 +36,9 @@ const routes: RouteRecordRaw[] = [
   { path: "/stories/:id", name: "story", component: () => import("@/views/StoriesView.vue"), meta: { auth: true } },
   // T4: video posts and feed preferences (snoozes).
   { path: "/videos", name: "videos", component: () => import("@/views/VideosView.vue"), meta: { auth: true } },
+  // Reels (5.8): short vertical videos in a snap pager, apart from /videos.
+  { path: "/reels", name: "reels", component: () => import("@/views/ReelsView.vue"), meta: { auth: true } },
+  { path: "/reels/:id", name: "reel", component: () => import("@/views/ReelsView.vue"), meta: { auth: true } },
   { path: "/feeds/manage", name: "feed-preferences", component: () => import("@/views/FeedPreferencesView.vue"), meta: { auth: true } },
   // Creator studio (T8): its own layout with nested pages. Drafts deep links land in the library.
   {

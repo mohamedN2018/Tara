@@ -115,16 +115,18 @@ test("a plain member sees the built services by category, no admin item and no u
   await expect(menu.getByRole("menuitem", { name: "مراجعة الإعلانات" })).toHaveCount(0);
   await expect(page.getByTestId("menu-item-admin")).toHaveCount(0);
   // Unbuilt modules are hidden, never shown disabled.
-  for (const name of ["الذكريات", "الريلز", "البث المباشر", "مركز المساعدة"]) {
+  for (const name of ["الذكريات", "البث المباشر", "مركز المساعدة"]) {
     await expect(menu.getByRole("menuitem", { name })).toHaveCount(0);
   }
+  // Reels are built (5.8): a destination of their own, apart from Videos.
+  await expect(menu.getByRole("menuitem", { name: "الريلز" })).toHaveCount(1);
   // Message requests and archived chats are real inbox folders now (T5).
   await expect(menu.getByRole("menuitem", { name: "طلبات الرسائل" })).toHaveCount(1);
   await expect(menu.locator('[aria-disabled="true"], [disabled]')).toHaveCount(0);
 
   // The Create column offers only flows that exist.
   const create = menu.getByRole("menu", { name: "إنشاء" });
-  await expect(create.getByRole("menuitem")).toHaveText(["منشور", "إنشاء قصة", "صفحة", "مجموعة", "فعالية", "منتج في السوق"]);
+  await expect(create.getByRole("menuitem")).toHaveText(["منشور", "إنشاء قصة", "إنشاء ريل", "صفحة", "مجموعة", "فعالية", "منتج في السوق"]);
 
   // Search in the menu narrows it (Arabic spelling variants fold together).
   await page.getByTestId("main-menu-search").fill("الاعدادات");

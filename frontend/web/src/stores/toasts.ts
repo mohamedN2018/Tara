@@ -8,6 +8,8 @@ export interface Toast {
   text: string;
   icon?: "bell" | "message" | "error" | "success";
   to?: string; // optional route to navigate to on click
+  /** An optional button on the toast (e.g. "Undo"); the toast closes once it runs. */
+  action?: { label: string; run: () => void; testid?: string };
 }
 
 export const useToastStore = defineStore("toasts", () => {

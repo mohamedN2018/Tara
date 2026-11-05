@@ -17,6 +17,7 @@ import HideFeedbackCard from "@/components/post/HideFeedbackCard.vue";
 import PostCard from "@/components/post/PostCard.vue";
 import SponsoredCard from "@/components/post/SponsoredCard.vue";
 import VideosRail from "@/components/post/VideosRail.vue";
+import ReelsRail from "@/components/reels/ReelsRail.vue";
 import PeopleYouMayKnowStrip from "@/components/social/PeopleYouMayKnowStrip.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
@@ -517,6 +518,8 @@ onUnmounted(() => {
           </div>
           <!-- Real video posts only; renders nothing when there are none. -->
           <VideosRail v-if="i === 1" />
+          <!-- Real reels only (short vertical videos, 5.8), apart from the Videos rail. -->
+          <ReelsRail v-if="i === Math.min(3, posts.length - 1)" />
           <!-- Narrow screens have no right column: its "People you may know" comes into the feed as a strip. -->
           <PeopleYouMayKnowStrip v-if="!railVisible && i === Math.min(2, posts.length - 1)" />
           <SponsoredCard
@@ -532,6 +535,8 @@ onUnmounted(() => {
           </button>
         </div>
       </template>
+      <!-- An empty feed still offers real reels (the in-feed rail needs posts to sit between). -->
+      <ReelsRail v-if="!loading && !error && posts.length === 0" />
     </div>
   </AppShell>
 </template>

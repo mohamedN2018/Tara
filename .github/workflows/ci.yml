@@ -127,7 +127,13 @@ jobs:
           cp .env.example .env
           docker compose -f infra/compose/docker-compose.yml --env-file .env config -q
           docker network create dokploy-network
-          DOMAIN=example.com docker compose -f docker-compose.dokploy.yml --env-file .env config -q
+          # The Dokploy stack requires production-only secrets (RABBITMQ_PASS,
+          # REDIS_PASSWORD, ...) that .env.example lacks. Validate it against a
+          # throwaway env from the real generator, so the generator and the
+          # compose file are also checked for drift. The file is discarded.
+          ./scripts/gen-dokploy-env.sh --force --output "$RUNNER_TEMP/dokploy.env" example.com >/dev/null
+          docker compose -f docker-compose.dokploy.yml --env-file "$RUNNER_TEMP/dokploy.env" config -q
+          rm -f "$RUNNER_TEMP/dokploy.env"
       - name: Validate Kustomize overlays + cluster
         run: |
           for d in infra/k8s/overlays/*/ infra/k8s/cluster/; do

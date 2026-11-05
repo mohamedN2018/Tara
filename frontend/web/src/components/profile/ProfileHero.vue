@@ -54,6 +54,8 @@ const TABS = computed<ProfileTab[]>(() => [
   "about",
   "friends",
   "photos",
+  // Reels (5.8): short vertical videos, next to the photos; the tab lists only what you may see.
+  "reels",
   ...(hasShop.value ? (["marketplace"] as const) : []),
 ]);
 // Phones show the first tabs and fold the rest into "More ▾" (the reference's overflow menu),

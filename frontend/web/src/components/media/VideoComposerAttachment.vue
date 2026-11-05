@@ -132,7 +132,7 @@ defineExpose({ pick, remove, state });
       >
         <X class="h-4 w-4" aria-hidden="true" />
       </button>
-      <p v-if="state === 'ready'" class="mt-1 text-xs text-emerald-600 dark:text-emerald-400" role="status">{{ t("video.composer.ready") }}</p>
+      <p v-if="state === 'ready'" class="mt-1 text-xs text-emerald-700 dark:text-emerald-400" role="status">{{ t("video.composer.ready") }}</p>
     </div>
 
     <p v-if="error" class="mt-2 text-xs text-red-500" role="alert">{{ error }}</p>

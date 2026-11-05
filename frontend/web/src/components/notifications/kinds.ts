@@ -42,6 +42,7 @@ const KIND_ICONS: Record<string, LucideIcon> = {
   follow: UserPlus,
   message: MessageCircle,
   "message.page": MessageCircle,
+  "message.support": MessageCircle,
   call: Phone,
   "call.missed": PhoneMissed,
   "listing.status": ShoppingBag,
@@ -115,9 +116,11 @@ export function notificationText(
     const sentence = `safety.notify.${n.kind === "moderation.decision" ? "decision" : "appeal"}_${what}`;
     return te(sentence) ? t(sentence, { target }) : n.body;
   }
-  if (n.kind === "message.page") {
-    // A message to a Page the viewer helps run: "<name> to <Page>: <text>".
-    const page = String(n.data?.page_name || t("chatTeam.pageFallback"));
+  if (n.kind === "message.page" || n.kind === "message.support") {
+    // A message to a Page the viewer helps run, or to Tara Support for the
+    // support team: "<name> to <Page | Tara Support>: <text>".
+    const page =
+      n.kind === "message.support" ? t("chatTeam.support") : String(n.data?.page_name || t("chatTeam.pageFallback"));
     const body = withoutAppLinks(n.body ?? "");
     const count = Number(n.data?.message_count ?? 1);
     if (Number.isInteger(count) && count > 1) return t("chatTeam.notify.many", { name, page, count }, count);
@@ -163,7 +166,7 @@ export function notificationText(
  * its own direction and punctuation ("seen?" never shows as "?seen").
  */
 export function notificationExcerpt(n: Notification): string {
-  if (n.kind !== "message" && n.kind !== "message.page") return "";
+  if (n.kind !== "message" && n.kind !== "message.page" && n.kind !== "message.support") return "";
   if (n.kind === "message" && othersCount(n) > 0) return "";
   const count = Number(n.data?.message_count ?? 1);
   if (Number.isInteger(count) && count > 1) return "";

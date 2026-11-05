@@ -25,16 +25,25 @@ function inDays(n: number, hour = 18): Date {
 
 for (const lang of ["ar", "en"] as const) {
   test.describe(`studio from navigation (${lang})`, () => {
+    // Runs even when a test fails, so its posts don't pile up on the shared account.
+    const cleanup: (() => Promise<unknown>)[] = [];
+    test.afterEach(async () => {
+      for (const undo of cleanup.splice(0)) await undo().catch(() => {});
+    });
+
     test(`menu -> studio home -> library -> planner, real rows, actions (${lang})`, async ({ browser }) => {
       test.setTimeout(180_000);
       const { a } = await sharedAccounts();
       const api = await apiAs(a);
       const tag = `t8${lang}${unique()}`;
-      const scheduledAt = inDays(3);
+      // Early in the day: a month cell shows its first two posts, by time.
+      const scheduledAt = inDays(3, 6);
       const made = async (body: object) => {
         const res = await api.post(`${API}/posts/`, { data: { type: "text", audience: "public", media_ids: [], ...body } });
         expect(res.ok(), await res.text()).toBe(true);
-        return (await res.json()).data as { id: string };
+        const row = (await res.json()).data as { id: string };
+        cleanup.push(() => api.delete(`${API}/posts/drafts/${row.id}/`));
+        return row;
       };
       const scheduled = await made({ body: `scheduled ${tag}`, publish_at: scheduledAt.toISOString() });
       const draft = await made({ body: `draft ${tag}`, draft: true });
@@ -96,7 +105,7 @@ for (const lang of ["ar", "en"] as const) {
       expect(await axe(page, "[data-testid=studio-planner]")).toEqual([]);
 
       // Drag it one day later: same local time, saved on the server.
-      const target = inDays(4);
+      const target = inDays(4, 6);
       // The next day is on this grid unless it opens a new week of the next month.
       const targetCell = page.locator(`[data-day="${dayKey(target)}"]`);
       if (await targetCell.count()) {

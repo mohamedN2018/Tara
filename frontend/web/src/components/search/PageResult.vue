@@ -47,8 +47,8 @@ async function toggle() {
       <UserAvatar :name="name" :media-id="result.avatar_media_id" :size="56" />
     </RouterLink>
     <div class="min-w-0 flex-1">
-      <RouterLink :to="to" class="block truncate font-semibold hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400" dir="auto">
-        {{ name }}
+      <RouterLink :to="to" class="block truncate font-semibold hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400" data-testid="page-result-name">
+        <bdi>{{ name }}</bdi>
       </RouterLink>
       <p class="truncate text-xs text-gray-500 dark:text-gray-400">
         <span v-if="category" dir="auto">{{ category }}</span>

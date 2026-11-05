@@ -64,7 +64,10 @@ test("logging in by username, with ?next= kept", async ({ page }) => {
   await page.getByLabel("كلمة المرور").fill(PASSWORD);
   await page.getByRole("button", { name: "دخول" }).click();
   await expect(page).toHaveURL(/\/friends$/);
-  await expect(page.getByText(a.name).first()).toBeVisible();
+  // The friends hub has no sidebar with the viewer's name; the profile menu shows it.
+  await expect(page.getByRole("heading", { level: 1, name: "الأصدقاء" })).toBeVisible();
+  await page.getByRole("button", { name: "الملف الشخصي" }).click();
+  await expect(page.getByTestId("profile-menu-profile")).toContainText(a.name);
 });
 
 test("an unknown username and a wrong password get the same message", async ({ page }) => {

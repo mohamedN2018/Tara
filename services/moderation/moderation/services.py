@@ -318,12 +318,11 @@ def file_appeal(case_id: str, account_id: str, text: str) -> Appeal:
 
 
 def appeals(status: str | None = None):
-    """The appeal queue, oldest first; open appeals unless ``status`` says otherwise."""
-    return (
-        Appeal.objects.filter(status=status or Appeal.Status.OPEN)
-        .select_related("case")
-        .order_by("created_at", "id")
-    )
+    """Open appeals (the default) are a queue, oldest first. Kept or overturned
+    ones are history, newest first, so the latest decisions lead the first page."""
+    status = status or Appeal.Status.OPEN
+    order = ("created_at", "id") if status == Appeal.Status.OPEN else ("-created_at", "-id")
+    return Appeal.objects.filter(status=status).select_related("case").order_by(*order)
 
 
 def resolve_appeal(appeal_id: str, moderator_id: str, status: str) -> Appeal:

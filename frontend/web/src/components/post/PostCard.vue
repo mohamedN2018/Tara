@@ -326,7 +326,7 @@ async function copyLink() {
 const downloading = ref(false);
 async function downloadFromMenu() {
   closeMenu();
-  if (mediaIds.value.length > 1 && props.post.type !== "video") {
+  if (mediaIds.value.length > 1 && props.post.type !== "video" && props.post.type !== "reel") {
     viewer.open(0);
     return;
   }
@@ -610,8 +610,8 @@ const iconCls = "h-5 w-5 shrink-0 text-gray-600 dark:text-gray-300";
         <UserAvatar :name="authorDisplay" :media-id="avatarId" :size="44" />
       </RouterLink>
       <div class="min-w-0">
-        <RouterLink :to="authorTo" class="block truncate text-[15px] font-bold text-gray-900 hover:text-brand-600 dark:text-white dark:hover:text-brand-300" dir="auto">
-          {{ authorDisplay }}
+        <RouterLink :to="authorTo" class="block truncate text-[15px] font-bold text-gray-900 hover:text-brand-600 dark:text-white dark:hover:text-brand-300" data-testid="post-author-name">
+          <bdi>{{ authorDisplay }}</bdi>
         </RouterLink>
         <PostComposerMeta :post="current" />
         <div class="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
@@ -844,8 +844,17 @@ const iconCls = "h-5 w-5 shrink-0 text-gray-600 dark:text-gray-300";
     <!-- Media run edge to edge, as on the reference. -->
     <div v-if="mediaIds.length" class="-mx-4 sm:-mx-5">
       <!-- A video post (5.7): one transcoded video, played through the media service's token-checked HLS. -->
-      <VideoPlayer v-if="post.type === 'video'" :media-id="mediaIds[0]" class="!rounded-none" />
-      <MediaGrid v-else :media-ids="mediaIds" :author-name="authorDisplay" compact @open="viewer.open" />
+      <VideoPlayer v-if="post.type === 'video' || post.type === 'reel'" :media-id="mediaIds[0]" class="!rounded-none" />
+      <!-- A reel (5.8) in the feed: played here, and one tap away from the reels viewer. -->
+      <RouterLink
+        v-if="post.type === 'reel'"
+        :to="{ name: 'reel', params: { id: post.id } }"
+        class="mx-4 mt-2 inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 hover:underline sm:mx-5 dark:text-brand-300"
+        data-testid="post-watch-reel"
+      >
+        {{ t("reels.watchInReels") }}
+      </RouterLink>
+      <MediaGrid v-if="post.type !== 'video' && post.type !== 'reel'" :media-ids="mediaIds" :author-name="authorDisplay" compact @open="viewer.open" />
     </div>
     <MediaTheater
       v-if="viewer.index.value !== null"

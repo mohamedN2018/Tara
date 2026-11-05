@@ -2,6 +2,7 @@ import {
   Bell,
   Bookmark,
   CalendarDays,
+  Clapperboard,
   Flag,
   Home,
   type LucideIcon,
@@ -40,7 +41,7 @@ const LAVENDER = "bg-lavender text-ink dark:bg-gray-800 dark:text-lavender";
 
 /**
  * Sidebar navigation, in the order the reference layout uses. Only built modules
- * are listed: Memories, Reels, Video, Live, Gaming, Creator Studio, Professional,
+ * are listed: Memories, Live, Gaming, Creator Studio, Professional,
  * Business Center and Help join this list when they exist (never shown disabled).
  */
 export const navItems: NavItem[] = [
@@ -48,6 +49,7 @@ export const navItems: NavItem[] = [
   { name: "saved", route: "/saved", labelKey: "nav.saved", icon: Bookmark, tone: PINK },
   { name: "groups", route: "/groups", labelKey: "nav.groups", icon: UsersRound, tone: VIOLET },
   { name: "videos", route: "/videos", labelKey: "menu.items.videos", icon: Video, tone: PINK },
+  { name: "reels", route: "/reels", labelKey: "menu.items.reels", icon: Clapperboard, tone: VIOLET },
   { name: "marketplace", route: "/marketplace", labelKey: "nav.marketplace", icon: ShoppingBag, tone: PURPLE },
   // Feeds: Home sorted For you / Latest / Favorites / Following, plus feed preferences.
   { name: "feeds", route: "/home?mode=for_you", labelKey: "postsFeed.feeds.nav", icon: Newspaper, tone: VIOLET },

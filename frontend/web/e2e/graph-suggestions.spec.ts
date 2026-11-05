@@ -105,6 +105,7 @@ for (const lang of ["ar", "en"] as const) {
   });
 
   test(`[${lang}] follow a suggested page from the right column`, async ({ browser }) => {
+    test.setTimeout(120_000);
     const l = LABELS[lang];
     const [owner, me] = await Promise.all([freshAccount("Samir"), freshAccount("Nour")]);
     const ownerApi = await apiAs(owner);
@@ -124,8 +125,22 @@ for (const lang of ["ar", "en"] as const) {
       ((await (await meApi.get(`${API}/social/suggestions/pages/?limit=30`)).json()).data.results as { page_id: string }[]).map(
         (r) => r.page_id,
       );
-    // page.created reaches graph asynchronously.
-    await expect.poll(async () => (await suggested()).includes(pageId), { timeout: 30_000 }).toBe(true);
+    const dismiss = async (id: string) =>
+      expect((await meApi.post(`${API}/social/suggestions/${id}/dismiss/`, { data: { target_type: "page" } })).status()).toBe(204);
+    // page.created reaches graph asynchronously, and the dev database can hold
+    // more than 30 (the API's cap) pages with more followers: this fresh viewer
+    // dismisses each page shown until ours is among them.
+    await expect
+      .poll(
+        async () => {
+          const ids = await suggested();
+          if (ids.includes(pageId)) return true;
+          for (const other of ids) await dismiss(other);
+          return false;
+        },
+        { timeout: 45_000 },
+      )
+      .toBe(true);
     // The widget shows the three most followed: this fresh account dismisses
     // the dev database's more popular pages, so ours is among them.
     for (const other of (await suggested()).slice(0, (await suggested()).indexOf(pageId))) {

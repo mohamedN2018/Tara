@@ -762,5 +762,19 @@ def test_moderators_find_open_appeals_in_the_queue(client_for, moderator):
     assert mod.get(reverse("moderation:appeals"), {"status": "nope"}).status_code == 400
 
 
+def test_open_appeals_are_oldest_first_and_resolved_ones_newest_first(moderator):
+    _, mod = moderator
+    owner = _acct()
+    first, second = (
+        services.file_appeal(str(_resolved_case(owner).id), owner, text) for text in ("a", "b")
+    )
+    queue = mod.get(reverse("moderation:appeals")).json()["data"]
+    assert [r["id"] for r in queue] == [str(first.id), str(second.id)]
+    for appeal in (first, second):
+        services.resolve_appeal(str(appeal.id), _acct(), "upheld")
+    kept = mod.get(reverse("moderation:appeals"), {"status": "upheld"}).json()["data"]
+    assert [r["id"] for r in kept] == [str(second.id), str(first.id)]
+
+
 def test_the_appeal_queue_is_for_moderators_only(client_for):
     assert client_for(_acct()).get(reverse("moderation:appeals")).status_code == 403

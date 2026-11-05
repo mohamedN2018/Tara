@@ -120,12 +120,14 @@ test("logging out in one tab ends the session in the other", async ({ browser })
   const { a } = await sharedAccounts();
   const first = await pageAs(browser, a);
   await first.goto("/friends");
-  await expect(first.getByText(a.name).first()).toBeVisible();
+  // The friends hub has no sidebar with the viewer's name; the profile menu shows it.
+  await expect(first.getByRole("heading", { level: 1, name: "الأصدقاء" })).toBeVisible();
   const second = await first.context().newPage();
   await second.goto("/home");
   await expect(second.getByText(a.name).first()).toBeVisible();
 
   await first.getByRole("button", { name: "الملف الشخصي" }).click();
+  await expect(first.getByTestId("profile-menu-profile")).toContainText(a.name);
   await first.getByRole("menuitem", { name: "تسجيل الخروج" }).click();
   await expect(first).toHaveURL(/\/login$/);
   await expect(second).toHaveURL(/\/login$/);

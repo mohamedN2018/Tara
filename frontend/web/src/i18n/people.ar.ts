@@ -19,7 +19,7 @@ export default {
     moreActions: "إجراءات أخرى لهذا الملف",
     privacy: "إعدادات الخصوصية",
   },
-  tabs: { posts: "المنشورات", about: "حول", friends: "الأصدقاء", photos: "الصور", more: "المزيد", marketplace: "السوق" },
+  tabs: { posts: "المنشورات", about: "حول", friends: "الأصدقاء", photos: "الصور", more: "المزيد", marketplace: "السوق", reels: "ريلز" },
   posts: { title: "المنشورات" },
   intro: {
     title: "نبذة",

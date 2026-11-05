@@ -210,3 +210,23 @@ def profile(monkeypatch):
     monkeypatch.setattr("chat.profile_client.page_access", fake.page_access)
     monkeypatch.setattr("chat.profile_client.page_team", fake.page_team)
     return fake
+
+
+class FakeIdentity:
+    """Stands in for identity's capability-holders list (who answers support)."""
+
+    def __init__(self) -> None:
+        self.staff: list[str] = []
+        self.down = False
+        self.calls = 0
+
+    def support_staff(self):
+        self.calls += 1
+        return [] if self.down else sorted(self.staff)  # the real client degrades the same way
+
+
+@pytest.fixture(autouse=True)
+def identity(monkeypatch):
+    fake = FakeIdentity()
+    monkeypatch.setattr("chat.identity_client.support_staff", fake.support_staff)
+    return fake

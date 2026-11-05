@@ -404,6 +404,9 @@ def internal_lookup(media_ids: list[str]) -> list[dict]:
             "purpose": a.purpose,
             "failure_code": a.failure_code or None,
             "duration_ms": a.duration_ms,
+            # As displayed (rotation applied): post's reel rules (5.5) read them.
+            "width": a.width,
+            "height": a.height,
         }
         for a in assets
     ]

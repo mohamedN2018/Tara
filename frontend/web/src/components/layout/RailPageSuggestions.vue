@@ -93,9 +93,9 @@ onMounted(load);
           <RouterLink
             :to="{ name: 'page', params: { handle: p.handle } }"
             class="block truncate text-sm font-semibold hover:underline"
-            dir="auto"
+            data-testid="rail-page-name"
           >
-            {{ p.name }}
+            <bdi>{{ p.name }}</bdi>
           </RouterLink>
           <p class="truncate text-xs text-gray-600 dark:text-gray-400">
             <span v-if="p.category" dir="auto">{{ p.category }} · </span>{{ t("suggestions.followers", p.followers_count + (followed[p.page_id] ? 1 : 0)) }}

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from django.db.models import Count, F, Q, Sum
+from django.db.models import Count, F, Sum
 from django.db.models.functions import Coalesce
 
 from tara_common.exceptions import TaraAPIError
@@ -138,6 +138,9 @@ def calendar(author_id: str, start: str | None, end: str | None) -> tuple[list[P
     The client sends the edges of its month or week grid in the viewer's own
     time zone (with an offset); at most 43 days. Returns the posts and whether
     the list was cut at ``MAX_CALENDAR_POSTS``.
+
+    Scheduled posts take the room first: they are what the planner moves, so
+    many published posts early in the range never push them out of the list.
     """
     from . import services
 
@@ -146,17 +149,24 @@ def calendar(author_id: str, start: str | None, end: str | None) -> tuple[list[P
         raise _bad_request("to must be after from.")
     if hi - lo > MAX_CALENDAR_SPAN:
         raise _bad_request("The calendar range is at most 43 days.", "range_too_long")
-    qs = (
-        _live(author_id)
-        .filter(
-            Q(state=PostState.SCHEDULED, publish_at__gte=lo, publish_at__lt=hi)
-            | Q(state=PostState.PUBLISHED, created_at__gte=lo, created_at__lt=hi)
-        )
-        .annotate(at=Coalesce("publish_at", "created_at"))
-        .order_by("at", "id")
+
+    def earliest(qs, limit: int) -> list[Post]:
+        qs = qs.annotate(at=Coalesce("publish_at", "created_at")).order_by("at", "id")
+        return list(services.with_detail(qs)[: limit + 1])
+
+    live = _live(author_id)
+    scheduled = earliest(
+        live.filter(state=PostState.SCHEDULED, publish_at__gte=lo, publish_at__lt=hi),
+        MAX_CALENDAR_POSTS,
     )
-    rows = list(services.with_detail(qs)[: MAX_CALENDAR_POSTS + 1])
-    return rows[:MAX_CALENDAR_POSTS], len(rows) > MAX_CALENDAR_POSTS
+    room = max(MAX_CALENDAR_POSTS - len(scheduled), 0)
+    published = earliest(
+        live.filter(state=PostState.PUBLISHED, created_at__gte=lo, created_at__lt=hi), room
+    )
+    truncated = len(scheduled) > MAX_CALENDAR_POSTS or len(published) > room
+    rows = scheduled[:MAX_CALENDAR_POSTS] + published[:room]
+    rows.sort(key=lambda p: (p.at, p.id))
+    return rows, truncated
 
 
 def recent_comments(author_id: str):

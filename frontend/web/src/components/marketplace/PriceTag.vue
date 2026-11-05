@@ -22,7 +22,7 @@ const view = computed(() => priceView(props.listing, locale.value));
 <template>
   <p class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5" :class="size === 'lg' ? 'text-2xl' : 'text-base'">
     <template v-if="view.kind === 'free'">
-      <span class="font-bold text-emerald-600 dark:text-emerald-400">{{ t("market.priceTypes.free") }}</span>
+      <span class="font-bold text-emerald-700 dark:text-emerald-400">{{ t("market.priceTypes.free") }}</span>
     </template>
     <template v-else-if="view.kind === 'offer'">
       <span class="font-bold text-brand-600 dark:text-brand-300">{{ t("market.makeOffer") }}</span>

@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     "posts",
     "gatherings",
     "stories",
+    "reels",
 ]
 
 MIDDLEWARE = [
@@ -135,6 +136,8 @@ CELERY_BEAT_SCHEDULE = {
     "gatherings-tick": {"task": "gatherings.tick", "schedule": 300.0},
     # Scheduled posts whose time has come (2C); SKIP LOCKED, so once per post.
     "posts-publish-scheduled": {"task": "posts.publish_scheduled", "schedule": 60.0},
+    # Reels whose video was deleted, failed or left unbound in media (5.5).
+    "reels-reconcile": {"task": "reels.reconcile", "schedule": 900.0},
 }
 
 CORS_ALLOWED_ORIGINS = env_list("POST_CORS_ORIGINS", "http://localhost:5173")

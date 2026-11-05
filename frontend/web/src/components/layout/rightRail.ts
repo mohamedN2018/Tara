@@ -36,7 +36,7 @@ export const MAX_RAIL_PEOPLE = 3;
 export const MAX_RAIL_PAGES = 3;
 
 /** Shared look of the column's sections, so the widgets line up with each other. */
-export const railHeading = "px-2 pb-2 text-[15px] font-semibold text-gray-500 dark:text-gray-400";
+export const railHeading = "px-2 pb-2 text-[15px] font-semibold text-gray-600 dark:text-gray-400";
 export const railSection = "border-t border-gray-200 pt-3 first:border-t-0 first:pt-0 dark:border-gray-800";
 
 /**

@@ -108,6 +108,15 @@ CHAT_MESSAGE_REQUESTS = os.getenv("CHAT_MESSAGE_REQUESTS", "true").lower() == "t
 # its team (the team answers the page's messages). Every service already gets it.
 PROFILE_INTERNAL_URL = os.getenv("PROFILE_INTERNAL_URL", "http://profile:8000")
 PROFILE_CALL_TIMEOUT = float(os.getenv("PROFILE_CALL_TIMEOUT", "2.0"))
+# Support conversations: identity says who answers the support inbox (holders
+# of moderation.case.view), so a member's new message reaches them as a
+# notification. The secret is held only by identity and chat (its role API
+# refuses INTERNAL_JWT_SECRET). IDENTITY_INTERNAL_URL is in every service's env.
+IDENTITY_INTERNAL_URL = os.getenv("IDENTITY_INTERNAL_URL", "http://identity:8000")
+IDENTITY_CALL_TIMEOUT = 2.0
+CHAT_IDENTITY_SECRET = os.getenv("CHAT_IDENTITY_SECRET", "dev-only-chat-identity-secret-change-me")
+# Two-release rule: notification reads `team.kind=support` before chat sends it.
+CHAT_NOTIFY_SUPPORT_TEAM = env_bool("CHAT_NOTIFY_SUPPORT_TEAM", True)
 # `message.reported` for moderation (moderation already consumes it).
 CHAT_EMIT_MESSAGE_REPORTED = os.getenv("CHAT_EMIT_MESSAGE_REPORTED", "true").lower() == "true"
 

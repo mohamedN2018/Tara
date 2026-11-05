@@ -50,6 +50,8 @@ _HASHTAG_RE = re.compile(r"(?<![\w/&#])#(\w{1,80})")
 _MENTION_RE = re.compile(r"(?<![\w.@/])@([a-zA-Z0-9_]{3,30})")
 MAX_MENTION_NOTIFICATIONS = 10
 MAX_MEDIA_PER_POST = 10
+# Post types that carry exactly one transcoded video (5.2; a reel, 5.5).
+_VIDEO_TYPES = {Post.Type.VIDEO, Post.Type.REEL}
 # Media still processing are accepted: the composer posts right after upload.
 _ATTACHABLE_STATUSES = {"processing", "ready"}
 AUDIENCE_RANK = {
@@ -262,7 +264,7 @@ def _check_video(infos: list, post_type: str) -> None:
 
     Media plays it only to viewers post's visibility endpoint lets see the
     post, so the audience, blocks and moderator removal apply to it."""
-    if post_type != Post.Type.VIDEO:
+    if post_type not in _VIDEO_TYPES:
         raise _bad_request("A video needs the video post type.", "video_post_type")
     if len(infos) != 1 or infos[0].kind != "video":
         raise _bad_request("A video post has exactly one video.", "video_post_single")
@@ -286,7 +288,7 @@ def _check_attachments(author_id: str, media_ids: list[str], post_type: str = ""
     # Someone else's media and unknown ids look the same, so neither leaks.
     if any(i is None or i.owner_id != str(author_id) for i in infos):
         raise _bad_request("Media not found.", "media_not_owned")
-    if any(i.kind == "video" for i in infos) or post_type == Post.Type.VIDEO:
+    if any(i.kind == "video" for i in infos) or post_type in _VIDEO_TYPES:
         _check_video(infos, post_type)
     elif any(i.kind != "image" for i in infos):
         raise _bad_request("Only images can be attached to a post.", "media_kind_not_allowed")
@@ -324,8 +326,15 @@ def create_post(
     state: str = PostState.PUBLISHED,
     publish_at=None,
     page_id=None,
+    post_id=None,
+    on_create=None,
 ) -> Post:
-    """With ``page_id`` the post is published as that page (``author_type``
+    """``post_id`` (optional) is the id to create the post with, for a caller
+    that binds more media to it first (a reel's cover). ``on_create(post)`` runs
+    inside the write transaction, before ``post.created`` is emitted, so a
+    domain row that belongs to the post (``reels.Reel``) commits with it.
+
+    With ``page_id`` the post is published as that page (``author_type``
     ``page``, ``author_id`` the page id) once profile says the author may post
     for it; the media stay the author's own uploads. A page post is public,
     published now, and has no group, tags or poll audience of its own.
@@ -382,14 +391,14 @@ def create_post(
         raise TaraAPIError("Invalid audience.", code="validation_error", http_status_code=400)
     if comment_policy not in CommentPolicy.values:
         raise _bad_request("Invalid comment policy.")
-    if post_type == Post.Type.VIDEO and not media_ids:
+    if post_type in _VIDEO_TYPES and not media_ids:
         raise _bad_request("A video post needs its video.", "video_required")
     if not body and not media_ids and not shared_post_id and not feeling:
         raise TaraAPIError("Post must have content.", code="validation_error", http_status_code=400)
 
     tagged = composer.check_tags(author_id, tagged_ids or [])
     media_ids = [str(m) for m in media_ids or []]
-    post_id = uuid7()
+    post_id = post_id or uuid7()
     if media_ids:
         _check_attachments(uploader_id, media_ids, post_type)
         # Restricted before the post exists. If the post then fails to commit,
@@ -422,6 +431,8 @@ def create_post(
             PostMedia.objects.create(post=post, media_id=media_id, position=i)
         composer.set_tags(post, tagged)
         _attach_tags_and_mentions(post)
+        if on_create is not None:
+            on_create(post)
         if state == PostState.PUBLISHED:
             emit_created(post)
     return post

@@ -12,6 +12,7 @@ import PageHeader, { type PageTab } from "@/components/pages/PageHeader.vue";
 import PagePostComposer from "@/components/pages/PagePostComposer.vue";
 import PageTeam from "@/components/pages/PageTeam.vue";
 import PostCard from "@/components/post/PostCard.vue";
+import ReelGrid from "@/components/reels/ReelGrid.vue";
 import ReportDialog from "@/components/social/ReportDialog.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
@@ -39,7 +40,7 @@ const loading = ref(true);
 const missing = ref(false);
 const error = ref(false);
 
-const isTab = (v: unknown): v is PageTab => v === "posts" || v === "about" || v === "team";
+const isTab = (v: unknown): v is PageTab => v === "posts" || v === "about" || v === "reels" || v === "team";
 const tab = computed<PageTab>(() => {
   const wanted = route.query.tab;
   if (!isTab(wanted) || (wanted === "team" && !page.value?.my_role)) return "posts";
@@ -266,6 +267,9 @@ watch(
           </div>
           <div v-else-if="tab === 'about'" class="mx-auto max-w-[760px]">
             <PageAbout :page="page" full />
+          </div>
+          <div v-else-if="tab === 'reels'" class="mx-auto max-w-[760px]">
+            <ReelGrid :author-id="page.id" />
           </div>
           <div v-else-if="tab === 'team'" class="mx-auto max-w-[760px]">
             <PageTeam :page="page" />

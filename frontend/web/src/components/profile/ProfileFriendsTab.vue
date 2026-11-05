@@ -159,7 +159,7 @@ const count = (l: FriendsList) =>
               >
                 <UserAvatar :name="pg.name" :media-id="pg.avatar_media_id" :size="72" class="!rounded-lg" />
                 <span class="min-w-0">
-                  <span class="block truncate text-[15px] font-semibold" dir="auto">{{ pg.name }}</span>
+                  <span class="block truncate text-[15px] font-semibold"><bdi>{{ pg.name }}</bdi></span>
                   <span class="inline-flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400"><Flag class="h-3 w-3" />{{ t("people.friendsTab.pages") }}</span>
                 </span>
               </RouterLink>

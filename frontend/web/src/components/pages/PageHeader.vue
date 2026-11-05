@@ -12,7 +12,7 @@ import { canEditPage, canPostAs, type Page } from "@/services/pages";
 
 import PageFollowButton from "./PageFollowButton.vue";
 
-export type PageTab = "posts" | "about" | "team";
+export type PageTab = "posts" | "about" | "reels" | "team";
 
 // The page's public header in the reference layout: wide cover, big round
 // avatar overlapping it, name, follower count and category, then the action
@@ -36,7 +36,7 @@ const { t } = useI18n();
 const cover = useMediaUrl(() => props.page.cover_media_id);
 const isTeam = computed(() => !!props.page.my_role);
 const editor = computed(() => canEditPage(props.page));
-const tabs = computed<PageTab[]>(() => (isTeam.value ? ["posts", "about", "team"] : ["posts", "about"]));
+const tabs = computed<PageTab[]>(() => (isTeam.value ? ["posts", "about", "reels", "team"] : ["posts", "about", "reels"]));
 
 const menuOpen = ref(false);
 const photoMenu = ref<"" | "avatar" | "cover">("");

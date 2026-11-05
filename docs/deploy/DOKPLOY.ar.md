@@ -98,6 +98,20 @@ docker exec $P-feed-consumer-1 python -m tara_events.topology status    # الم
 
 - **التحديث:** اقرا ملاحظات الـ upgrade في `DOKPLOY.md`، وضيف أي متغيرات جديدة
   في Environment الأول، واعمل backup، وبعدين push ثم Deploy.
+- **متغيرات اتضافت في fix round 3 (رسائل دعم تارا):** لو الـ `.env_prod` بتاعك
+  اتولّد قبلها ضيفهم في Environment **قبل** الـ Deploy، لأن الـ stack مش هيقوم من غير
+  `CHAT_IDENTITY_SECRET`:
+
+  | المتغير | القيمة |
+  |---|---|
+  | `CHAT_IDENTITY_SECRET` | إجباري على identity وchat: `openssl rand -hex 32`، ويكون مختلف عن `INTERNAL_JWT_SECRET` و`ADMIN_IDENTITY_SECRET`. chat وidentity بس اللي بيستخدموه. |
+  | `CHAT_NOTIFY_SUPPORT_TEAM` | اختياري على chat، الافتراضي `true`: كل رسالة لدعم تارا بتوصل إشعار `message.support` لفريق الدعم (اللي معاه `moderation.case.view`) ويفتح `/admin/support?conversation=<id>`. |
+
+  الترتيب: انشر notification-consumer وidentity الأول (أو مع chat). لو chat سبقهم
+  الإشعار بس هو اللي بيضيع، والرسالة نفسها محفوظة وعدّاد صندوق الدعم بيحسبها. مفيش
+  migrations ولا أوامر تتشغل مرة واحدة. التفاصيل في `DOKPLOY.md`
+  (*Upgrading: support team notices*). أما `EMAIL_VERIFICATION_REQUIRED` فمشروح
+  فوق في خطوة 2.
 - **الرجوع:** ارجع لـ commit قبله واعمل Deploy. الـ migrations كلها إضافية فالنسخة
   القديمة بتشتغل عادي. **ماترجعش migrations لورا**، ولو محتاج الداتا ترجع
   استرجع الباك أب.

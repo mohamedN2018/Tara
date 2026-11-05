@@ -10,7 +10,7 @@ import { type Account, API, apiAs, befriend, pageAs, sharedAccounts, signupData,
 
 const LANGS = ["ar", "en"] as const;
 type Lang = (typeof LANGS)[number];
-const SUPPORT = { ar: "دعم Tara", en: "Tara Support" };
+const SUPPORT = { ar: "دعم تارا", en: "Tara Support" };
 
 async function open(browser: Browser, who: Account, lang: Lang, mobile = false): Promise<Page> {
   const page = await pageAs(browser, who);

@@ -16,6 +16,7 @@ urlpatterns = [
     path("api/v1/", include("posts.urls")),
     path("api/v1/", include("gatherings.urls")),
     path("api/v1/", include("stories.urls")),
+    path("api/v1/", include("reels.urls")),
     path("internal/v1/", include("posts.internal_urls")),
     # Not routed by the edge: admin's platform statistics poll (8.11).
     path("internal/v1/stats/", InternalStatsView.as_view(counters=COUNTERS)),

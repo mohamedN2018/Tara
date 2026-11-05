@@ -16,6 +16,7 @@ import safetyEn from "./safety.en";
 import storiesEn from "./stories.en";
 import suggestionsEn from "./suggestions.en";
 import videoEn from "./video.en";
+import reelsEn from "./reels.en";
 
 export default {
   app: { name: "Tara", tagline: "Connect. Share. Belong.", promise: "More than a social network… a place to belong." },
@@ -102,6 +103,7 @@ export default {
       communityStandards: "Community Standards",
     },
     desc: {
+      reels: "Short vertical videos from people and Pages",
       profile: "Your page as others see it",
       friends: "Friend requests, suggestions and your friends",
       connections: "Who you follow, your followers and who you blocked",
@@ -1086,6 +1088,7 @@ export default {
       follow: "New followers",
       message: "Messages",
       message_page: "Messages to my pages",
+      message_support: "Messages to Tara Support",
       listing_status: "Listing status changes",
       listing_inquiry: "Questions about my listings",
       page_follow: "New followers of my pages",
@@ -1444,6 +1447,7 @@ export default {
   chatTeam: chatTeamEn,
   suggestions: suggestionsEn,
   video: videoEn,
+  reels: reelsEn,
   landing: {
     getStarted: "Get started",
     headline: "Your place among",

@@ -62,6 +62,7 @@ export default {
     posts: "Posts",
     about: "About",
     team: "Team",
+    reels: "Reels",
   },
   about: {
     title: "Intro",

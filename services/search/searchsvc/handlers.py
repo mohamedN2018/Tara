@@ -185,8 +185,11 @@ def on_user_unblocked(e: EventEnvelope) -> None:
 # (their person card, their listings, the events they host) under ``~<type>``:
 # every query names the real types, so a parked document is never found, and
 # reactivation puts it back unchanged. Posts are not parked here: post emits
-# ``post.deleted`` / ``post.updated`` for each one it hides and restores. Pages
-# and groups are shared with other admins and stay.
+# ``post.hidden`` for each one it hides (``on_post_hidden`` drops it) and
+# ``post.unhidden`` then ``post.updated`` for each one it restores (the
+# ``post.updated`` indexes it again). With ``POST_EMIT_HIDE_EVENTS`` off, post
+# emits ``post.deleted`` instead. Pages and groups are shared with other
+# admins and stay.
 PARKED = "~"
 PARKABLE = ("listing", "gathering")
 

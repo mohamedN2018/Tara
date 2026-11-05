@@ -11,6 +11,7 @@ import ProfileDetails from "@/components/profile/ProfileDetails.vue";
 import ProfileFriendsTab from "@/components/profile/ProfileFriendsTab.vue";
 import ProfileHero from "@/components/profile/ProfileHero.vue";
 import ProfilePhotosTab from "@/components/profile/ProfilePhotosTab.vue";
+import ReelGrid from "@/components/reels/ReelGrid.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import LoadingSkeleton from "@/components/states/LoadingSkeleton.vue";
@@ -103,6 +104,7 @@ function onProfileSaved(fresh: Profile) {
           <ProfileAboutTab v-if="p.tab === 'about'" class="mt-4" :state="p" />
           <ProfilePhotosTab v-show="p.tab === 'photos'" class="mt-4" :state="p" @open-photo="lightbox = $event" />
           <ProfileFriendsTab v-show="p.tab === 'friends'" class="mt-4" :state="p" />
+          <ReelGrid v-if="p.tab === 'reels' && p.userId" class="mt-4" :author-id="p.userId" :can-create="p.isSelf" />
           <SellerShop
             v-if="p.tab === 'marketplace' && p.hasShop && p.userId"
             class="mt-4"

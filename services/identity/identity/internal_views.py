@@ -36,7 +36,7 @@ from . import account_admin
 from .events import emit_domain_event, emit_security_event
 from .models import Account, AccountRole, AccountSuspension, RoleCapability
 from .services import list_sessions
-from .tokens import bridged_roles, roles_for
+from .tokens import bridged_roles, capability_overrides, roles_for
 
 logger = logging.getLogger("tara.identity.internal")
 
@@ -46,7 +46,11 @@ ROLES_AUDIENCE = "identity.roles"
 # Caller (the token's ``iss``) -> the setting with the secret that identity shares
 # with that caller alone. A new caller (notification in 2.19, moderation in 8.4)
 # gets its own secret here and is allowed only on the views it needs.
-CALLER_SECRET_SETTINGS = {"admin": "ADMIN_IDENTITY_SECRET"}
+CALLER_SECRET_SETTINGS = {
+    "admin": "ADMIN_IDENTITY_SECRET",
+    # Chat: only the capability-holders endpoint (who answers the support inbox).
+    "chat": "CHAT_IDENTITY_SECRET",
+}
 
 
 def _invalid_token() -> TaraAPIError:
@@ -172,6 +176,52 @@ class RoleHoldersView(_InternalView):
             .order_by("email")[:MAX_ROLE_HOLDERS]
         )
         return data_response([_account_data(a) for a in accounts])
+
+
+#: Capabilities a caller may ask "who holds this?" for. Chat tells the support
+#: team (moderation.case.view, the support inbox's gate) of a new support message.
+CAPABILITY_HOLDER_QUERIES = {"chat": frozenset({"moderation.case.view"})}
+
+
+class CapabilityHoldersView(_InternalView):
+    """GET ``?capability=``: the active accounts that hold it, as ids only.
+
+    Chat's own secret (``iss=chat``); no emails or roles leave identity. The
+    same rule as the ``caps`` claim (roles, staff flags and the matrix's
+    overrides), so whoever the support inbox lets in is who hears of it.
+    """
+
+    internal_callers = ("chat",)
+
+    def get(self, request: Request) -> Response:
+        capability = request.query_params.get("capability", "")
+        if capability not in CAPABILITY_HOLDER_QUERIES["chat"]:
+            raise TaraAPIError(
+                "This capability can't be listed.", code="invalid", http_status_code=400
+            )
+        overrides = capability_overrides()
+        accounts = (
+            Account.objects.filter(
+                Q(role_grants__isnull=False) | Q(is_staff=True) | Q(is_superuser=True),
+                status=Account.Status.ACTIVE,
+                is_active=True,
+            )
+            .distinct()
+            .prefetch_related("role_grants")
+            .order_by("id")[:MAX_ROLE_HOLDERS]
+        )
+        holders = [
+            str(account.id)
+            for account in accounts
+            if capability in registry.capabilities_for_roles(roles_for(account), overrides)
+        ]
+        if holders and getattr(settings, "STAFF_REQUIRE_2FA", False):
+            from .two_factor import is_enabled
+
+            # As in the token: staff powers only behind a second factor.
+            by_id = {str(a.id): a for a in accounts}
+            holders = [h for h in holders if is_enabled(by_id[h])]
+        return data_response({"capability": capability, "account_ids": holders})
 
 
 class AccountRolesView(_InternalView):

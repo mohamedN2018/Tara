@@ -16,6 +16,7 @@ import safetyAr from "./safety.ar";
 import storiesAr from "./stories.ar";
 import suggestionsAr from "./suggestions.ar";
 import videoAr from "./video.ar";
+import reelsAr from "./reels.ar";
 
 export default {
   app: { name: "Tara", tagline: "تواصل. شارك. انتمِ.", promise: "أكثر من شبكة اجتماعية… مكان تنتمي إليه." },
@@ -102,6 +103,7 @@ export default {
       communityStandards: "معايير المجتمع",
     },
     desc: {
+      reels: "فيديوهات رأسية قصيرة من الأشخاص والصفحات",
       profile: "صفحتك كما يراها الآخرون",
       friends: "طلبات الصداقة والاقتراحات وأصدقاؤك",
       connections: "من تتابعهم ومن يتابعونك ومن حظرتهم",
@@ -1097,6 +1099,7 @@ export default {
       follow: "المتابعون الجدد",
       message: "الرسائل",
       message_page: "الرسائل إلى صفحاتي",
+      message_support: "الرسائل إلى دعم تارا",
       listing_status: "تغيّر حالة الإعلانات",
       listing_inquiry: "الاستفسارات عن إعلاناتي",
       page_follow: "متابعو صفحاتي الجدد",
@@ -1459,6 +1462,7 @@ export default {
   chatTeam: chatTeamAr,
   suggestions: suggestionsAr,
   video: videoAr,
+  reels: reelsAr,
   landing: {
     getStarted: "ابدأ الآن",
     headline: "مكانك بين",
