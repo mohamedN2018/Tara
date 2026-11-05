@@ -1002,6 +1002,12 @@ services:
 networks:
   tara:
     driver: bridge
+    # Explicit subnet: a Dokploy host with many projects can run out of
+    # Docker's default address pools ("all predefined address pools have been
+    # fully subnetted"). Override TARA_NETWORK_SUBNET if it clashes on a host.
+    ipam:
+      config:
+        - subnet: ${TARA_NETWORK_SUBNET:-10.213.13.0/24}
   dokploy-network:
     external: true
 
