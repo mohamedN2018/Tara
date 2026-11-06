@@ -47,8 +47,10 @@ const hydrated = (posts: Post[], modeApplied = true): HydratedFeedPage => ({
 });
 
 const Blank = defineComponent({ render: () => null });
-// A first page (08 §7.4, §7.6): asked as a normal open, drawn from its snapshots first.
-const FIRST = { entry: "open", snapshots: true };
+// A first page (08 §7.4, §7.6; R3 06 §4.2): its entry hint (`load` for the page load's
+// first, `nav` after) and the tab's sid, drawn from its snapshots first.
+const FIRST = expect.objectContaining({ entry: expect.stringMatching(/^(load|nav)$/), snapshots: true });
+const NAV = expect.objectContaining({ entry: "nav", snapshots: true });
 let app: App | null = null;
 let host: HTMLElement | null = null;
 
@@ -245,7 +247,7 @@ describe("new posts pill", () => {
       await flush();
     };
   }
-  const pill = (el: HTMLElement) => [...el.querySelectorAll("button")].find((b) => b.textContent?.includes("↑"));
+  const pill = (el: HTMLElement) => el.querySelector<HTMLButtonElement>('[data-testid="new-posts-pill"] button') ?? undefined;
 
   it("offers only pushed posts the current mode's feed contains", async () => {
     localStorage.setItem("tara.feedMode", "favorites");
@@ -332,7 +334,7 @@ describe("feed modes", () => {
     const remember = vi.spyOn(feedService, "setDefaultMode").mockResolvedValue({ default_mode: "for_you", version: 1 });
     const el = await mount(HomeView);
     const modes = el.querySelector<HTMLElement>('[data-testid="feed-modes"]')!;
-    expect([...modes.querySelectorAll("button")].map((b) => b.textContent?.trim())).toEqual([
+    expect([...modes.querySelectorAll("button[aria-pressed]")].map((b) => b.textContent?.trim())).toEqual([
       "For you",
       "Latest",
       "Favorites",
@@ -343,7 +345,7 @@ describe("feed modes", () => {
 
     button(modes, "For you")!.click();
     await flush();
-    expect(page).toHaveBeenLastCalledWith(undefined, "for_you", undefined, FIRST);
+    expect(page).toHaveBeenLastCalledWith(undefined, "for_you", undefined, NAV);
     expect(order(el)).toEqual(["z"]);
     expect(button(modes, "For you")!.getAttribute("aria-pressed")).toBe("true");
     expect(button(modes, "Latest")!.getAttribute("aria-pressed")).toBe("false");

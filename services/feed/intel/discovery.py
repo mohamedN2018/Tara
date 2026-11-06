@@ -54,6 +54,8 @@ POPULAR, FRESH = "popular", "fresh"
 BUCKETS = (POPULAR, FRESH)
 REASONS = {POPULAR: "rec_popular", FRESH: "rec_fresh"}
 BUCKET_OF = {v: k for k, v in REASONS.items()}
+# The read order of ``read``: popular before fresh, each in every language.
+_ORDER = tuple((bucket, lang) for bucket in BUCKETS for lang in LANGS)
 # The rules a rebuild can decide without a viewer (07 WP 4b.6).
 POOL_RULES = frozenset({"E1", "E1b", "E1c", "E2", "E6", "E6b", "E7", "E11", "E9b"})
 # When the last rebuild ran (not under ``intel:pool:*``: the deletion path ZREMs those).
@@ -293,19 +295,30 @@ def read(cfg: SurfaceConfig) -> list[Candidate]:
     client = hot.raw_client()
     if client is None:
         return []
-    cache = hot.hot()
-    n = cfg.get("pools.max_members")
-    order = [(bucket, lang) for bucket in BUCKETS for lang in LANGS]
     try:
         pipe = client.pipeline(transaction=False)
-        for bucket, lang in order:
-            pipe.zrevrange(cache.make_key(hot.pool_key(SURFACE, lang, bucket)), 0, n - 1)
+        queue_reads(pipe, cfg)
         results = pipe.execute()
     except Exception:  # noqa: BLE001 - no pools is today's feed, never an error
         logger.warning("discovery pools unreadable", exc_info=True)
         return []
+    return parse_reads(results)
+
+
+def queue_reads(pipe, cfg: SurfaceConfig) -> int:
+    """Queue the pool reads of ``read`` on ``pipe`` (R3: the first page sends them in
+    its one pipelined round trip with the visit and ledger reads). Returns how many."""
+    cache = hot.hot()
+    n = cfg.get("pools.max_members")
+    for bucket, lang in _ORDER:
+        pipe.zrevrange(cache.make_key(hot.pool_key(SURFACE, lang, bucket)), 0, n - 1)
+    return len(_ORDER)
+
+
+def parse_reads(results) -> list[Candidate]:
+    """The candidates of ``queue_reads``'s results, in order, one per post."""
     out, seen = [], set()
-    for (bucket, _lang), members in zip(order, results, strict=True):
+    for (bucket, _lang), members in zip(_ORDER, results, strict=True):
         for raw in members or ():
             post_id = raw.decode() if isinstance(raw, bytes) else str(raw)
             if post_id not in seen:

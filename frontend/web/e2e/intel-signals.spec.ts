@@ -67,7 +67,9 @@ for (const lang of ["ar", "en"] as const) {
     await expect.poll(() => signals.events().length, { timeout: 15_000 }).toBeGreaterThan(0);
     const item = `post:${postId}`;
     const mine = signals.events().filter((e) => e.item === item);
-    expect(mine.map((e) => e.t).sort()).toEqual(["feed_impression", "post_open"]);
+    // R3 WP 4b.2: hiding the tab also sends the card's one dwell (it was displayed).
+    expect(mine.map((e) => e.t).sort()).toEqual(["feed_dwell", "feed_impression", "post_open"]);
+    expect(Number(mine.find((e) => e.t === "feed_dwell")?.dwell_ms)).toBeGreaterThanOrEqual(1000);
     // Stamped with the rule it followed: the server's v2 once delivery is known, else v1.
     expect([1, 2]).toContain(mine.find((e) => e.t === "feed_impression")?.idef);
     for (const batch of signals.batches) {
@@ -79,7 +81,8 @@ for (const lang of ["ar", "en"] as const) {
         expect(e).not.toHaveProperty("variant");
         for (const key of Object.keys(e)) {
           // `idef`: the impression rule the client applied (08 §7.12, WP 4c.9-B3).
-          expect(["id", "t", "item", "ts", "st", "surface", "pos", "watch_ms", "pos_ms", "play_index", "idef"]).toContain(key);
+          // `dwell_ms`: feed_dwell only (R3 WP 4b.2).
+          expect(["id", "t", "item", "ts", "st", "surface", "pos", "watch_ms", "pos_ms", "play_index", "idef", "dwell_ms"]).toContain(key);
         }
         expect(String(e.id)).toMatch(UUID);
       }

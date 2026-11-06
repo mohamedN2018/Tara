@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from django.conf import settings
@@ -31,7 +32,9 @@ from django.db import transaction
 from django.db.models import F, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+from intel import eligibility
 from intel import readmodels as intel_readmodels
+from intel.retrieval.sources import CONNECTIONS, Candidate
 
 from . import events, ranking, readmodels
 from .clients import GraphUnavailable, Relationship, fanout_audience, relationship
@@ -481,25 +484,81 @@ def home_feed(recipient_id: str, mode: str = DEFAULT_MODE):
     return items.order_by("-post_created_at", "-id")
 
 
-# Realtime "new posts" peek (D4, WP 4.7): the newest rows above ``since``,
-# chronological for every mode, never ranked. It reads only: no ranking session
-# is written or replaced and no ads call is made.
+# Realtime "new posts" peek (D4, WP 4.7; R3 WP 4b.7): the newest rows above ``since``,
+# chronological for every mode, never ranked. It reads only: no ranking session is
+# written or replaced and no ads call is made. **Only eligible rows are returned or
+# counted** (06 section 6.2): a raw ``FeedItem`` count would leak how many posts
+# hidden, blocked or restricted authors made. The chronological modes count their
+# own page's queryset; ``for_you`` runs its candidates through the eligibility rules.
 
 
-def peek(recipient_id: str, mode: str, since: datetime | None, size: int, max_since_hours):
-    """``(rows, new_count)`` for the pill. ``for_you`` peeks its own candidates,
-    the viewer's fan-out rows; the chronological modes peek themselves. ``since``
-    is clamped to ``max_since_hours`` ago (``peek.max_since_hours`` in the config)."""
-    if mode == "for_you":
-        items = ranking.visible_items(recipient_id)
-    else:
-        items = home_feed(recipient_id, mode)
-    floor = timezone.now() - timedelta(hours=max_since_hours)
-    if since is None or since < floor:
-        since = floor
-    # Rows that reached the viewer after ``since`` (fan-out time, not post time:
-    # a post written just before the first page but fanned out after it counts).
-    items = items.filter(created_at__gt=since, post_created_at__gt=floor)
-    rows = list(items.order_by("-post_created_at", "-id")[:size])
-    count = len(rows) if len(rows) < size else items.count()
-    return rows, count
+@dataclass
+class Peek:
+    rows: list
+    new_count: int
+    capped: bool
+    since: datetime
+
+
+def clamp_since(since: datetime | None, now: datetime, max_age_h) -> datetime:
+    """``since`` no older than ``max_age_h`` hours (``session.new_since.max_age_h``):
+    it bounds the scan to the recipient index range."""
+    floor = now - timedelta(hours=max_age_h)
+    return floor if since is None or since < floor else since
+
+
+def new_since_count(recipient_id: str, mode: str, since: datetime, cap: int) -> tuple[int, bool]:
+    """``(new_count, capped)``: the rows of a chronological mode created after ``since``,
+    counted on the page's own queryset (same rules as the page), one bounded query."""
+    items = home_feed(recipient_id, mode).filter(post_created_at__gt=since)
+    found = items.values("id")[: cap + 1].count()
+    return min(found, cap), found > cap
+
+
+def peek(
+    recipient_id: str,
+    mode: str,
+    since: datetime | None,
+    size: int,
+    cfg,
+    *,
+    claims: dict | None = None,
+    now: datetime | None = None,
+) -> Peek:
+    """The pill's rows and count. ``since`` is clamped to ``session.new_since.max_age_h``;
+    ``new_count`` is capped at ``peek.max_count`` (``capped`` says so)."""
+    now = now or timezone.now()
+    max_age_h = cfg.get("session.new_since.max_age_h")
+    since = clamp_since(since, now, max_age_h)
+    floor = now - timedelta(hours=max_age_h)
+    cap = int(cfg.get("peek.max_count"))
+    if mode != "for_you":
+        # Rows that reached the viewer after ``since`` (fan-out time, not post time:
+        # a post written just before the first page but fanned out after it counts).
+        items = home_feed(recipient_id, mode).filter(
+            created_at__gt=since, post_created_at__gt=floor
+        )
+        rows = list(items[:size])
+        found = items.values("id")[: cap + 1].count() if len(rows) >= size else len(rows)
+        return Peek(rows, min(found, cap), found > cap, since)
+    rows = list(
+        ranking._candidates(recipient_id)
+        .filter(created_at__gt=since, post_created_at__gt=floor)
+        .order_by("-post_created_at", "-id")[: cap + 1]
+    )
+    candidates = [
+        Candidate(
+            str(r.post_id),
+            str(r.author_id),
+            CONNECTIONS,
+            r.reason,
+            r.post_created_at,
+            (r.snapshot or {}).get("type") or "",
+            str(r.id),
+        )
+        for r in rows
+    ]
+    viewer = ranking._viewer(recipient_id, claims)
+    kept = {c.post_id for c in eligibility.filter(viewer, candidates, cfg).kept}
+    eligible = [r for r in rows if str(r.post_id) in kept]
+    return Peek(eligible[:size], min(len(eligible), cap), len(eligible) > cap, since)

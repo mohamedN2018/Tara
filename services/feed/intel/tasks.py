@@ -40,3 +40,19 @@ def rebuild_pools(force: bool = False) -> dict | None:
     if not force and not discovery.due(cfg):
         return {"due": False}
     return discovery.rebuild(cfg)
+
+
+@shared_task(name="intel.purge_feed_sessions", ignore_result=True)
+def purge_feed_sessions() -> int:
+    """Visit rows past ``session.feed_session_retention_d`` (R3 WP 4b.4; nightly)."""
+    from . import config, session_ctx
+
+    return session_ctx.purge(config.for_surface("home"))
+
+
+@shared_task(name="intel.aggregate_engagement", ignore_result=True)
+def aggregate_engagement() -> dict:
+    """The engagement aggregator v0 (R3 WP 4b.13): every 60 s, idempotent."""
+    from .signals import aggregate
+
+    return aggregate.run()

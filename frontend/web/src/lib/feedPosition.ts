@@ -5,8 +5,11 @@
 // window (`positionRules().windowMs`) asks for the first page with
 // `entry=reload`, pages forward until that card is in the list (at most
 // `positionRules().maxPages` pages) and scrolls back to it. Otherwise the feed
-// starts at the top. Only the chronological modes are restored: a ranked page 1
-// is rebuilt on every open (R3), so its old card may not be there.
+// starts at the top. The chronological modes are restored, and For You too since
+// R3 (07 WP 4b.8): a reload is classified as a refresh while the ranking session
+// lives, and the server then serves the same frozen list, so the card is found
+// again; after the session is gone the card may not be there and the feed simply
+// starts at the top.
 //
 // What is stored is ids and pixel offsets of this viewer's own tab, never
 // anything about the posts; storage that is blocked or full simply means no
@@ -17,10 +20,15 @@ export const CHRONOLOGICAL_MODES = ["recent", "following", "friends", "favorites
 export type ChronologicalMode = (typeof CHRONOLOGICAL_MODES)[number];
 export const isChronological = (m: unknown): m is ChronologicalMode =>
   typeof m === "string" && (CHRONOLOGICAL_MODES as readonly string[]).includes(m);
+/** Modes whose position survives a reload (R3: For You joins the chronological ones). */
+export const RESTORABLE_MODES = [...CHRONOLOGICAL_MODES, "for_you"] as const;
+export type RestorableMode = (typeof RESTORABLE_MODES)[number];
+export const isRestorable = (m: unknown): m is RestorableMode =>
+  typeof m === "string" && (RESTORABLE_MODES as readonly string[]).includes(m);
 
 export interface FeedPosition {
   surface: "home";
-  mode: ChronologicalMode;
+  mode: RestorableMode;
   anchor_post_id: string;
   offset_px: number;
   cursor: string | null;
@@ -31,7 +39,7 @@ const KEY = "tara.feedPosition.v1";
 const UUID = /^[0-9a-f-]{36}$/i;
 
 export function savePosition(pos: Omit<FeedPosition, "at">, now = Date.now()): boolean {
-  if (!isChronological(pos.mode) || !UUID.test(pos.anchor_post_id)) return false;
+  if (!isRestorable(pos.mode) || !UUID.test(pos.anchor_post_id)) return false;
   try {
     sessionStorage.setItem(KEY, JSON.stringify({ ...pos, offset_px: Math.round(pos.offset_px), at: now }));
     return true;
@@ -42,7 +50,7 @@ export function savePosition(pos: Omit<FeedPosition, "at">, now = Date.now()): b
 
 /** The stored position for this mode when it is recent enough; null otherwise. */
 export function readPosition(mode: string, now = Date.now()): FeedPosition | null {
-  if (!isChronological(mode)) return null;
+  if (!isRestorable(mode)) return null;
   try {
     const raw = sessionStorage.getItem(KEY);
     if (!raw) return null;

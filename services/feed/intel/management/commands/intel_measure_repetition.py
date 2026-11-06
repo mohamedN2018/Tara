@@ -22,6 +22,15 @@ How it stays harmless:
 Viewers are chosen by query at run time: accounts with feed rows whose eligible
 candidates under the variant number at least ``--min-candidates`` (60, three pages),
 taken in a fixed pseudo-random order (``md5`` of the id) so runs are repeatable.
+
+``--simulate-display`` (R3 WP A9) measures rotation with a simulated display: the
+visit rows the first pages write (``intel_feed_session``) need a writable
+transaction, so this run is **not** read-only but is still **always rolled back**,
+and the command then asserts that no visit or signal row of the chosen viewers is
+left. The displays go to the throwaway ledger through ``exposure.append_records``
+at the simulated clock, never through the SQL ingest, so synthetic display never
+reaches real analytics. Without the flag, the run stays read-only and the visit
+rows are skipped (``session_ctx._write_rows``).
 """
 
 from __future__ import annotations
@@ -38,7 +47,7 @@ from urllib.parse import urlsplit, urlunsplit
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
-from django.test.utils import override_settings
+from django.test.utils import CaptureQueriesContext, override_settings
 from django.utils import timezone
 
 from intel import config, eligibility, repetition
@@ -64,14 +73,33 @@ def _hot_url(explicit: str | None) -> str:
     return url
 
 
-def _variant_patch(variant: str | None):
-    """``(label, patcher)``: rank under ``home@N`` without activating it."""
+def _deep(base: dict, top: dict) -> dict:
+    out = dict(base)
+    for key, value in top.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def _variant_patch(variant: str | None, override: dict | None = None):
+    """``(label, patcher)``: rank under ``home@N`` without activating it. ``override``
+    (``--override``, tuning runs only) is merged over its params and validated."""
     if not variant:
+        if override:
+            raise CommandError("--override needs --variant")
         return config.for_surface("home").version, None
     surface, _, number = variant.partition("@")
     if surface != "home" or not number.isdigit():
         raise CommandError("--variant must look like home@N")
     stored = config.for_version("home", int(number))
+    if override:
+        from intel.config import schema
+
+        params = _deep(stored.params, override)
+        schema.check("home", params)
+        stored = config.SurfaceConfig("home", f"{stored.version}+override", params)
     real = config.for_surface
 
     def patched(name, overrides=None):
@@ -230,13 +258,35 @@ class Command(BaseCommand):
         parser.add_argument("--crawl-pages", type=int, default=80)
         parser.add_argument("--hot-url", default=None)
         parser.add_argument("--scan", type=int, default=400, help="recipients to consider")
+        parser.add_argument(
+            "--simulate-display",
+            action="store_true",
+            help="R3: open A, display, open B at +45 min and +6 h; scenario C (rolled back)",
+        )
+        parser.add_argument("--display", type=int, default=8, help="page-1 items dwelled 4 s")
+        parser.add_argument(
+            "--consume",
+            type=int,
+            default=2,
+            help="of the dwelled items, how many are consumed (a like: state consumed)",
+        )
+        parser.add_argument("--c-visits", type=int, default=5, help="scenario C visits")
+        parser.add_argument(
+            "--override",
+            default=None,
+            help="JSON merged over --variant's params (tuning runs; validated, never stored)",
+        )
 
     def handle(self, *args, **opts) -> None:
         url = _hot_url(opts["hot_url"])
         caches = {
             **settings.CACHES,
             "hot": {**settings.CACHES["hot"], "LOCATION": url},
+            # The first-page throttles (R3) keep their history here: never the live cache.
+            "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
         }
+        simulate = opts["simulate_display"]
+        started_at = timezone.now()
         result: dict = {}
         with ExitStack() as stack:
             stack.enter_context(override_settings(CACHES=caches))
@@ -246,7 +296,8 @@ class Command(BaseCommand):
             if client is not None:
                 for key in client.scan_iter(match=hot.hot().make_key("*")):
                     client.delete(key)
-            label, patcher = _variant_patch(opts["variant"])
+            override = json.loads(opts["override"]) if opts["override"] else None
+            label, patcher = _variant_patch(opts["variant"], override)
             if patcher is not None:
                 stack.enter_context(patcher)
             stack.enter_context(mock.patch("feed.ads_client.feed_sponsored", return_value=None))
@@ -256,14 +307,23 @@ class Command(BaseCommand):
                 stack.enter_context(mock.patch.object(age, "capture", return_value=None))
             except ImportError:  # before WP 4b.14
                 pass
+            if not simulate:
+                # Read-only run: the visit rows (R3) are not written at all.
+                stack.enter_context(mock.patch("intel.session_ctx._write_rows", return_value=0))
             try:
                 with transaction.atomic():
-                    with connection.cursor() as cur:
-                        cur.execute("SET TRANSACTION READ ONLY")
+                    if not simulate:
+                        with connection.cursor() as cur:
+                            cur.execute("SET TRANSACTION READ ONLY")
                     result = self._measure(label, opts)
                     raise _Rollback
             except _Rollback:
                 pass
+            viewers = result.pop("_viewers", [])
+            if simulate:
+                result["residual_rows"] = _residual(viewers, started_at)
+                if any(result["residual_rows"].values()):
+                    raise CommandError(f"rows left after the rollback: {result['residual_rows']}")
             if client is not None:
                 for key in client.scan_iter(match=hot.hot().make_key("*")):
                     client.delete(key)
@@ -324,6 +384,26 @@ class Command(BaseCommand):
             req = rf.get("/api/v1/feed/", params)
             force_authenticate(req, user=TokenUser({"sub": viewer_id, **ADULT}))
             return view(req)
+
+        simulated: dict = {}
+        if opts["simulate_display"]:
+            captured: list = []
+            real_first = ranking.first_page
+
+            def spy(*a, **k):
+                page = real_first(*a, **k)
+                captured.append(page)
+                return page
+
+            def get_at(viewer_id: str, params: dict, at):
+                with (
+                    mock.patch("feed.views.clock.request_now", return_value=at),
+                    mock.patch("feed.views.timezone.now", return_value=at),
+                    mock.patch("feed.ranking.first_page", side_effect=spy),
+                ):
+                    return get(viewer_id, params)
+
+            simulated = self._simulate(chosen, get_at, captured, opts["page_size"], opts)
 
         modes = [m for m in opts["modes"].split(",") if m]
         size = opts["page_size"]
@@ -474,6 +554,8 @@ class Command(BaseCommand):
                     )
 
         return {
+            "_viewers": [v for v, _ in chosen],
+            "simulate_display": simulated or None,
             "variant": label,
             "config_active": config.store.resolve("home")[0],
             "measured_at": now.isoformat(),
@@ -504,6 +586,158 @@ class Command(BaseCommand):
             "the host wrapper measures it read-only through psql",
             "reels_video_overlap": "post service: measured by the host wrapper (--http-users)",
             "seconds": round(time.monotonic() - started, 1),
+        }
+
+    # ---- R3 WP A9: simulated display (07 WP 4b.5 acceptance) --------------------------
+
+    def _simulate(self, chosen, get_at, captured, size: int, opts) -> dict:
+        """Open A, display the first ``--display`` page-1 items with 4 s dwell (state
+        ``viewed``; the first ``--consume`` of them ``consumed``, as a like would make
+        them) and impressions only for the rest (``displayed``), written to the
+        throwaway ledger through ``exposure.append_records`` at the simulated clock
+        (never through the SQL ingest); a refresh at +60 s with no signals first
+        ("fetched is not seen"); then open B at +45 min and at +6 h. Then scenario C
+        (06 section 16, early run): ``--c-visits`` visits 45 min apart, 3 pages each,
+        impressions for everything served."""
+        from intel import exposure
+
+        cfg = config.for_surface("home")
+        th_cfg = cfg
+        display, dwell_state = opts["display"], exposure.STATE_VIEWED
+        consume = min(max(int(opts.get("consume") or 0), 0), display)
+        out = {
+            "page1_jaccard_45min": [],
+            "page1_jaccard_6h": [],
+            "dwelled_from_a_in_b_45min": [],
+            "dwelled_from_a_in_b_6h": [],
+            "consumed_from_a_in_b_45min": [],
+            "consumed_from_a_in_b_6h": [],
+            "refresh_60s_jaccard": [],
+            "pre_score_ratio_45min": [],
+            "pre_score_ratio_6h": [],
+            "first_page_ms": [],
+            "first_page_queries": [],
+            "first_page_writes": [],
+            "kinds": Counter(),
+            "c_repeat_first_pages": [],
+            "c_repeat_all_pages": [],
+        }
+        base = timezone.now().replace(microsecond=0)
+
+        def first(viewer_id, at, entry):
+            t0 = time.perf_counter()
+            with CaptureQueriesContext(connection) as q:
+                resp = get_at(viewer_id, {"mode": "for_you", "limit": size, "entry": entry}, at)
+            out["first_page_ms"].append((time.perf_counter() - t0) * 1000)
+            sql = [x["sql"].lstrip().upper() for x in q.captured_queries]
+            sql = [x for x in sql if not x.startswith(("SAVEPOINT", "RELEASE SAVEPOINT"))]
+            writes = [x for x in sql if x.startswith(("INSERT", "UPDATE", "DELETE"))]
+            out["first_page_queries"].append(len(sql) - len(writes))
+            out["first_page_writes"].append(len(writes))
+            if resp.status_code != 200:
+                raise CommandError(f"for_you first page: status {resp.status_code}")
+            visit = (resp.data.get("meta") or {}).get("visit") or {}
+            out["kinds"][visit.get("kind")] += 1
+            page = captured[-1] if captured else None
+            ids = [i["post_id"] for i in resp.data["data"]]
+            return resp, ids, _pre_scores(page, ids)
+
+        def show(viewer_id, at, ids, n_dwell, n_consume=0):
+            minute = int((at + timedelta(minutes=1)).timestamp() // 60)
+
+            def state(k):
+                if k < n_consume:
+                    return exposure.STATE_CONSUMED  # a like / long read (06 section 5.1)
+                return dwell_state if k < n_dwell else exposure.STATE_DISPLAYED
+
+            records = [exposure.Record(p, state(k), minute) for k, p in enumerate(ids)]
+            if records and not exposure.append_records(viewer_id, records, th_cfg):
+                raise CommandError("the throwaway ledger refused a write")
+
+        for viewer_id, _inv in chosen:
+            t_a = base
+            _r, a_ids, a_pre = first(viewer_id, t_a, "load")
+            # Fetched is not seen: no signal, pools frozen, a refresh 60 s later.
+            _r, r_ids, _ = first(viewer_id, t_a + timedelta(seconds=60), "pull")
+            out["refresh_60s_jaccard"].append(repetition.jaccard(a_ids, r_ids))
+            show(viewer_id, t_a + timedelta(seconds=90), a_ids, display, consume)
+            consumed = set(a_ids[:consume])
+            dwelled = set(a_ids[consume:display])
+            for label, gap in (("45min", timedelta(minutes=45)), ("6h", timedelta(hours=6))):
+                _r, b_ids, b_pre = first(viewer_id, t_a + gap, "load")
+                out[f"page1_jaccard_{label}"].append(repetition.jaccard(a_ids, b_ids))
+                out[f"dwelled_from_a_in_b_{label}"].append(len(dwelled & set(b_ids)))
+                out[f"consumed_from_a_in_b_{label}"].append(len(consumed & set(b_ids)))
+                if a_pre and b_pre:
+                    a_mean = sum(a_pre) / len(a_pre)
+                    b_mean = sum(b_pre) / len(b_pre)
+                    if a_mean > 0:
+                        out[f"pre_score_ratio_{label}"].append(b_mean / a_mean)
+
+        # Scenario C (heavy user), a fresh clock so A/B's ledger does not count.
+        c_base = base + timedelta(days=2)
+        for viewer_id, _inv in chosen:
+            shown: set[str] = set()
+            for v in range(opts["c_visits"]):
+                at = c_base + timedelta(minutes=45 * v)
+                resp, ids, _ = first(viewer_id, at, "load")
+                pages = [ids]
+                cursor = (resp.data.get("page") or {}).get("next_cursor")
+                for _p in range(2):
+                    if not cursor:
+                        break
+                    nxt = get_at(
+                        viewer_id, {"mode": "for_you", "limit": size, "cursor": cursor}, at
+                    )
+                    pages.append([i["post_id"] for i in nxt.data["data"]])
+                    cursor = (nxt.data.get("page") or {}).get("next_cursor")
+                if v:
+                    out["c_repeat_first_pages"].append(repetition.repeat_rate(pages[0], shown))
+                    out["c_repeat_all_pages"].append(
+                        repetition.repeat_rate([p for page in pages for p in page], shown)
+                    )
+                served = [p for page in pages for p in page]
+                show(viewer_id, at, served, 0)
+                shown |= set(served)
+
+        def mean(values):
+            return sum(values) / len(values) if values else None
+
+        return {
+            "users": len(chosen),
+            "display": f"first {display} page-1 items dwelled: {consume} consumed, the other "
+            f"{display - consume} 4 s (viewed); the rest impressions",
+            "page1_jaccard_45min": repetition.spread(out["page1_jaccard_45min"]),
+            "page1_jaccard_6h": repetition.spread(out["page1_jaccard_6h"]),
+            "dwelled_from_a_in_b_45min": repetition.spread(out["dwelled_from_a_in_b_45min"]),
+            "dwelled_from_a_in_b_6h": repetition.spread(out["dwelled_from_a_in_b_6h"]),
+            "consumed_from_a_in_b_45min": repetition.spread(out["consumed_from_a_in_b_45min"]),
+            "consumed_from_a_in_b_6h": repetition.spread(out["consumed_from_a_in_b_6h"]),
+            "consumed_from_a_in_b_max": max(
+                out["consumed_from_a_in_b_45min"] + out["consumed_from_a_in_b_6h"], default=None
+            ),
+            "refresh_60s_jaccard": repetition.spread(out["refresh_60s_jaccard"]),
+            "pre_score_ratio_45min": repetition.spread(out["pre_score_ratio_45min"]),
+            "pre_score_ratio_6h": repetition.spread(out["pre_score_ratio_6h"]),
+            "pre_score_ratio_45min_mean": mean(out["pre_score_ratio_45min"]),
+            "pre_score_ratio_6h_mean": mean(out["pre_score_ratio_6h"]),
+            "first_page_ms": {
+                **repetition.spread(out["first_page_ms"]),
+                "p95": repetition.percentile(out["first_page_ms"], 0.95),
+            },
+            "first_page_queries": {
+                **repetition.spread(out["first_page_queries"]),
+                "p95": repetition.percentile(out["first_page_queries"], 0.95),
+            },
+            "first_page_writes": dict(Counter(out["first_page_writes"])),
+            "visit_kinds": dict(out["kinds"]),
+            "scenario_c": {
+                "visits": opts["c_visits"],
+                "repeat_rate_first_pages": repetition.spread(out["c_repeat_first_pages"]),
+                "repeat_rate_all_pages": repetition.spread(out["c_repeat_all_pages"]),
+                "repeat_rate_first_pages_mean": mean(out["c_repeat_first_pages"]),
+                "repeat_rate_all_pages_mean": mean(out["c_repeat_all_pages"]),
+            },
         }
 
     def _crawl(self, get, viewer_id: str, size: int, limit: int) -> dict:
@@ -537,6 +771,38 @@ class Command(BaseCommand):
                 )
                 pool_left = bool(set(left) - served) and discovery.continues(cfg)
         return {"items": len(served), "caught_up": caught, "pool_left": pool_left}
+
+
+def _pre_scores(page, ids: list[str]) -> list[float]:
+    """The pre-multiplier scores of a served page's items (the ranking's own values;
+    ``exposure.pre`` when the version applies the multiplier)."""
+    ranking = getattr(page, "ranking", None)
+    if ranking is None:
+        return []
+    stats = getattr(ranking, "exposure", None)
+    values = {s.feats.post_id: s.value for s in ranking.items}
+    if stats is not None:
+        values.update(stats.pre)
+    return [values[p] for p in ids if p in values]
+
+
+def _residual(viewers: list[str], since) -> dict:
+    """Rows of the chosen viewers written since the run started, after the rollback:
+    visit rows and signal rows (both must be 0: synthetic display never stays)."""
+    if not viewers:
+        return {"intel_feed_session": 0, "intel_signal_event": 0}
+    return {
+        "intel_feed_session": _q(
+            "SELECT count(*) FROM intel_feed_session WHERE account_id = ANY(%s::uuid[])"
+            " AND started_at >= %s",
+            [viewers, since],
+        )[0][0],
+        "intel_signal_event": _q(
+            "SELECT count(*) FROM intel_signal_event WHERE account_id = ANY(%s::uuid[])"
+            " AND received_at >= %s",
+            [viewers, since],
+        )[0][0],
+    }
 
 
 def stable_order(ids: list[str]) -> list[str]:

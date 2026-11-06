@@ -114,22 +114,47 @@ def key(surface: str, viewer_id) -> str:
 
 def save(surface: str, viewer_id, session: dict, ttl: int, cache=None) -> bool:
     """One session per (surface, viewer); a new first page replaces it. False when
-    redis-hot refused (the page is served as a latest-order fallback)."""
+    redis-hot refused: ``noeviction`` OOM is counted in ``intel_rank_session_oom_total``
+    (08 section 7.3), anything else in ``intel_hot_write_failed_total{key="rank"}``.
+    Never retried in the request path."""
+    from .. import metrics
+
     try:
         (cache or hot.hot()).set(key(surface, viewer_id), {**session, "v": VERSION}, timeout=ttl)
         return True
-    except Exception:  # noqa: BLE001 - a full or down redis-hot only costs the ranking
-        logger.warning("ranking session not stored; latest fallback", exc_info=True)
+    except Exception as exc:  # noqa: BLE001 - a full or down redis-hot only costs the ranking
+        if "OOM" in str(exc):
+            metrics.rank_session_oom()
+        else:
+            metrics.hot_write_failed("rank")
+        logger.warning("ranking session not stored; chronological fallback", exc_info=True)
         return False
 
 
-def load(surface: str, viewer_id, sid: str, cache=None) -> dict | None:
+def current(surface: str, viewer_id, cache=None) -> dict | None:
+    """The viewer's live session of ``surface``, whatever its ``sid`` (None: none,
+    expired, unreadable or of another session version)."""
     try:
         session = (cache or hot.hot()).get(key(surface, viewer_id))
     except Exception:  # noqa: BLE001
-        logger.warning("ranking session unreadable; latest fallback", exc_info=True)
+        logger.warning("ranking session unreadable", exc_info=True)
         return None
-    if not isinstance(session, dict) or session.get("v") != VERSION or session.get("sid") != sid:
+    if not isinstance(session, dict) or session.get("v") != VERSION:
+        return None
+    return session
+
+
+def load(surface: str, viewer_id, sid: str, cache=None) -> dict | None:
+    """The session ``sid`` names, or None. A missing session and one replaced by a
+    newer first page (another tab) are counted apart (``intel_rank_session_lost_total``)."""
+    from .. import metrics
+
+    session = current(surface, viewer_id, cache)
+    if session is None:
+        metrics.rank_session_lost("missing")
+        return None
+    if session.get("sid") != sid:
+        metrics.rank_session_lost("replaced")
         return None
     return session
 

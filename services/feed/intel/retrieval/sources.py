@@ -83,13 +83,6 @@ def connections(viewer_id, cfg: SurfaceConfig, types: tuple[str, ...] | None = N
     ]
 
 
-def _friends(viewer_id, since=None) -> list[str]:
-    sql = "SELECT friend_id FROM intel_friend_edge WHERE account_id = %(viewer)s AND active"
-    if since is not None:
-        sql += " AND since >= %(since)s"
-    return [str(r[0]) for r in _rows(sql, {"viewer": viewer_id, "since": since})]
-
-
 _CAPPED_SQL = """
 SELECT f.post_id, f.author_id, f.created_at, c.type, 'capped'
 FROM intel_fanout_capped f LEFT JOIN intel_content_ref c ON c.post_id = f.post_id
@@ -111,43 +104,43 @@ ORDER BY c.created_at DESC, c.post_id LIMIT %(limit)s
 """
 
 
+# R3 WP A8: the whole follow pull in one statement (was five: follows, friends, the
+# capped posts, then recent follows and friends and their posts). Capped rows come
+# first so the dedupe below keeps their reason, as before.
+_FOLLOW_PULL_SQL = f"""
+WITH conn AS (
+    SELECT target_id AS id, occurred_at AS at FROM follow_edge
+    WHERE follower_id = %(viewer)s AND active
+    UNION ALL
+    SELECT friend_id, since FROM intel_friend_edge WHERE account_id = %(viewer)s AND active),
+capped AS ({_CAPPED_SQL.replace("ANY(%(authors)s::uuid[])", "ANY(ARRAY(SELECT id FROM conn))")}),
+fresh AS ({
+    _NEW_FOLLOW_SQL.replace(
+        "ANY(%(authors)s::uuid[])",
+        "ANY(ARRAY(SELECT id FROM conn WHERE at >= %(recent)s AND id <> %(viewer)s))",
+    ).replace("%(since)s", "%(new_since)s")
+})
+SELECT *, 1 FROM capped
+UNION ALL
+SELECT *, 2 FROM fresh
+ORDER BY 6
+"""  # noqa: S608 - built from the constants above; every value is a bound parameter
+
+
 def follow_pull(viewer_id, cfg: SurfaceConfig, now: datetime) -> list[Candidate]:
     limit = cfg.get(f"window.{FOLLOW_PULL}")
     r = cfg.section("retrieval")
-    viewer = str(viewer_id)
-    connected = sorted(set(ports.follows(viewer)) | set(_friends(viewer)))
-    out: list[Candidate] = []
-    if connected:
-        out += _candidates(
-            _rows(
-                _CAPPED_SQL,
-                {
-                    "authors": connected,
-                    "since": now - timedelta(days=r["capped_days"]),
-                    "viewer": viewer,
-                    "limit": limit,
-                },
-            ),
-            FOLLOW_PULL,
-        )
-    recent_since = now - timedelta(hours=r["new_follow_hours"])
-    new = sorted(
-        (set(ports.follows(viewer, since=recent_since)) | set(_friends(viewer, recent_since)))
-        - {viewer}
+    rows = _rows(
+        _FOLLOW_PULL_SQL,
+        {
+            "viewer": str(viewer_id),
+            "since": now - timedelta(days=r["capped_days"]),
+            "recent": now - timedelta(hours=r["new_follow_hours"]),
+            "new_since": now - timedelta(days=r["new_follow_days"]),
+            "limit": limit,
+        },
     )
-    if new:
-        out += _candidates(
-            _rows(
-                _NEW_FOLLOW_SQL,
-                {
-                    "authors": new,
-                    "since": now - timedelta(days=r["new_follow_days"]),
-                    "viewer": viewer,
-                    "limit": limit,
-                },
-            ),
-            FOLLOW_PULL,
-        )
+    out = _candidates([row[:5] for row in rows], FOLLOW_PULL)
     return _newest(_dedupe(out), limit)
 
 

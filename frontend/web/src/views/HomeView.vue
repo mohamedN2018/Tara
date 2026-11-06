@@ -4,15 +4,19 @@ export default { name: "HomeView" };
 </script>
 
 <script setup lang="ts">
-import { Clock, Settings2, Undo2 } from "lucide-vue-next";
+import type { AxiosError } from "axios";
+import { Clock, RotateCw, Settings2, Undo2 } from "lucide-vue-next";
 import { nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 
 import CompleteProfileCard from "@/components/auth/CompleteProfileCard.vue";
+import CaughtUpMarker from "@/components/feed/CaughtUpMarker.vue";
 import FeedCardSkeleton from "@/components/feed/FeedCardSkeleton.vue";
 import FeedEndCard from "@/components/feed/FeedEndCard.vue";
 import FeedRetryCard from "@/components/feed/FeedRetryCard.vue";
+import NewPostsPill from "@/components/feed/NewPostsPill.vue";
+import NewSinceDivider from "@/components/feed/NewSinceDivider.vue";
 import AppShell from "@/components/layout/AppShell.vue";
 import { railVisible, setRailAd } from "@/components/layout/rightRail";
 import CreatePostCard from "@/components/post/CreatePostCard.vue";
@@ -25,17 +29,20 @@ import PeopleYouMayKnowStrip from "@/components/social/PeopleYouMayKnowStrip.vue
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import StoriesRail from "@/components/stories/StoriesRail.vue";
+import { httpStatus } from "@/lib/api";
 import { delivery, holdRails, loadDelivery, positionRules, releaseRails } from "@/lib/delivery";
 import {
   type FeedPosition,
-  isChronological,
   isReload,
+  isRestorable,
   readPosition,
   savePosition,
   scrollToCard,
   topCard,
 } from "@/lib/feedPosition";
-import { itemKey, noteServed } from "@/lib/signals";
+import { atScrollTop, createHomeRefresh, pageEntry, retryAfterMs, timersFrom } from "@/lib/homeRefresh";
+import { attachPullToRefresh, keepAnchor } from "@/lib/pullToRefresh";
+import { itemKey, noteServed, signalSessionId } from "@/lib/signals";
 import { realtime } from "@/lib/ws";
 import {
   DEFAULT_AD_SLOTS,
@@ -44,6 +51,7 @@ import {
   type FeedMode,
   type FeedReason,
   feedService,
+  type FeedVisit,
   type HideReason,
   hydrateFeed,
   isFeedMode,
@@ -80,6 +88,35 @@ const loadingMore = ref(false);
 const error = ref(false);
 // The next page failed after its automatic retries: the inline retry card shows.
 const nextFailed = ref(false);
+
+// R3 (06 §6.1-6.2, 07 WP 4b.7/4b.8): the visit, the refresh timers (the server's
+// `meta.refresh_after_s` / `auto_refetch_after_s`), the markers and the pill.
+const timers = ref(timersFrom());
+const visit = ref<FeedVisit | null>(null);
+// The markers sit after a post (by id, so hydration that drops a post cannot shift
+// them); TOP (never a post id): before the first one.
+const TOP = "top";
+const dividerAfter = ref<string | null>(null);
+const caughtAfter = ref<string | null>(null);
+/** The pill: the server's `peek` count (or, after a pull, how many went in above). */
+const pill = ref<{ count: number; capped: boolean; inserted: boolean } | null>(null);
+// A 429 on a first page or a peek (06 §6.3): nothing more is asked before this time.
+let limitedUntil = 0;
+const limited = ref(false);
+const limitedWaiting = ref(false);
+let limitedTimer: ReturnType<typeof setTimeout> | null = null;
+// 06 §6.1: a ranked session continued chronologically (`page.fallback`) asks for one
+// more page when fewer than this many new items remain after dropping known ids.
+const FALLBACK_REFILL_MIN = 5;
+
+/** The post a marker at server index `idx` of the first page goes after. */
+function markerAfter(idx: number | null | undefined, ids: string[] | undefined): string | null {
+  if (typeof idx !== "number" || !Number.isInteger(idx) || idx < 0 || !ids) return null;
+  if (idx === 0) return ids.length ? TOP : null;
+  return ids[Math.min(idx, ids.length) - 1] ?? null;
+}
+
+const retryAfterOf = (e: unknown) => retryAfterMs((e as AxiosError)?.response?.headers?.["retry-after"]);
 
 // Delivery (08 §7.2-7.10): every value is the server's `delivery` block for Home.
 const cfg = () => delivery("home");
@@ -140,7 +177,8 @@ function setMode(next: FeedMode, remember = false) {
   menuSnoozed.value = {};
   // New posts found for the old mode may not belong to this one.
   pending.value = [];
-  void load(true);
+  pill.value = null;
+  void load(true, "nav");
 }
 // The left rail's Feeds link while Home is already open (KeepAlive keeps this view).
 watch(
@@ -185,14 +223,23 @@ const firstContent = () => posts.value.some((p) => snapshots.value[p.id] !== fal
 /** One request per (surface, cursor); a second trigger while one is pending is ignored. */
 let inFlight: string | null = null;
 
-async function load(initial = false, entry: FeedEntry = "open"): Promise<void> {
+/**
+ * A first page (`initial`) or the next one. `entry` (first pages): the visit hint
+ * (06 §4.2), by default `load`/`reload` for the page load's first and `nav` after.
+ * `silent`: the list stays on screen until the new first page replaces it (the
+ * automatic refresh after time away at the top, `entry=return`).
+ */
+async function load(initial = false, entry?: FeedEntry, opts: { silent?: boolean } = {}): Promise<void> {
   if (initial) {
+    // 429 (06 §6.3): honour the server's Retry-After, never a request loop.
+    if (Date.now() < limitedUntil) return;
     generation++;
-    loading.value = true;
+    if (!opts.silent) loading.value = true;
     error.value = false;
+    limited.value = false;
     nextFailed.value = false;
     inFlight = null;
-    parked.value = {};
+    if (!opts.silent) parked.value = {};
   } else {
     if (!hasMore.value || loadingMore.value || nextFailed.value) return;
     loadingMore.value = true;
@@ -200,6 +247,10 @@ async function load(initial = false, entry: FeedEntry = "open"): Promise<void> {
   const run = generation;
   const flightKey = `${mode.value}|${initial ? "" : (cursor.value ?? "")}`;
   inFlight = flightKey;
+  // The page load's first first page is `load`/`reload` whoever asks it (a restore names
+  // `reload` itself); every later one defaults to `nav`.
+  const auto = initial ? pageEntry() : undefined;
+  const firstEntry = initial ? (entry ?? auto) : undefined;
   try {
     const asked = modeResolved ? mode.value : undefined;
     const retries = initial ? 0 : cfg().next_page_retries;
@@ -207,8 +258,9 @@ async function load(initial = false, entry: FeedEntry = "open"): Promise<void> {
     for (let attempt = 0; ; attempt++) {
       try {
         page = await feedService.page(initial ? undefined : (cursor.value ?? undefined), asked, asked ? undefined : storedMode(), {
-          entry: initial ? entry : undefined,
+          entry: firstEntry,
           snapshots: true,
+          sid: initial ? signalSessionId() : undefined,
         });
         break;
       } catch (e) {
@@ -234,8 +286,10 @@ async function load(initial = false, entry: FeedEntry = "open"): Promise<void> {
     }
     modeResolved = true;
     const known = new Set(initial ? [] : posts.value.map((p) => p.id));
-    const fresh = page.posts.filter((p) => !known.has(p.id));
+    const seenInPage = new Set<string>();
+    const fresh = page.posts.filter((p) => !known.has(p.id) && !seenInPage.has(p.id) && !!seenInPage.add(p.id));
     const offset = initial ? 0 : posts.value.length;
+    if (initial && opts.silent) parked.value = {};
     posts.value = initial ? fresh : [...posts.value, ...fresh];
     // Signals (WP 2.8): each served item's token and feed position, for its impression.
     fresh.forEach((p, i) => noteServed(itemKey("post", p.id), { st: page.serveTokens?.[p.id], pos: offset + i, surface: "home" }));
@@ -244,6 +298,16 @@ async function load(initial = false, entry: FeedEntry = "open"): Promise<void> {
       sponsored.value = page.sponsored;
       adSlots.value = page.adSlots ?? [...DEFAULT_AD_SLOTS];
       asOf.value = page.asOf;
+      // R3: the server's timers and visit; the markers by post id.
+      timers.value = timersFrom(page.refreshAfterS, page.autoRefetchAfterS);
+      visit.value = page.visit ?? null;
+      const v = visit.value;
+      dividerAfter.value =
+        v && v.new_count >= v.min_to_show && (v.anchor_index ?? 0) > 0 ? markerAfter(v.anchor_index, page.ids) : null;
+      caughtAfter.value = markerAfter(page.caughtUpIndex, page.ids);
+      // The list is new: what a peek found for the old one is gone with it.
+      pill.value = null;
+      pending.value = [];
       // On wide screens the first slot shows in the right column instead of the feed.
       setRailAd(page.sponsored[0]);
     }
@@ -260,14 +324,16 @@ async function load(initial = false, entry: FeedEntry = "open"): Promise<void> {
       );
       if (!initial) warmMedia(fresh);
     } else if (initial) snapshots.value = {};
-    if (!fresh.length && page.hasMore) {
-      // A page with nothing new (all filtered, or already shown): keep going.
+    if (page.hasMore && (!fresh.length || (!initial && page.fallback && fresh.length < FALLBACK_REFILL_MIN))) {
+      // A page with nothing (or, continuing a lost ranked session, little) new: keep going.
       void nextTick(() => load(false));
     }
-  } catch {
+  } catch (e) {
     if (run !== generation) return;
-    if (initial) error.value = true;
-    else nextFailed.value = true; // the inline retry card, never an English toast
+    if (initial && httpStatus(e) === 429) rateLimited(e, !!opts.silent);
+    else if (initial) {
+      if (!opts.silent) error.value = true; // a silent refresh keeps the list
+    } else nextFailed.value = true; // the inline retry card, never an English toast
   } finally {
     if (run === generation) {
       loading.value = false;
@@ -281,6 +347,30 @@ async function load(initial = false, entry: FeedEntry = "open"): Promise<void> {
       });
     }
   }
+}
+
+// A first page refused with 429: the retry card (no English toast), and one automatic
+// try once the server's Retry-After has passed; a second refusal waits for a click.
+let autoRetried = false;
+function rateLimited(e: unknown, silent: boolean) {
+  const wait = retryAfterOf(e);
+  limitedUntil = Date.now() + (wait ?? 0);
+  if (silent) return; // the list on screen stays; the next return tries again
+  limited.value = true;
+  if (wait === null || autoRetried) return;
+  autoRetried = true;
+  limitedWaiting.value = true;
+  if (limitedTimer) clearTimeout(limitedTimer);
+  limitedTimer = setTimeout(() => {
+    limitedTimer = null;
+    limitedWaiting.value = false;
+    void load(true);
+  }, wait);
+}
+
+function retryLimited() {
+  if (limitedWaiting.value || Date.now() < limitedUntil) return;
+  void load(true);
 }
 
 /** The retry card: one more try, with the automatic retries again behind it. */
@@ -504,11 +594,29 @@ const known = (id: string) => posts.value.some((p) => p.id === id) || pending.va
 // server's peek for the current mode decides what the pill may offer. A peek
 // never replaces the ranking session nor asks for ads (D4, WP 4.7).
 // `only`: keep just these pushed ids; null keeps every new item (catch-up).
+// The pill counts what the server says is new since the list was served (`as_of`,
+// which is always later than `meta.visit.since`: counting from the visit's start
+// would offer posts already on screen). Rows the list already holds are not "new".
+const inList = (id: string) => posts.value.some((p) => p.id === id);
+
 async function addFromTop(only: Set<string> | null) {
+  if (Date.now() < limitedUntil) return;
   const run = generation;
   try {
-    const { data } = await feedService.peek(mode.value, asOf.value);
+    const peek = await feedService.peek(mode.value, asOf.value);
     if (run !== generation) return;
+    const { data } = peek;
+    const ids = peek.ids ?? data.map((i) => i.post_id);
+    // A push this mode's feed does not contain changes nothing (the push goes to every
+    // recipient, whatever their mode); otherwise the pill says what the server counts.
+    if (only && !ids.some((id) => only.has(id))) return;
+    // Not new to this viewer: rows the list holds, and rows of an author snoozed here
+    // while the server's answer was on its way.
+    const snoozedHere = data.filter((i) => snoozedAuthors.value.has(i.author_id) && !inList(i.post_id)).length;
+    const held = ids.filter(inList).length + snoozedHere;
+    const count = Math.max(0, (Number.isInteger(peek.new_count) ? peek.new_count : 0) - held);
+    if (count > 0) pill.value = { count, capped: peek.new_count_capped === true, inserted: false };
+    else if (!pill.value?.inserted) pill.value = null;
     const items = data.filter(
       (item) => (!only || only.has(item.post_id)) && !known(item.post_id) && !snoozedAuthors.value.has(item.author_id),
     );
@@ -518,8 +626,38 @@ async function addFromTop(only: Set<string> | null) {
     items.forEach((i) => noteServed(itemKey("post", i.post_id), { st: i.st, surface: "home" }));
     const fresh = live.filter((p) => !known(p.id) && !snoozedAuthors.value.has(p.author_id));
     pending.value = [...fresh, ...pending.value];
-  } catch {
-    // Still reachable through a page reload.
+  } catch (e) {
+    // 429: no peek before Retry-After. Otherwise still reachable through a refresh.
+    if (httpStatus(e) === 429) limitedUntil = Date.now() + (retryAfterOf(e) ?? 0);
+  }
+}
+
+/**
+ * A first page (`entry=pull`): the items not on screen yet go in above the list,
+ * never a duplicate (id set). The cursor and the rest of the list stay; a next page
+ * of a replaced ranked session comes back as `fallback` and is deduped as usual.
+ * Returns how many went in.
+ */
+async function insertFresh(entry: FeedEntry): Promise<number> {
+  if (Date.now() < limitedUntil) return 0;
+  const run = generation;
+  try {
+    const asked = modeResolved ? mode.value : undefined;
+    const page = await feedService.page(undefined, asked, asked ? undefined : storedMode(), { entry, sid: signalSessionId() });
+    if (run !== generation) return 0;
+    const have = new Set(posts.value.map((p) => p.id));
+    const fresh = page.posts.filter((p) => !have.has(p.id) && !snoozedAuthors.value.has(p.author_id) && !!have.add(p.id));
+    if (page.asOf) asOf.value = page.asOf;
+    if (!fresh.length) return 0;
+    posts.value = [...fresh, ...posts.value];
+    fresh.forEach((p, i) => noteServed(itemKey("post", p.id), { st: page.serveTokens?.[p.id], pos: i, surface: "home" }));
+    reasons.value = { ...reasons.value, ...page.reasons };
+    const added = new Set(fresh.map((p) => p.id));
+    pending.value = pending.value.filter((p) => !added.has(p.id));
+    return fresh.length;
+  } catch (e) {
+    if (httpStatus(e) === 429) limitedUntil = Date.now() + (retryAfterOf(e) ?? 0);
+    return 0;
   }
 }
 
@@ -549,10 +687,52 @@ async function catchUp() {
   await addFromTop(null);
 }
 
-function revealPending() {
-  posts.value = [...pending.value, ...posts.value];
-  pending.value = [];
+/** The pill: show what it counted, at the top. */
+async function revealPill() {
+  const p = pill.value;
+  pill.value = null;
+  if (!p?.inserted) {
+    const fresh = pending.value.filter((x) => !inList(x.id));
+    posts.value = [...fresh, ...posts.value];
+    pending.value = [];
+    // The peek brought fewer than it counted (its page is short): bring the rest.
+    if (p && p.count > fresh.length) await insertFresh("pull");
+  }
   window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+// Pull-to-refresh (touch, at the top) and the refresh control (06 §6.1).
+const pullPx = ref(0);
+const pullArmed = ref(false);
+const pulling = ref(false);
+
+/** The pull gesture: new items above, the card under the finger stays where it was. */
+async function pullRefresh() {
+  if (pulling.value) return;
+  pulling.value = true;
+  try {
+    let n = 0;
+    await keepAnchor(async () => {
+      n = await insertFresh("pull");
+      await nextTick();
+    });
+    if (n) pill.value = { count: n, capped: false, inserted: true };
+  } finally {
+    pulling.value = false;
+  }
+}
+
+/** The refresh control: the same first page, then the top of the list. */
+async function refreshControl() {
+  if (pulling.value) return;
+  pulling.value = true;
+  try {
+    const n = await insertFresh("pull");
+    await nextTick();
+    if (n) window.scrollTo({ top: 0, behavior: "smooth" });
+  } finally {
+    pulling.value = false;
+  }
 }
 
 // Infinite scroll (08 §7.5): the next page is asked for when the sentinel comes
@@ -670,10 +850,11 @@ watch(
   () => void nextTick(watchNewCards),
 );
 
-// Reload position (08 §7.6): chronological modes only.
+// Reload position (08 §7.6): the chronological modes and, since R3, For You (a
+// reload inside the ranking session gets the same frozen list back).
 let active = true;
 function onPageHide() {
-  if (!active || !isChronological(mode.value)) return;
+  if (!active || !isRestorable(mode.value)) return;
   const top = topCard();
   if (!top) return;
   savePosition({ surface: "home", mode: mode.value, anchor_post_id: top.id, offset_px: top.offset, cursor: cursor.value });
@@ -696,7 +877,32 @@ async function restore(saved: FeedPosition): Promise<boolean> {
   return true;
 }
 
+// Refresh on return (06 §6.1): the time away decides between nothing, the pill
+// and a silent first page (`entry=return`), on KeepAlive activation and on the tab
+// becoming visible again.
+const refresher = createHomeRefresh({
+  timers: () => timers.value,
+  onPeek: () => void addFromTop(null),
+  onRefetch: () => void load(true, "return", { silent: true }),
+});
+let stopVisibility: () => void = () => undefined;
+let detachPull: () => void = () => undefined;
+function listenPull() {
+  detachPull();
+  detachPull = attachPullToRefresh({
+    atTop: () => active && atScrollTop(),
+    busy: () => pulling.value || loading.value,
+    onPull: pullRefresh,
+    onProgress: (px, armed) => {
+      pullPx.value = px;
+      pullArmed.value = armed;
+    },
+  });
+}
+
 onMounted(() => {
+  stopVisibility = refresher.listen();
+  listenPull();
   setupSentinel();
   setupVirtualization();
   const saved = isReload() ? readPosition(mode.value) : null;
@@ -711,9 +917,14 @@ onMounted(() => {
 
 onActivated(() => {
   active = true;
+  listenPull();
+  refresher.activate();
 });
 onDeactivated(() => {
   active = false;
+  refresher.deactivate();
+  detachPull();
+  detachPull = () => undefined;
   releaseRails();
 });
 
@@ -727,6 +938,9 @@ onUnmounted(() => {
   markObserver?.disconnect();
   farObserver?.disconnect();
   window.removeEventListener("pagehide", onPageHide);
+  stopVisibility();
+  detachPull();
+  if (limitedTimer) clearTimeout(limitedTimer);
   releaseRails();
   unsubs.forEach((u) => u());
 });
@@ -761,6 +975,18 @@ onUnmounted(() => {
         >
           {{ t(`homeFeed.modes.${m}`) }}
         </button>
+        <button
+          type="button"
+          class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-gray-600 transition hover:bg-gray-100 disabled:opacity-60 dark:text-gray-300 dark:hover:bg-gray-800"
+          :aria-label="t('homeRefresh.refresh')"
+          :title="t('homeRefresh.refresh')"
+          :disabled="pulling || loading"
+          data-testid="feed-refresh"
+          @click="refreshControl"
+        >
+          <!-- A circular arrow reads the same both ways; it is not mirrored. -->
+          <RotateCw class="h-5 w-5" :class="pulling ? 'animate-spin' : ''" aria-hidden="true" />
+        </button>
         <RouterLink
           to="/feeds/manage"
           class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-gray-600 transition hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
@@ -772,19 +998,30 @@ onUnmounted(() => {
         </RouterLink>
       </div>
 
-      <div v-if="pending.length" class="sticky top-16 z-10 flex justify-center">
-        <button
-          class="rounded-full bg-brand-600 px-4 py-1.5 text-sm font-medium text-white shadow-lg transition hover:bg-brand-700"
-          @click="revealPending"
+      <!-- The pull indicator floats over the list (it never moves the cards). -->
+      <div
+        v-if="pullPx > 0 || pulling"
+        class="pointer-events-none fixed inset-x-0 top-16 z-20 flex justify-center"
+        role="status"
+        data-testid="pull-indicator"
+      >
+        <span
+          class="mt-2 inline-flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-md dark:bg-gray-900 dark:text-gray-200"
+          :style="pulling ? undefined : { opacity: String(Math.min(1, pullPx / 48)) }"
         >
-          ↑ {{ t("toasts.newPosts", pending.length) }}
-        </button>
+          <RotateCw class="h-4 w-4 text-brand-600 dark:text-brand-300" :class="pulling ? 'animate-spin' : ''" aria-hidden="true" />
+          {{ pulling ? t("homeRefresh.refreshing") : pullArmed ? t("homeRefresh.release") : t("homeRefresh.pull") }}
+        </span>
       </div>
+
+      <NewPostsPill v-if="pill" :count="pill.count" :capped="pill.capped" @reveal="revealPill" />
 
       <!-- First load: three card skeletons sized like real cards (08 §7.7). -->
       <div v-if="loading" class="space-y-4" role="status" :aria-label="t('delivery.loading')" data-testid="feed-first-loading">
         <FeedCardSkeleton v-for="n in 3" :key="n" />
       </div>
+      <!-- 429 on the first page: the retry card, once more after Retry-After (06 §6.3). -->
+      <FeedRetryCard v-else-if="limited" :busy="limitedWaiting" @retry="retryLimited" />
       <ErrorState v-else-if="error" @retry="load(true)" />
       <EmptyState v-else-if="posts.length === 0 && mode === 'favorites' && modesSupported" class="card">
         {{ t("postsFeed.feeds.favoritesEmpty") }}
@@ -795,6 +1032,8 @@ onUnmounted(() => {
       <EmptyState v-else-if="posts.length === 0 && !hasMore" class="card">{{ t("feed.empty") }}</EmptyState>
 
       <template v-else>
+        <!-- For You with no circle items left at all: caught up before the first suggestion. -->
+        <CaughtUpMarker v-if="caughtAfter === TOP && posts.length" />
         <template v-for="(post, i) in posts" :key="post.id">
           <!-- Far from the screen after many cards: a placeholder of the card's measured height (08 §7.10). -->
           <div
@@ -862,6 +1101,10 @@ onUnmounted(() => {
               @author-gone="onAuthorGone"
             />
           </div>
+          <!-- 4b.7: where the rows newer than the last visit end, and the caught-up line
+               (never right above the end card, which already says it). -->
+          <NewSinceDivider v-if="dividerAfter === post.id" />
+          <CaughtUpMarker v-if="caughtAfter === post.id && (hasMore || i < posts.length - 1)" />
           <!-- Real video posts only; renders nothing when there are none. -->
           <VideosRail v-if="i === 1" />
           <!-- Real reels only (short vertical videos, 5.8), apart from the Videos rail. -->
@@ -872,14 +1115,20 @@ onUnmounted(() => {
         </template>
 
         <FeedRetryCard v-if="nextFailed" :busy="loadingMore" @retry="retryNext" />
-        <div v-else-if="hasMore" ref="sentinel" class="py-4 text-center" data-testid="feed-sentinel">
+        <!-- R3 (4b.8, CLS <= 0.1 on slow networks): the observed sentinel is a 1 px line
+             and the wrapper has no box, so the cards a page appends never push a visible
+             block down; the skeletons are replaced in place by the cards. -->
+        <div v-else-if="hasMore" class="contents" data-testid="feed-more">
+          <div ref="sentinel" class="h-px" aria-hidden="true" data-testid="feed-sentinel" />
           <!-- Next page: two card skeletons (08 §7.7). -->
-          <div v-if="loadingMore" class="space-y-4 text-start" role="status" :aria-label="t('delivery.loadingMore')" data-testid="feed-next-loading">
+          <div v-if="loadingMore" class="mt-4 space-y-4 text-start" role="status" :aria-label="t('delivery.loadingMore')" data-testid="feed-next-loading">
             <FeedCardSkeleton v-for="n in 2" :key="n" />
           </div>
-          <button v-else class="btn-ghost mx-auto block" @click="load(false)">
-            {{ t("feed.loadMore") }}
-          </button>
+          <div v-else class="py-4 text-center">
+            <button class="btn-ghost mx-auto block" @click="load(false)">
+              {{ t("feed.loadMore") }}
+            </button>
+          </div>
         </div>
         <!-- Only when the server says there is nothing more (never while has_more). -->
         <FeedEndCard v-else-if="posts.length" />

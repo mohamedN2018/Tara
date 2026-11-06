@@ -15,7 +15,14 @@ or activated. The rules:
   version-1 params set that carries any of them is rejected. Version 3 (08 sections
   7.2 and 15.1, WP 4c.2-B3) adds ``delivery`` (home, reels, video); a stored
   version below 3 that carries it is rejected. Versions stored before it get the
-  block from the package defaults (``store.merge``).
+  block from the package defaults (``store.merge``). Version 4 (06 sections 4.2,
+  5.3, 5.4, 6.3 and 20; R3) adds ``exposure``, ``rotation``, ``revisit``, the visit
+  keys of ``session`` and ``peek.max_count``; a stored version below 4 that carries
+  any of them is rejected. Older versions get ``exposure`` and the ``session`` keys
+  from the package defaults (ingest and visit classification read them under any
+  active version), but never ``rotation`` / ``revisit``: the ranking effects of
+  R3 apply only to a version that itself carries ``rotation``
+  (``exposure_ranking``).
 
 The specs are frozen dataclasses (``Num``, ``Int``, ``Bool``, ``Section``, ``Map``,
 ``ListOf``); ``validate(surface, params)`` returns the list of problems (empty when
@@ -28,7 +35,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 SURFACES = ("home", "reels", "video", "groups")
 # The surfaces that carry a ``delivery`` block (WP 4c.2-B3).
 DELIVERY_SURFACES = ("home", "reels", "video")
@@ -414,12 +421,87 @@ HOME_SOURCES = ("connections", "follow_pull", "groups", "discovery")
 HOME_RANKING = Section(
     {"sources": ListOf(Str(HOME_SOURCES), min_len=1, max_len=len(HOME_SOURCES), unique=True)}
 )
-SESSION = Section({"ttl_s": Int(60, 24 * 3600)})
+# The visit (06 sections 4.2 and 6.3, R3 WP 4b.4/4b.7/4b.8): classification
+# thresholds, the "new since your last visit" block, the client refresh timers
+# served in ``meta``, the per-account first-page / peek throttles and the retention
+# of ``intel_feed_session``. ``ttl_s`` is the ranking session (WP 4.10).
+SESSION_NEW_SINCE = Section(
+    {
+        "max_items": Int(0, 500),
+        "lapsed_max_items": Int(0, 500),
+        "min_to_show": Int(0, 100),
+        "boost": Num(0.0, 10.0),
+        "max_age_h": Int(1, 24 * 30),
+    }
+)
+SESSION_RATE = Section({"first_page_per_min": Int(1, 10_000), "peek_per_min": Int(1, 10_000)})
+SESSION_V4 = frozenset(
+    {
+        "refresh_max_s",
+        "ongoing_idle_s",
+        "returning_after_h",
+        "lapsed_after_d",
+        "new_since",
+        "refresh_after_s",
+        "auto_refetch_after_s",
+        "rate",
+        "feed_session_retention_d",
+    }
+)
+SESSION = Section(
+    {
+        "ttl_s": Int(60, 24 * 3600),
+        "refresh_max_s": Int(1, 3_600),
+        "ongoing_idle_s": Int(60, 24 * 3600),
+        "returning_after_h": Int(1, 24 * 30),
+        "lapsed_after_d": Int(1, 365),
+        "new_since": SESSION_NEW_SINCE,
+        "refresh_after_s": Int(0, 24 * 3600),
+        "auto_refetch_after_s": Int(0, 24 * 3600),
+        "rate": SESSION_RATE,
+        "feed_session_retention_d": Int(1, 400),
+    },
+    optional=SESSION_V4,
+)
 FEEDBACK = Section({"snooze_days": Int(1, 365)})
 # Blocks owned by other WPs (4.6 modes, 4.7 peek, 4.8 why, 4.9 ads): validated here
 # so the one schema covers the whole version.
 MODES = Section({"recent_includes_groups": Fixed(False, "group rows join the recent mode")})
-PEEK = Section({"max_since_hours": Int(1, 24 * 30)})
+# ``max_count``: the peek ``new_count`` is capped there (``new_count_capped``; R3).
+PEEK = Section(
+    {"max_since_hours": Int(1, 24 * 30), "max_count": Int(1, 10_000)},
+    optional=frozenset({"max_count"}),
+)
+# The exposure ledger and multiplier (06 sections 5.1-5.3, R3 WP 4b.3/4b.5).
+# Ingest reads ``ledger`` and the dwell thresholds (``length_buckets``: ascending
+# ``max_chars``, the consumed-dwell threshold is scaled by the first bucket whose
+# ``max_chars`` holds the excerpt; the bucket index rides in the serve token); the
+# ranker reads ``m0`` / ``half_life_h`` / ``in_visit_m0`` / ``max_exposures``, and
+# only under a version that carries ``rotation`` (``exposure_ranking``).
+EXPOSURE_STATES = ("displayed", "skipped", "viewed", "consumed")
+EXPOSURE = Section(
+    {
+        "ledger": Section({"cap": Int(1, 1_000), "ttl_h": Int(1, 24 * 14)}),
+        "skip_dwell_ms": Int(0, 600_000),
+        "viewed_dwell_ms": Int(0, 600_000),
+        "consumed_dwell_ms": Int(0, 600_000),
+        "length_buckets": ListOf(
+            Section({"max_chars": Int(0, 1_000_000), "scale": Num(0.0, 10.0, gt=True)}),
+            min_len=1,
+            max_len=16,
+        ),
+        "m0": Section(dict.fromkeys(EXPOSURE_STATES, UNIT)),
+        "half_life_h": Section(dict.fromkeys(EXPOSURE_STATES, HALF_LIFE_H)),
+        "in_visit_m0": Section(dict.fromkeys(EXPOSURE_STATES, UNIT)),
+        "max_exposures": Int(1, 10),
+    }
+)
+# Relevance-aware rotation (06 section 5.4): an item enters the first
+# ``floor_slots`` only with score' >= ``floor`` x the ``floor_pct`` percentile.
+ROTATION = Section({"floor": UNIT, "floor_pct": Int(0, 100), "floor_slots": Int(0, 100)})
+# The conversation exception (06 section 5.3): >= ``new_comments`` distinct,
+# non-suspect commenters since the viewer's last display lift m to ``min_m``.
+REVISIT = Section({"new_comments": Int(1, 10_000), "min_m": UNIT})
 ADS = Section(
     {
         "slots": ListOf(Int(0, 1_000), max_len=10, unique=True),
@@ -522,6 +604,9 @@ SCHEMAS: dict[str, Section] = {
             "continuation": CONTINUATION,
             "head": HEAD,
             "delivery": DELIVERY,
+            "exposure": EXPOSURE,
+            "rotation": ROTATION,
+            "revisit": REVISIT,
         },
         optional=frozenset(
             {
@@ -535,6 +620,9 @@ SCHEMAS: dict[str, Section] = {
                 "continuation",
                 "head",
                 "delivery",
+                "exposure",
+                "rotation",
+                "revisit",
             }
         ),
     ),
@@ -572,11 +660,47 @@ def validate(surface: str, params: Any) -> list[str]:
 V2_SECTIONS = ("mix", "continuation", "head")
 # Blocks that schema version 3 introduced (WP 4c.2-B3).
 V3_SECTIONS = ("delivery",)
+# Blocks and keys that schema version 4 introduced (R3).
+V4_SECTIONS = ("exposure", "rotation", "revisit")
+PEEK_V4 = frozenset({"max_count"})
+
+
+def exposure_ranking(params: dict) -> bool:
+    """Whether the R3 ranking effects (exposure multiplier, rotation floor,
+    carry-over, ``rec_new_activity``, the new-since boost) apply. True only for a
+    version that itself carries ``rotation``: ``store.merge`` gives older versions
+    ``exposure`` and the visit keys from the package defaults, never ``rotation``."""
+    return isinstance(params.get("rotation"), dict) and isinstance(params.get("exposure"), dict)
 
 
 def _version_rules(params: dict) -> list[str]:
     out = []
     version = params.get("schema_version")
+    if isinstance(version, int) and not isinstance(version, bool) and version < 4:
+        for name in V4_SECTIONS:
+            if name in params:
+                out.append(f"{name}: needs schema_version 4")
+        for block, keys in (("session", SESSION_V4), ("peek", PEEK_V4)):
+            value = params.get(block)
+            if isinstance(value, dict):
+                for key in sorted(keys & set(value)):
+                    out.append(f"{block}.{key}: needs schema_version 4")
+    if "rotation" in params or "revisit" in params:
+        # The ranking effects read the multiplier and the exception together.
+        for name in V4_SECTIONS:
+            if name not in params:
+                out.append(f"{name}: required with rotation / revisit")
+    buckets = (
+        params.get("exposure", {}).get("length_buckets")
+        if isinstance(params.get("exposure"), dict)
+        else None
+    )
+    if isinstance(buckets, list) and all(
+        isinstance(b, dict) and isinstance(b.get("max_chars"), int) for b in buckets
+    ):
+        edges = [b["max_chars"] for b in buckets]
+        if edges != sorted(set(edges)):
+            out.append("exposure.length_buckets: max_chars must be strictly ascending")
     if isinstance(version, int) and not isinstance(version, bool) and version < 3:
         for name in V3_SECTIONS:
             if name in params:

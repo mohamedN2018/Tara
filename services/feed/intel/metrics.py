@@ -41,12 +41,25 @@ try:
         "intel_caught_up_total",
         "Ranked Home pages on which the viewer's connection inventory ran out.",
     )
+    RANK_SESSION_OOM = Counter(
+        "intel_rank_session_oom_total",
+        "Ranked first pages whose session redis-hot refused (noeviction OOM, 08 7.3).",
+    )
+    RANK_SESSION_LOST = Counter(
+        "intel_rank_session_lost_total",
+        "Ranked later pages that found no session (missing, or replaced by another tab).",
+        ["reason"],
+    )
+    VISITS = Counter(
+        "intel_feed_visit_total", "Home first pages by visit kind (06 section 4.2).", ["kind"]
+    )
     POOL_REBUILDS = Counter(
         "intel_pool_rebuild_total", "Discovery pool rebuilds, by outcome.", ["outcome"]
     )
 except ImportError:  # pragma: no cover - metrics are optional
     SIGNALS_ACCEPTED = SIGNALS_REJECTED = ELIGIBILITY_DROPS = SUSPECT_ENGAGEMENT = None
     HOT_WRITE_FAILED = FIRST_PAGE_OVERLAP = REPEAT_DISPLAY = CAUGHT_UP = POOL_REBUILDS = None
+    RANK_SESSION_OOM = RANK_SESSION_LOST = VISITS = None
 
 
 def accepted(origin: str, n: int) -> None:
@@ -87,6 +100,21 @@ def repeat_display(n: int) -> None:
 def caught_up() -> None:
     if CAUGHT_UP is not None:
         CAUGHT_UP.inc()
+
+
+def rank_session_oom() -> None:
+    if RANK_SESSION_OOM is not None:
+        RANK_SESSION_OOM.inc()
+
+
+def rank_session_lost(reason: str) -> None:
+    if RANK_SESSION_LOST is not None:
+        RANK_SESSION_LOST.labels(reason=reason).inc()
+
+
+def visit(kind: str) -> None:
+    if VISITS is not None:
+        VISITS.labels(kind=kind).inc()
 
 
 def pool_rebuilt(outcome: str) -> None:

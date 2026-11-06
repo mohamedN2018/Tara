@@ -2,12 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tara.local/intel/signals.batch.v1.json",
   "title": "POST /api/v1/feed/signals/ batch v1",
-  "description": "One telemetry batch from the web tracker (docs/intelligence/03 section 4.4). At most 50 events and 32 KB. Attribution (surface, config version, variant, source, position) is stamped by the server from the serve token `st`; a client `cfg` or `variant` is accepted and ignored, any other unknown field is refused (a batch-level one refuses the batch, an event-level one drops that event). The server answers 202 with {accepted, duplicate, rejected: {reason: n}}; a retried batch_id is a no-op. watch_ms is the cumulative watch time of one play (play_index, named on video_start).",
+  "description": "One telemetry batch from the web tracker (docs/intelligence/03 section 4.4). At most 50 events and 32 KB. Attribution (surface, config version, variant, source, position) is stamped by the server from the serve token `st`; a client `cfg` or `variant` is accepted and ignored, any other unknown field is refused (a batch-level one refuses the batch, an event-level one drops that event). The server answers 202 with {accepted, duplicate, rejected: {reason: n}}; a retried batch_id is a no-op. watch_ms is the cumulative watch time of one play (play_index, named on video_start). Under personalization_off the batch stores nothing (rejected.personalization_off = number of events).",
   "type": "object",
   "required": ["batch_id", "session_id", "events"],
   "properties": {
     "batch_id": {"type": "string", "format": "uuid"},
-    "session_id": {"type": "string", "format": "uuid", "description": "Per tab; rotates after 30 min idle."},
+    "session_id": {"type": "string", "format": "uuid", "description": "Per tab, kept in sessionStorage so a reload keeps it (07 WP 4b.2); rotates after 30 min idle."},
     "cfg": {"description": "Ignored."},
     "variant": {"description": "Ignored."},
     "events": {
@@ -30,7 +30,8 @@
               "video_rewatch",
               "video_skip",
               "reel_view",
-              "profile_visit"
+              "profile_visit",
+              "feed_dwell"
             ]
           },
           "item": {
@@ -45,6 +46,7 @@
           "pos_ms": {"type": "integer", "minimum": 0},
           "play_index": {"type": "integer", "minimum": 1, "maximum": 1000},
           "idef": {"type": "integer", "minimum": 1, "description": "feed_impression only: the impression rule the client measured with (1: >= 50% of the card for 1 s; 2: also >= 50% of the viewport covered, 08 section 7.12). The upper bound is the active Home config's delivery.impression.def_version; above it the event is dropped (invalid_idef). Absent = 1. On any other event type it is an unknown field."},
+          "dwell_ms": {"type": "integer", "minimum": 0, "description": "feed_dwell only (07 WP 4b.2): the card's accumulated time with the impression rule met, sent once per (session, item) when it leaves the viewport or the page hides. Over 10 minutes, or longer than the time since the item's serve token was issued, the event is dropped (dwell_overclaim). A second one for the same item in a batch is dropped (duplicate_dwell). Required on feed_dwell; on any other event type it is an unknown field."},
           "cfg": {"description": "Ignored."},
           "variant": {"description": "Ignored."}
         }

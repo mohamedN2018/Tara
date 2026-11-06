@@ -91,9 +91,9 @@ def _home(client_for, me, header):
     seen = {}
     real = ranking.first_page
 
-    def spy(viewer, size, now, claims=None):
+    def spy(viewer, size, now, claims=None, **kw):
         seen["now"] = now
-        return real(viewer, size, now, claims)
+        return real(viewer, size, now, claims, **kw)
 
     extra = {"HTTP_X_TARA_TEST_NOW": header} if header else {}
     with mock.patch("feed.ranking.first_page", side_effect=spy):

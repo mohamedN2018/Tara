@@ -9,15 +9,23 @@ candidate source, the reason, the position and the item's quantized rule scores.
 valid, unexpired, issued to the same account and for the same item; client
 fields never set it. Nothing is written per impression at serve time.
 
-Binary layout (big-endian), base64url without padding, about 100 to 130 chars::
+Binary layout (big-endian), base64url without padding, about 100 to 150 chars::
 
-    u8  version (1)
+    u8  version (1 or 2)
     16B viewer uuid
     u8  item type code     16B item uuid
     u8  surface code       u16 position (0xFFFF = none)    u32 issued_at (unix s)
     str8 cfg_version  str8 variant  str8 source  str8 reason   (u8 length + ascii)
     u8  n + n bytes scores (each 0..255)
+    -- version 2 only (07 WP 4b.16) --
+    u8  fmt code (0 = unknown)        u16 primary topic id (0 until phase 6)
+    u8  excerpt length bucket (0 = unknown, else 1 + the index in
+        ``exposure.length_buckets``)
+    8B  author id prefix (zeros = unknown)          u8 visit ordinal (mod 32)
     16B HMAC-SHA256(key, "tara.intel.st.v1" || all of the above), truncated
+
+Version 2 is what ``issue`` writes; a version-1 token keeps validating until it
+expires (``TTL_SECONDS``), its version-2 claims then read as unknown (None).
 """
 
 from __future__ import annotations
@@ -39,7 +47,8 @@ from ..models import ItemType, Surface
 
 logger = logging.getLogger("tara.intel.serve_tokens")
 
-VERSION = 1
+VERSION = 2
+VERSIONS = frozenset({1, 2})
 TTL_SECONDS = 24 * 3600
 # A token "issued" further in the future than this is refused (clock skew between replicas).
 MAX_FUTURE_SKEW_SECONDS = 300
@@ -53,6 +62,10 @@ _MAX_SCORES = 16
 _ITEM_TYPES = tuple(ItemType.values)
 _SURFACES = tuple(Surface.values)
 _POST_KINDS = frozenset({ItemType.POST, ItemType.REEL, ItemType.VIDEO})
+# The post formats (post's ``Post.Type``); index 0 is "unknown". Append only.
+FORMATS = ("unknown", "text", "image", "video", "link", "share", "poll", "reel")
+VISIT_ORD_MOD = 32
+_AUTHOR_PREFIX = 8
 
 _warned_dev_key = False
 
@@ -95,6 +108,13 @@ class ServeClaims:
     source: str | None = None
     reason: str | None = None
     scores: bytes = field(default=b"")
+    # Version 2 (07 WP 4b.16); None on a version-1 token.
+    version: int = VERSION
+    fmt: str | None = None
+    topic_id: int | None = None
+    length_bucket: int | None = None
+    author_prefix: bytes | None = None
+    visit_ord: int | None = None
 
 
 def _str8(value: str | None) -> bytes:
@@ -104,6 +124,31 @@ def _str8(value: str | None) -> bytes:
 
 def _mac(key: bytes, body: bytes) -> bytes:
     return hmac.new(key, _DOMAIN + body, hashlib.sha256).digest()[:_MAC_BYTES]
+
+
+def format_code(fmt: str | None) -> int:
+    return FORMATS.index(fmt) if fmt in FORMATS else 0
+
+
+def length_bucket(excerpt: str | None, buckets: list[dict]) -> int:
+    """0 when the excerpt is unknown (stripped from the snapshot, or no buckets), else
+    1 + the index of the first ``exposure.length_buckets`` entry whose ``max_chars``
+    holds it (the last one when none does)."""
+    if not isinstance(excerpt, str) or not buckets:
+        return 0
+    n = len(excerpt)
+    for i, bucket in enumerate(buckets):
+        if n <= int(bucket["max_chars"]):
+            return i + 1
+    return len(buckets)
+
+
+def author_prefix(author_id) -> bytes:
+    """The first 8 bytes of the author's uuid; zeros when unknown."""
+    try:
+        return uuid.UUID(str(author_id)).bytes[:_AUTHOR_PREFIX]
+    except (TypeError, ValueError, AttributeError):
+        return bytes(_AUTHOR_PREFIX)
 
 
 def quantize(scores) -> bytes:
@@ -127,12 +172,31 @@ def issue(
     reason: str | None = None,
     scores: bytes = b"",
     now: float | None = None,
+    fmt: str | None = None,
+    topic_id: int = 0,
+    length_bucket: int = 0,
+    author_id=None,
+    visit_ord: int | None = None,
+    version: int = VERSION,
 ) -> str:
+    if version not in VERSIONS:
+        raise ValueError(f"unknown serve token version {version}")
     issued = int(now if now is not None else time.time())
     pos = _NO_POSITION if position is None else max(0, min(int(position), _NO_POSITION - 1))
+    v2 = b""
+    if version >= 2:
+        v2 = b"".join(
+            [
+                bytes([format_code(fmt)]),
+                struct.pack(">H", max(0, min(int(topic_id or 0), 0xFFFF))),
+                bytes([max(0, min(int(length_bucket or 0), 255))]),
+                author_prefix(author_id) if author_id else bytes(_AUTHOR_PREFIX),
+                bytes([int(visit_ord or 0) % VISIT_ORD_MOD]),
+            ]
+        )
     body = b"".join(
         [
-            bytes([VERSION]),
+            bytes([version]),
             uuid.UUID(str(viewer)).bytes,
             bytes([_ITEM_TYPES.index(item_type)]),
             uuid.UUID(str(item_id)).bytes,
@@ -144,6 +208,7 @@ def issue(
             _str8(reason),
             bytes([len(scores[:_MAX_SCORES])]),
             bytes(scores[:_MAX_SCORES]),
+            v2,
         ]
     )
     token = body + _mac(_key(), body)
@@ -181,7 +246,8 @@ def decode(token: str, *, now: float | None = None) -> ServeClaims | None:
         return None
     try:
         r = _Reader(body)
-        if r.take(1)[0] != VERSION:
+        version = r.take(1)[0]
+        if version not in VERSIONS:
             return None
         viewer = str(uuid.UUID(bytes=r.take(16)))
         item_type = _ITEM_TYPES[r.take(1)[0]]
@@ -190,6 +256,20 @@ def decode(token: str, *, now: float | None = None) -> ServeClaims | None:
         pos, issued = struct.unpack(">HI", r.take(6))
         cfg_version, variant, source, reason = r.str8(), r.str8(), r.str8(), r.str8()
         scores = r.take(r.take(1)[0])
+        extra: dict = {}
+        if version >= 2:
+            fmt_code = r.take(1)[0]
+            (topic,) = struct.unpack(">H", r.take(2))
+            bucket = r.take(1)[0]
+            prefix = r.take(_AUTHOR_PREFIX)
+            visit = r.take(1)[0]
+            extra = {
+                "fmt": FORMATS[fmt_code] if fmt_code < len(FORMATS) else None,
+                "topic_id": topic,
+                "length_bucket": bucket,
+                "author_prefix": prefix,
+                "visit_ord": visit % VISIT_ORD_MOD,
+            }
         if r.at != len(body):
             return None
     except (ValueError, IndexError, UnicodeDecodeError, struct.error):
@@ -209,6 +289,8 @@ def decode(token: str, *, now: float | None = None) -> ServeClaims | None:
         source=source,
         reason=reason,
         scores=scores,
+        version=version,
+        **extra,
     )
 
 
@@ -247,6 +329,7 @@ def stamp_home_items(
     offset: int | None,
     ranked: bool,
     cfg_version: str | None = None,
+    visit_ord: int | None = None,
 ):
     """Give each Home item its serve token ``st`` (in place).
 
@@ -256,9 +339,16 @@ def stamp_home_items(
     the latest-order fallback carry none. The token's source is the item's
     candidate ``source`` for a pulled item (``follow_pull``, ``groups``), else the
     connection's fan-out reason (``self``, ``friend``, ``follow``), as before.
+
+    Token v2 (07 WP 4b.16): ``fmt`` and the excerpt length bucket come from the
+    item's serialized snapshot, so a snapshot whose excerpt was stripped for this
+    viewer carries bucket 0 (unknown) and reveals nothing beyond what was served;
+    ``visit_ord`` is the viewer's visit ordinal when the caller knows it.
     """
     now = time.time()
+    buckets = _length_buckets()
     for i, item in enumerate(items):
+        snap = item.get("snapshot") or {}
         source = item.get("source")
         if source in (None, "", "connections"):
             source = item.get("reason") or None
@@ -272,5 +362,22 @@ def stamp_home_items(
             source=source,
             reason=mode,
             now=now,
+            fmt=snap.get("type"),
+            length_bucket=length_bucket(snap.get("excerpt"), buckets),
+            author_id=item.get("author_id") or snap.get("author_id"),
+            visit_ord=visit_ord,
         )
     return items
+
+
+def _length_buckets() -> list[dict]:
+    """``exposure.length_buckets`` of the active Home config; empty when it cannot be
+    read (the tokens then say "unknown", never a guess)."""
+    from .. import config
+
+    try:
+        buckets = config.for_surface("home").get("exposure.length_buckets")
+    except Exception:  # noqa: BLE001 - a token without a bucket is still a valid token
+        logger.warning("exposure.length_buckets unreadable; tokens carry no bucket")
+        return []
+    return list(buckets) if isinstance(buckets, list) else []

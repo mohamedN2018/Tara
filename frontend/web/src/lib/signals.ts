@@ -7,8 +7,12 @@
 //   serve token `st` it came with, and nothing else. `cfg` and `variant` are
 //   never sent; every event is rebuilt from an allow-list of fields.
 // - No personal data: ids, enums, counters and timestamps only.
-// - Dedupe: one impression and one open per (session, item); one profile visit
-//   per (profile, UTC day); video progress at most once per 5 s per item.
+// - Dedupe: one impression, one open and one dwell per (session, item); one
+//   profile visit per (profile, UTC day); video progress at most once per 5 s per item.
+// - The session (R3 WP 4b.2): `sessionId`, its last activity and the dedupe set
+//   live in sessionStorage, so a reload in the same tab keeps the session and
+//   sends no second impression for an item already reported. Storage that throws
+//   (private mode, blocked) falls back to memory for this page.
 // - Batching: flush every 10 s, at 30 queued events, and when the tab is hidden
 //   (fetch keepalive: sendBeacon cannot carry the bearer header). At most 50
 //   events and 32 KB per batch; at most 200 events held in memory (oldest go).
@@ -44,6 +48,7 @@ export const CLIENT_SIGNAL_TYPES = [
   "video_skip",
   "reel_view",
   "profile_visit",
+  "feed_dwell",
 ] as const;
 export type ClientSignalType = (typeof CLIENT_SIGNAL_TYPES)[number];
 
@@ -62,6 +67,8 @@ export interface SignalInput {
   play_index?: number;
   /** Impressions only: the impression rule the client applied (08 §7.12; 1 = legacy). */
   idef?: number;
+  /** `feed_dwell` only: accumulated time the card met the impression rule (R3 WP 4b.2). */
+  dwell_ms?: number;
 }
 
 /** The wire shape: exactly these fields, never `cfg` or `variant`. */
@@ -77,6 +84,7 @@ export interface SignalEvent {
   pos_ms?: number;
   play_index?: number;
   idef?: number;
+  dwell_ms?: number;
 }
 
 interface Batch {
@@ -105,7 +113,63 @@ const state = {
   timer: null as ReturnType<typeof setInterval> | null,
   listening: false,
   sending: false,
+  restored: false,
+  persistTimer: null as ReturnType<typeof setTimeout> | null,
 };
+
+// The tab's session in sessionStorage (R3 WP 4b.2): ids and timestamps only.
+const SESSION_KEY = "tara.signals.session.v1";
+const PERSIST_MS = 500;
+// The dedupe keys kept across a reload (the newest; the in-memory set keeps maxSeen).
+const PERSIST_SEEN = 2_000;
+
+interface StoredSession {
+  sid: string;
+  last: number;
+  seen: string[];
+}
+
+function restore() {
+  if (state.restored) return;
+  state.restored = true;
+  try {
+    const raw = sessionStorage.getItem(SESSION_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw) as Partial<StoredSession>;
+    if (typeof s.sid !== "string" || !/^[0-9a-f-]{36}$/i.test(s.sid) || typeof s.last !== "number") return;
+    if (state.sessionId) return; // this page already started its own
+    state.sessionId = s.sid;
+    state.lastActivity = s.last;
+    for (const k of Array.isArray(s.seen) ? s.seen : []) if (typeof k === "string") state.seen.set(k, true);
+  } catch {
+    // Blocked or junk: this page keeps its session in memory.
+  }
+}
+
+function persistNow() {
+  if (state.persistTimer) clearTimeout(state.persistTimer);
+  state.persistTimer = null;
+  if (!state.sessionId) return;
+  try {
+    const seen = [...state.seen.keys()].slice(-PERSIST_SEEN);
+    const stored: StoredSession = { sid: state.sessionId, last: state.lastActivity, seen };
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(stored));
+  } catch {
+    // Storage blocked or full: the session lives in memory for this page.
+  }
+}
+
+function persistSoon() {
+  if (!state.persistTimer) state.persistTimer = setTimeout(persistNow, PERSIST_MS);
+}
+
+function forgetStored() {
+  try {
+    sessionStorage.removeItem(SESSION_KEY);
+  } catch {
+    // Nothing stored.
+  }
+}
 
 function uuid(): string {
   const c = globalThis.crypto as Crypto | undefined;
@@ -121,13 +185,25 @@ function uuid(): string {
 
 /** The tab's session id; a new one after 30 minutes without a signal. */
 function session(now: number): string {
+  restore();
   if (!state.sessionId || now - state.lastActivity > SIGNAL_LIMITS.sessionIdleMs) {
     state.sessionId = uuid();
     state.seen.clear();
     state.lastProgress.clear();
   }
   state.lastActivity = now;
+  persistSoon();
   return state.sessionId;
+}
+
+/**
+ * The tab's telemetry session id, sent as the `sid` hint of a Home first page
+ * (06 §4.2). Undefined with personalization off or signed out: nothing about
+ * the visit is offered then.
+ */
+export function signalSessionId(now = Date.now()): string | undefined {
+  if (state.off || !tokenStore.access) return undefined;
+  return session(now);
 }
 
 function remember<K, V>(map: Map<K, V>, key: K, value: V, cap: number) {
@@ -170,7 +246,8 @@ export function servedPosition(item: string): number | undefined {
 }
 
 function dedupeKey(input: SignalInput, sessionId: string, now: number): string | null {
-  if (input.t === "feed_impression" || input.t === "post_open") return `${sessionId}|${input.t}|${input.item}`;
+  if (input.t === "feed_impression" || input.t === "post_open" || input.t === "feed_dwell")
+    return `${sessionId}|${input.t}|${input.item}`;
   if (input.t === "profile_visit") return `${input.t}|${input.item}|${new Date(now).toISOString().slice(0, 10)}`;
   return null;
 }
@@ -209,6 +286,12 @@ export function track(input: SignalInput): boolean {
   // The impression definition (08 §7.12): a whole number ≥ 1, impressions only.
   const idef = input.t === "feed_impression" ? whole(input.idef) : undefined;
   if (idef !== undefined && idef >= 1) event.idef = idef;
+  // The dwell (R3 WP 4b.2): `feed_dwell` only, never on another type.
+  const dwell = input.t === "feed_dwell" ? whole(input.dwell_ms) : undefined;
+  if (input.t === "feed_dwell") {
+    if (dwell === undefined) return false;
+    event.dwell_ms = dwell;
+  }
   for (const field of ["watch_ms", "pos_ms", "play_index"] as const) {
     const value = whole(input[field]);
     if (value !== undefined) event[field] = value;
@@ -221,7 +304,10 @@ export function track(input: SignalInput): boolean {
 }
 
 function onVisibility() {
-  if (document.visibilityState === "hidden") void flush({ keepalive: true });
+  if (document.visibilityState === "hidden") {
+    persistNow();
+    void flush({ keepalive: true });
+  }
 }
 
 function start() {
@@ -319,6 +405,10 @@ export function setPersonalizationOff(off: boolean) {
     state.queue = [];
     state.retry = [];
     stop();
+    // Nothing about this tab's session stays behind either.
+    if (state.persistTimer) clearTimeout(state.persistTimer);
+    state.persistTimer = null;
+    forgetStored();
   }
 }
 
@@ -339,6 +429,24 @@ export function resetSignals() {
   state.off = false;
   state.disabled = false;
   state.sending = false;
+  if (state.persistTimer) clearTimeout(state.persistTimer);
+  state.persistTimer = null;
+  state.restored = false;
+  forgetStored();
+}
+
+/** Tests: a full reload of the tab (memory gone, sessionStorage kept). */
+export function simulateReloadForTests() {
+  persistNow();
+  stop();
+  state.queue = [];
+  state.retry = [];
+  state.served.clear();
+  state.seen.clear();
+  state.lastProgress.clear();
+  state.sessionId = "";
+  state.lastActivity = 0;
+  state.restored = false;
 }
 
 /** For tests and the dev tools: what is waiting to be sent. */

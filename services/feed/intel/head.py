@@ -11,7 +11,7 @@ Nothing is stored for a viewer with ``personalization_off`` (owner decision 24),
 under a config version without the ``head`` block (``home@1``, ``home@2``). A refused
 write (``noeviction``) is counted in ``intel_hot_write_failed_total{key="head"}``
 and never fails the page. The per-session column ``intel_feed_session.head_overlap``
-is R3's, not this module's.
+is filled from this function's return value at the next visit start (R3).
 """
 
 from __future__ import annotations
@@ -33,15 +33,34 @@ def _unpack(raw: bytes) -> list[str]:
     return [str(uuid.UUID(bytes=raw[i * ID_BYTES : (i + 1) * ID_BYTES])) for i in range(n)]
 
 
-def record(viewer_id, surface: str, post_ids: list[str], cfg: SurfaceConfig) -> float | None:
+_UNSET = object()
+
+
+def record(
+    viewer_id,
+    surface: str,
+    post_ids: list[str],
+    cfg: SurfaceConfig,
+    *,
+    previous=_UNSET,
+    personalization_off: bool | None = None,
+) -> float | None:
     """Observe the overlap with the previous head, then store this one. Returns the
-    Jaccard, or None when nothing was compared (first page ever, off, no block)."""
+    Jaccard, or None when nothing was compared (first page ever, off, no block).
+    ``previous``: the head the caller already read (R3: the first page's pipelined
+    read); ``personalization_off``: the flag the caller already read (no query)."""
     if "head" not in cfg.params or not post_ids:
         return None
-    if preferences.personalization_off(viewer_id):
+    off = (
+        preferences.personalization_off(viewer_id)
+        if personalization_off is None
+        else personalization_off
+    )
+    if off:
         return None
     name = hot.head_key(surface, viewer_id)
-    previous = hot.raw_get(name)
+    if previous is _UNSET:
+        previous = hot.raw_get(name)
     overlap = None
     if previous:
         before = _unpack(previous)
@@ -50,3 +69,8 @@ def record(viewer_id, surface: str, post_ids: list[str], cfg: SurfaceConfig) -> 
         metrics.repeat_display(len(set(before) & set(post_ids)))
     hot.raw_set(name, _pack(post_ids), cfg.get("head.ttl_s"), "head")
     return overlap
+
+
+def unpack(raw: bytes | None) -> list[str]:
+    """The post ids of a stored head (empty when there is none)."""
+    return _unpack(raw) if raw else []

@@ -13,6 +13,13 @@
 // An impression is visibility only: nothing here runs on fetch, render or
 // prefetch. An impression is not interest: the server gives it no interest
 // weight (02 §13).
+//
+// Dwell (R3 WP 4b.2): the same rule's visible time keeps adding up after the
+// impression. Once the card has been displayed, one `feed_dwell {item, st,
+// dwell_ms}` goes out per (session, item) when it leaves the viewport, the tab
+// hides, or the card unmounts (virtualization, navigation). The server turns it
+// into the skipped / viewed / consumed exposure states and drops what the wall
+// clock cannot allow. With personalization off `track` sends nothing.
 import { onBeforeUnmount, onMounted, type Ref, watch } from "vue";
 
 import { delivery, type DeliverySurface, deliverySource } from "./delivery";
@@ -73,6 +80,12 @@ export function useImpression(el: Ref<HTMLElement | null>, target: () => Impress
   let accumulated = 0;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let done = false;
+  // Dwell (R3 WP 4b.2): the time the rule is met, before and after the impression.
+  let dwellMs = 0;
+  let dwellSince: number | null = null;
+  let dwellSent = false;
+  // The item the impression went out for (the card may be reused for another).
+  let shown: ImpressionTarget | null = null;
   let rule: ImpressionRuleInUse = impressionRule(target()?.surface ?? "home");
 
   const tabVisible = () => typeof document === "undefined" || document.visibilityState !== "hidden";
@@ -82,50 +95,76 @@ export function useImpression(el: Ref<HTMLElement | null>, target: () => Impress
     timer = null;
   }
 
+  function pauseDwell() {
+    if (dwellSince !== null) dwellMs += Date.now() - dwellSince;
+    dwellSince = null;
+  }
+
   function pause() {
     if (visibleSince !== null) accumulated += Date.now() - visibleSince;
     visibleSince = null;
     clearTimer();
+    pauseDwell();
+  }
+
+  /** The card left the viewport, the tab hid or the card unmounts: its one dwell. */
+  function sendDwell() {
+    pauseDwell();
+    if (!shown || dwellSent) return;
+    dwellSent = true;
+    track({ t: "feed_dwell", item: shown.item, surface: shown.surface, dwell_ms: Math.round(dwellMs) });
+    observer?.disconnect();
+    observer = null;
   }
 
   function fire() {
     const t = target();
     if (!t || done) return;
     done = true;
+    shown = t;
     track({ t: "feed_impression", item: t.item, surface: t.surface, pos: t.pos, idef: rule.version });
-    observer?.disconnect();
+    // Still watched: the dwell goes on until the card leaves.
   }
 
   function resume() {
-    if (done || visibleSince !== null || !tabVisible()) return;
+    if (dwellSent || !tabVisible()) return;
+    if (dwellSince === null) dwellSince = Date.now();
+    if (done || visibleSince !== null) return;
     visibleSince = Date.now();
     clearTimer();
     timer = setTimeout(() => {
       pause();
       if (accumulated >= rule.ms) fire();
-      else resume();
+      // Measuring goes on (the dwell, or the rest of the impression time).
+      resume();
     }, Math.max(0, rule.ms - accumulated));
   }
 
   let intersecting = false;
   function onVisibility() {
-    if (!tabVisible()) pause();
-    else if (intersecting) resume();
+    if (!tabVisible()) {
+      pause();
+      if (done) sendDwell();
+    } else if (intersecting) resume();
   }
 
   function observe(node: HTMLElement | null) {
     observer?.disconnect();
     observer = null;
     pause();
-    if (!node || done || typeof IntersectionObserver === "undefined") return;
+    if (!node || dwellSent || typeof IntersectionObserver === "undefined") return;
     // The rule is read when watching starts: a card counts by one rule only.
     rule = impressionRule(target()?.surface ?? "home");
     observer = new IntersectionObserver(
       (entries) => {
         const entry = entries[entries.length - 1];
+        const was = intersecting;
         intersecting = !!entry && meetsRule(entry, rule);
         if (intersecting) resume();
-        else pause();
+        else {
+          pause();
+          if (was && done) sendDwell();
+        }
       },
       { threshold: THRESHOLDS },
     );
@@ -137,17 +176,24 @@ export function useImpression(el: Ref<HTMLElement | null>, target: () => Impress
     if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisibility);
   });
   watch(el, (node) => observe(node));
-  // A card reused for another item starts over.
+  // A card reused for another item starts over (the previous item's dwell goes first).
   watch(
     () => target()?.item,
     (item, previous) => {
       if (item === previous) return;
+      sendDwell();
       done = false;
+      shown = null;
       accumulated = 0;
+      dwellMs = 0;
+      dwellSince = null;
+      dwellSent = false;
+      intersecting = false;
       observe(el.value);
     },
   );
   onBeforeUnmount(() => {
+    sendDwell();
     observer?.disconnect();
     observer = null;
     clearTimer();

@@ -1,10 +1,11 @@
 // WP 4c.8-B3 (08 §7.6): the feed position survives a full reload in the
-// chronological modes: stored on pagehide in sessionStorage; restored within the
+// chronological modes and, since R3 (07 WP 4b.8), in For You: stored on pagehide in sessionStorage; restored within the
 // window by asking the first page with entry=reload and paging forward until the
 // card is in (at most 3 pages); otherwise a normal open from the top.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { clearPosition, readPosition, savePosition } from "@/lib/feedPosition";
+import { resetPageEntry } from "@/lib/homeRefresh";
 import HomeView from "@/views/HomeView.vue";
 
 import { feedItem, feedPage, flush, livePost, mount, routeApi, setup, teardown } from "./deliveryHarness";
@@ -17,7 +18,10 @@ vi.mock("@/components/stories/StoriesRail.vue", async () => (await import("./del
 const P = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const NOW = 1_800_000_000_000;
 
-beforeEach(() => setup("ar"));
+beforeEach(() => {
+  setup("ar");
+  resetPageEntry(); // each mount is a new page load
+});
 afterEach(() => {
   teardown();
   clearPosition();
@@ -31,8 +35,10 @@ describe("stored position", () => {
     expect(readPosition("following", NOW)).toBeNull(); // another mode
   });
 
-  it("is never kept for a ranked mode, nor for junk", () => {
-    expect(savePosition({ surface: "home", mode: "for_you" as never, anchor_post_id: P(5), offset_px: 0, cursor: null }, NOW)).toBe(false);
+  it("is kept for For You too (R3), never for another ranked mode nor for junk", () => {
+    expect(savePosition({ surface: "home", mode: "for_you", anchor_post_id: P(5), offset_px: 0, cursor: null }, NOW)).toBe(true);
+    expect(readPosition("for_you", NOW + 60_000)).toMatchObject({ anchor_post_id: P(5), mode: "for_you" });
+    expect(savePosition({ surface: "home", mode: "reels" as never, anchor_post_id: P(5), offset_px: 0, cursor: null }, NOW)).toBe(false);
     expect(savePosition({ surface: "home", mode: "recent", anchor_post_id: "<script>", offset_px: 0, cursor: null }, NOW)).toBe(false);
     sessionStorage.setItem("tara.feedPosition.v1", "{not json");
     expect(readPosition("recent", NOW)).toBeNull();
@@ -47,10 +53,10 @@ describe("stored position", () => {
 });
 
 describe("Home on load", () => {
-  it("asks entry=open on a normal first load", async () => {
+  it("asks entry=load on a normal first load (R3; `open` was R2's name)", async () => {
     const { get } = routeApi({ feed: () => feedPage([feedItem(P(1))], null), batch: (ids) => ids.map((id) => livePost(id)) });
     await mount(HomeView, "/home?mode=recent");
-    expect(get.mock.calls.find(([u]) => u === "/feed/")?.[1]).toMatchObject({ params: { entry: "open", mode: "recent" } });
+    expect(get.mock.calls.find(([u]) => u === "/feed/")?.[1]).toMatchObject({ params: { entry: "load", mode: "recent" } });
   });
 
   it("on a reload pages forward with entry=reload until the anchor is in (max 3 pages), then scrolls to it", async () => {

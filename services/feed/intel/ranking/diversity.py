@@ -84,6 +84,41 @@ class _Page:
         tail = self.seq[-run:]
         return not (len(tail) == run and all(p.type == it.type for p in tail))
 
+    def predicate(self, names: Sequence[str]) -> Callable[[Item], bool]:
+        """``it -> all(ok_<name>(it) for name in names)`` with the page's state read
+        once per slot (the blocked authors and format), not once per candidate: the
+        same answer as the ``ok_*`` methods, at a set lookup per item (R3 verifier,
+        first-page p95)."""
+        b = self.b
+        blocked_authors: set | None = None
+        if "author" in names:
+            cap = b["max_per_author_page"]
+            blocked_authors = {a for a, n in self.authors.items() if n >= cap}
+            gap = b["author_gap"]
+            if gap:
+                blocked_authors.update(p.author for p in self.seq[-gap:])
+        block_all, blocked_type = False, None
+        if "format" in names:
+            run = b["max_same_format_run"]
+            tail = self.seq[-run:]
+            if len(tail) == run:
+                types = {p.type for p in tail}
+                if not types:
+                    block_all = True  # ``all([])``: what ``ok_format`` answers here
+                elif len(types) == 1:
+                    blocked_type = next(iter(types))
+        topic = "topic" in names
+        ok_topic = self.ok_topic
+
+        def ok(it: Item) -> bool:
+            if blocked_authors is not None and it.author in blocked_authors:
+                return False
+            if block_all or (blocked_type is not None and it.type == blocked_type):
+                return False
+            return not topic or ok_topic(it)
+
+        return ok
+
     def add(self, it: Item) -> None:
         self.picked.append(it)
         self.seq.append(it)
@@ -137,6 +172,9 @@ class _Beyond:
 Insert = Callable[[int, "_Page"], "Item | None"]
 # ``relief(position, page, names)``: an outside item keeping the constraints ``names``.
 Relief = Callable[[int, "_Page", Sequence[str]], "Item | None"]
+# ``contest(position, page, picked)``: an outside item that takes the slot instead of
+# ``picked`` (it must keep every constraint and score higher), or None.
+Contest = Callable[[int, "_Page", "Item"], "Item | None"]
 
 
 def _place(page: _Page, extra: Item, out: list, window: Sequence[Item], best_sim: dict) -> None:
@@ -155,6 +193,7 @@ def rerank(
     page_size: int | None = None,
     insert: Insert | None = None,
     relief: Relief | None = None,
+    contest: Contest | None = None,
 ) -> list[Item]:
     """``items`` (best first) re-ordered page by page. Same input, same output.
 
@@ -164,8 +203,10 @@ def rerank(
     is asked when no item of ``items`` keeps the constraints ``names`` at a slot,
     before one more is relaxed: an outside item it returns (one that keeps them)
     takes the slot, so the author cap and the format run hold "when alternatives
-    exist" outside ``items`` too (R1 verifier, 07 WP 4b.10). Without either nothing
-    changes."""
+    exist" outside ``items`` too (R1 verifier, 07 WP 4b.10). ``contest(position, page,
+    picked)`` is asked after a pick: an outside item it returns takes the slot and
+    ``picked`` stays for a later one (R3 verifier: a pool item that scores above an
+    already-seen connection item, 06 section 5.4). Without any nothing changes."""
     size = page_size or block["page_size"]
     block = {**block, "page_size": size}
     window = block["window_factor"] * size
@@ -173,11 +214,6 @@ def rerank(
     beyond = _Beyond(remaining, window)
     out: list[Item] = []
     lam = block["lambda"]
-    checks: dict[str, Callable[[_Page, Item], bool]] = {
-        "format": _Page.ok_format,
-        "topic": _Page.ok_topic,
-        "author": _Page.ok_author,
-    }
     carry = max(block["max_same_format_run"], block["author_gap"])
     while remaining:
         page = _Page(block, out[-carry:] if carry else ())
@@ -194,10 +230,8 @@ def rerank(
             choice = None
             for relaxed in range(len(RELAX_ORDER) + 1):
                 names = RELAX_ORDER[relaxed:]
-                active = [checks[c] for c in names]
-                allowed = [
-                    (i, it) for i, it in enumerate(pool) if all(chk(page, it) for chk in active)
-                ]
+                keeps = page.predicate(names)
+                allowed = [(i, it) for i, it in enumerate(pool) if keeps(it)]
                 if allowed:
                     choice = max(
                         allowed,
@@ -211,7 +245,7 @@ def rerank(
                         (
                             (i, it)
                             for i, it in enumerate(remaining[window:], start=window)
-                            if all(chk(page, it) for chk in active)
+                            if keeps(it)
                         ),
                         None,
                     )
@@ -226,7 +260,12 @@ def rerank(
             if choice is None and extra is not None:
                 _place(page, extra, out, remaining[:window], best_sim)
                 continue
-            index, _ = choice
+            index, chosen = choice
+            if contest is not None:
+                extra = contest(len(out), page, chosen)
+                if extra is not None:
+                    _place(page, extra, out, remaining[:window], best_sim)
+                    continue
             picked = beyond.take(remaining, index)
             page.add(picked)
             out.append(picked)

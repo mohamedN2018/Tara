@@ -40,10 +40,11 @@ def _problems(surface, mutate):
 
 
 def test_schema_version_3_and_every_delivery_default_is_valid():
-    assert schema.SCHEMA_VERSION == 3
+    assert schema.SCHEMA_VERSION >= 3  # 4 since R3 (exposure, rotation, revisit)
     for surface in schema.DELIVERY_SURFACES:
         params = store.defaults(surface)
-        assert params["schema_version"] == 3
+        # Home is schema 4 since R3 (exposure, rotation, revisit); the others stay 3.
+        assert params["schema_version"] == (4 if surface == "home" else 3)
         assert set(params["delivery"]) == KEYS, surface
         assert schema.validate(surface, params) == [], surface
 

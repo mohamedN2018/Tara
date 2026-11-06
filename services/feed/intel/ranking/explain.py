@@ -35,6 +35,11 @@ FACTORS = (
     "duplicate",
     "bait",
     "spam_flags",
+    # R3 (06 sections 5.3 and 6.2): the exposure multiplier, the new-since boost, the
+    # conversation exception. Not mapped by ``why`` yet, so never shown.
+    "exposure",
+    "new_since_visit",
+    "rec_new_activity",
 )
 CODE = {name: i for i, name in enumerate(FACTORS)}
 # Never explained to a viewer (integrity detectors).

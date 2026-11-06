@@ -19,11 +19,35 @@ export interface FeedResponse {
     caught_up_index?: number | null;
     /** The `delivery` block of the Home config (08 §7.2): page sizes, prefetch, video policy… */
     delivery?: DeliveryBlock;
+    /** First pages (R3, 06 §6.2): the visit; null with personalization off. */
+    visit?: FeedVisit | null;
+    /** First pages (06 §6.1): away this long → the "new posts" pill (seconds). */
+    refresh_after_s?: number;
+    /** First pages (06 §6.1): away this long at the top → a silent refresh (seconds). */
+    auto_refetch_after_s?: number;
   };
 }
 
-/** Why a first page is asked for (08 §7.6): a normal open, a reload, a refresh, a return. */
-export const FEED_ENTRIES = ["open", "reload", "refresh", "return"] as const;
+/** `meta.visit` (06 §6.2): what changed since the viewer's last visit. */
+export interface FeedVisit {
+  kind: string;
+  /** Start of the previous visit (ISO); the peek's `since`. */
+  since: string | null;
+  /** Eligible rows newer than `since` (never a raw count). */
+  new_count: number;
+  /** Where the new rows end in this page; null when there is no boundary. */
+  anchor_index: number | null;
+  /** The divider shows only from this many new rows. */
+  min_to_show: number;
+}
+
+/**
+ * Why a first page is asked for (06 §4.2, a hint the server classifies with its own
+ * timestamps): `load` a full page load, `nav` in-app navigation, `reload` a browser
+ * reload, `return` the automatic refresh after time away, `pull` pull-to-refresh or
+ * the refresh control. `open` and `refresh` are the R2 names (= `nav`, `pull`).
+ */
+export const FEED_ENTRIES = ["nav", "load", "reload", "return", "pull", "open", "refresh"] as const;
 export type FeedEntry = (typeof FEED_ENTRIES)[number];
 
 /** `?peek=1` (WP 4.7): new rows for the "new posts" pill, no session or ads touched. */
@@ -31,7 +55,14 @@ export interface FeedPeek {
   data: FeedItem[];
   mode: string;
   peek: true;
+  /** Eligible new rows since `since` (the pill shows exactly this). */
   new_count: number;
+  /** `new_count` hit the server's cap: "N or more". */
+  new_count_capped?: boolean;
+  /** The new rows' post ids (eligible only). */
+  ids?: string[];
+  /** The `since` the server applied (clamped). */
+  since?: string;
 }
 
 /** Feed ranking modes (plan 08, 2A; friends WP 4.6): For you, Latest, Favorites, Following, Friends. */
@@ -109,6 +140,31 @@ export interface HydratedFeedPage {
   snapshotContent?: Record<string, boolean>;
   /** The server continued a ranked session in chronological order (08 §7.3). */
   fallback?: boolean;
+  /** First pages (R3): the visit, and the refresh timers in seconds. */
+  visit?: FeedVisit | null;
+  refreshAfterS?: number;
+  autoRefetchAfterS?: number;
+  /** The page's post ids in server order (`meta` indices refer to these). */
+  ids?: string[];
+}
+
+/** The R3 first-page fields of `meta`, checked (a malformed one is dropped). */
+function visitFields(resp: FeedResponse): Pick<HydratedFeedPage, "visit" | "refreshAfterS" | "autoRefetchAfterS" | "ids"> {
+  const m = resp.meta ?? {};
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
+  const v = m.visit;
+  const visit =
+    v && typeof v === "object" && Number.isInteger(v.new_count) && Number.isInteger(v.min_to_show)
+      ? { ...v, anchor_index: Number.isInteger(v.anchor_index) ? v.anchor_index : null }
+      : v === null
+        ? null
+        : undefined;
+  return {
+    visit,
+    refreshAfterS: num(m.refresh_after_s),
+    autoRefetchAfterS: num(m.auto_refetch_after_s),
+    ids: resp.data.map((i) => i.post_id),
+  };
 }
 
 /** Whether the server sent this item's content in its snapshot (it strips it otherwise). */
@@ -168,11 +224,13 @@ export const feedService = {
   /** Home feed. `sponsored` is a sibling of `data` in the envelope (see docs). */
   /** `modeHint`: the offline fallback, used by the server only when it remembers no mode. */
   /** `entry`: first pages only (08 §7.6). No `limit`: the server applies the delivery page sizes. */
-  async home(cursor?: string, mode?: FeedMode, modeHint?: FeedMode, entry?: FeedEntry): Promise<FeedResponse> {
+  /** `sid`: the tab's telemetry session (a hint for the visit, first pages only). */
+  async home(cursor?: string, mode?: FeedMode, modeHint?: FeedMode, entry?: FeedEntry, sid?: string): Promise<FeedResponse> {
     const params: Record<string, string | undefined> = { cursor };
     if (mode) params.mode = mode;
     else if (modeHint) params.mode_hint = modeHint;
     if (entry && !cursor) params.entry = entry;
+    if (sid && !cursor) params.sid = sid;
     const { data } = await api.get<FeedResponse>("/feed/", { params });
     return data;
   },
@@ -189,9 +247,9 @@ export const feedService = {
     cursor?: string,
     mode?: FeedMode,
     modeHint?: FeedMode,
-    options: { entry?: FeedEntry; snapshots?: boolean } = {},
+    options: { entry?: FeedEntry; snapshots?: boolean; sid?: string } = {},
   ): Promise<HydratedFeedPage> {
-    let resp = await this.home(cursor, mode, modeHint, options.entry);
+    let resp = await this.home(cursor, mode, modeHint, options.entry, options.sid);
     const served = isFeedMode(resp.mode) ? resp.mode : undefined;
     const modeApplied = !!served && (!mode || served === mode);
     if (resp.meta?.delivery) applyDelivery("home", resp.meta.delivery);
@@ -208,6 +266,7 @@ export const feedService = {
     const sponsored = resp.sponsored_slots ?? (resp.sponsored ? [resp.sponsored] : []);
     const adSlots = resp.meta?.ad_slots?.filter((n) => Number.isInteger(n) && n >= 0);
     const asOf = resp.meta?.as_of;
+    const first = visitFields(resp);
     for (let i = 0; i < MAX_EMPTY_PAGES; i++) {
       if (posts.length || !resp.page.has_more || !resp.page.next_cursor) break;
       // Later pages carry the served mode, so a remembered mode keeps its cursor.
@@ -228,6 +287,8 @@ export const feedService = {
       mode: served,
       adSlots,
       asOf,
+      fallback: resp.page.fallback === true,
+      ...(cursor ? {} : first),
     };
   },
 
@@ -315,5 +376,6 @@ function snapshotPage(resp: FeedResponse, served: FeedMode | undefined, modeAppl
     hydrated,
     snapshotContent,
     fallback: resp.page.fallback === true,
+    ...visitFields(resp),
   };
 }

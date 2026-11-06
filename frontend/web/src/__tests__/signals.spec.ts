@@ -10,6 +10,8 @@ import {
   resetSignals,
   setPersonalizationOff,
   SIGNAL_LIMITS,
+  signalSessionId,
+  simulateReloadForTests,
   surfaceForRoute,
   track,
 } from "@/lib/signals";
@@ -364,6 +366,171 @@ describe("useImpression", () => {
     mount(Card, { props: { id: ID(2) } });
     await nextTick();
     vi.advanceTimersByTime(5000);
+    expect(pendingSignals()).toHaveLength(0);
+  });
+});
+
+// R3 WP 4b.2: feed_dwell and the session kept across a reload.
+describe("feed_dwell and the tab session", () => {
+  it("sends one feed_dwell per (session, item), with dwell_ms on that type only", async () => {
+    expect(track({ t: "feed_dwell", item: POST(1), surface: "home", dwell_ms: 4200.4 })).toBe(true);
+    expect(track({ t: "feed_dwell", item: POST(1), surface: "home", dwell_ms: 9000 })).toBe(false);
+    expect(track({ t: "feed_dwell", item: POST(2), surface: "home" })).toBe(false); // no dwell
+    expect(track({ t: "post_open", item: POST(3), surface: "home", dwell_ms: 10 })).toBe(true);
+    await flush();
+    const events = sent[0].body.events;
+    expect(events[0]).toMatchObject({ t: "feed_dwell", item: POST(1), dwell_ms: 4200 });
+    expect(events[1]).not.toHaveProperty("dwell_ms");
+  });
+
+  it("sends nothing with personalization off and offers no sid", async () => {
+    setPersonalizationOff(true);
+    expect(track({ t: "feed_dwell", item: POST(1), surface: "home", dwell_ms: 5000 })).toBe(false);
+    expect(signalSessionId()).toBeUndefined();
+    await flush();
+    expect(sent).toHaveLength(0);
+    expect(sessionStorage.getItem("tara.signals.session.v1")).toBeNull();
+    setPersonalizationOff(false);
+    expect(signalSessionId()).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("a reload in the same tab keeps the sid and re-sends no impression", async () => {
+    const sid = signalSessionId();
+    track({ t: "feed_impression", item: POST(1), surface: "home", pos: 0 });
+    await flush();
+    expect(sent[0].body.session_id).toBe(sid);
+    simulateReloadForTests();
+    expect(signalSessionId()).toBe(sid);
+    expect(track({ t: "feed_impression", item: POST(1), surface: "home", pos: 0 })).toBe(false);
+    expect(track({ t: "feed_impression", item: POST(2), surface: "home", pos: 1 })).toBe(true);
+    await flush();
+    expect(sent[1].body.session_id).toBe(sid);
+    expect(sent[1].body.events.map((e) => e.item)).toEqual([POST(2)]);
+  });
+
+  it("a new session after 30 minutes idle, even across a reload", () => {
+    vi.useFakeTimers();
+    const sid = signalSessionId();
+    simulateReloadForTests();
+    vi.advanceTimersByTime(SIGNAL_LIMITS.sessionIdleMs + 1000);
+    expect(signalSessionId()).not.toBe(sid);
+  });
+
+  it("falls back to memory when sessionStorage throws", async () => {
+    const boom = () => {
+      throw new Error("blocked");
+    };
+    const get = vi.spyOn(sessionStorage, "getItem").mockImplementation(boom);
+    const set = vi.spyOn(sessionStorage, "setItem").mockImplementation(boom);
+    try {
+      const sid = signalSessionId();
+      expect(sid).toMatch(/^[0-9a-f-]{36}$/);
+      expect(track({ t: "feed_impression", item: POST(1), surface: "home" })).toBe(true);
+      expect(track({ t: "feed_impression", item: POST(1), surface: "home" })).toBe(false);
+      expect(signalSessionId()).toBe(sid);
+      await flush();
+      expect(sent[0].body.session_id).toBe(sid);
+    } finally {
+      get.mockRestore();
+      set.mockRestore();
+    }
+  });
+
+  it("forgets the stored session on sign-out", () => {
+    vi.useFakeTimers();
+    signalSessionId();
+    vi.advanceTimersByTime(1000);
+    expect(sessionStorage.getItem("tara.signals.session.v1")).not.toBeNull();
+    resetSignals();
+    expect(sessionStorage.getItem("tara.signals.session.v1")).toBeNull();
+  });
+});
+
+describe("useImpression dwell", () => {
+  type Observer = { cb: IntersectionObserverCallback };
+  let observers: Observer[];
+
+  beforeEach(() => {
+    observers = [];
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        o: Observer;
+        constructor(cb: IntersectionObserverCallback) {
+          this.o = { cb };
+          observers.push(this.o);
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+  });
+
+  const Card = defineComponent({
+    props: { id: { type: String, required: true } },
+    setup(props) {
+      const el = ref<HTMLElement | null>(null);
+      useImpression(el, () => ({ item: `post:${props.id}`, surface: "home", pos: 0 }));
+      return () => h("div", { ref: el });
+    },
+  });
+  const apps: App[] = [];
+  afterEach(() => apps.splice(0).forEach((a) => a.unmount()));
+  function mount(id: string): App {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const app = createApp({ render: () => h(Card, { id }) });
+    app.mount(host);
+    apps.push(app);
+    return app;
+  }
+  const show = (ratio: number) =>
+    observers.at(-1)!.cb([{ isIntersecting: ratio > 0, intersectionRatio: ratio } as IntersectionObserverEntry], {} as IntersectionObserver);
+  // Queued or already sent (a hidden tab flushes at once).
+  const dwells = () => [...sent.flatMap((b) => b.body.events), ...pendingSignals()].filter((e) => e.t === "feed_dwell");
+
+  it("accumulates the visible time and sends it once when the card leaves", async () => {
+    vi.useFakeTimers();
+    mount(ID(1));
+    await nextTick();
+    show(0.8);
+    vi.advanceTimersByTime(2000);
+    show(0.3); // under the rule: paused, not left
+    expect(dwells()).toHaveLength(1);
+    expect(dwells()[0]).toMatchObject({ item: `post:${ID(1)}`, dwell_ms: 2000 });
+    show(0.9);
+    vi.advanceTimersByTime(5000);
+    show(0);
+    expect(dwells()).toHaveLength(1); // once per (session, item)
+  });
+
+  it("sends the dwell when the tab hides, and on unmount", async () => {
+    vi.useFakeTimers();
+    mount(ID(2));
+    await nextTick();
+    show(1);
+    vi.advanceTimersByTime(3500);
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    expect(dwells()[0]).toMatchObject({ item: `post:${ID(2)}`, dwell_ms: 3500 });
+    const app = mount(ID(3));
+    await nextTick();
+    show(1);
+    vi.advanceTimersByTime(1500);
+    app.unmount();
+    apps.pop();
+    expect(dwells().map((e) => e.item)).toEqual([`post:${ID(2)}`, `post:${ID(3)}`]);
+  });
+
+  it("never sends a dwell for a card that was not displayed", async () => {
+    vi.useFakeTimers();
+    mount(ID(4));
+    await nextTick();
+    show(0.8);
+    vi.advanceTimersByTime(IMPRESSION_RULES.visibleMs - 100);
+    show(0);
+    apps.splice(0).forEach((a) => a.unmount());
     expect(pendingSignals()).toHaveLength(0);
   });
 });

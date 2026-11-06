@@ -41,6 +41,8 @@ ACCOUNT_TABLES: tuple[tuple[str, str], ...] = (
     ("intel_account_restriction", "account_id = %(a)s"),
     # My Algorithm settings (WP 4.6).
     ("intel_user_preference", "account_id = %(a)s"),
+    # The visit summaries (R3, 06 section 13): no item ids, but the account's visits.
+    ("intel_feed_session", "account_id = %(a)s"),
 )
 # Rows that name the account but belong to something else: the id is cleared, the
 # row stays. A page is not its owner's (graph keeps its page refs too); with no

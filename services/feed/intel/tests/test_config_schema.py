@@ -245,3 +245,110 @@ def test_the_migration_stored_the_three_variants_as_drafts():
         ).exists()
     # Nothing was activated: home@1 is still today's feed.
     assert RankingConfig.objects.get(surface="home", status="active").version == 1
+
+
+# ---- schema version 4 (R3: exposure, rotation, revisit, visit keys) -------------------
+
+
+def _v2c():
+    import json
+
+    with (store.DEFAULTS_DIR / "home.v2c.json").open(encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def test_home_v2c_and_the_package_defaults_are_valid_v4():
+    assert schema.SCHEMA_VERSION == 4
+    assert schema.validate("home", _v2c()) == []
+    assert _home()["schema_version"] == 4 and "rotation" not in _home()
+
+
+@pytest.mark.parametrize("block", ["exposure", "rotation", "revisit"])
+def test_v4_blocks_need_schema_version_4(block):
+    params = _v2c()
+    params["schema_version"] = 3
+    assert f"{block}: needs schema_version 4" in schema.validate("home", params)
+
+
+@pytest.mark.parametrize(
+    ("section", "key"),
+    [
+        ("session", "refresh_max_s"),
+        ("session", "new_since"),
+        ("session", "rate"),
+        ("session", "feed_session_retention_d"),
+        ("peek", "max_count"),
+    ],
+)
+def test_v4_keys_of_older_blocks_need_schema_version_4(section, key):
+    params = _home()
+    params["schema_version"] = 3
+    params.pop("exposure")
+    assert f"{section}.{key}: needs schema_version 4" in schema.validate("home", params)
+
+
+def test_rotation_needs_the_exposure_and_revisit_blocks():
+    params = _v2c()
+    params.pop("revisit")
+    assert "revisit: required with rotation / revisit" in schema.validate("home", params)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "problem"),
+    [
+        (lambda p: p["exposure"]["m0"].update({"viewed": 1.5}), "exposure.m0.viewed"),
+        (lambda p: p["exposure"]["half_life_h"].update({"consumed": 0}), "half_life_h.consumed"),
+        (lambda p: p["exposure"]["m0"].update({"retrieved": 1.0}), "exposure.m0.retrieved"),
+        (lambda p: p["rotation"].update({"floor_pct": 101}), "rotation.floor_pct"),
+        (lambda p: p["session"]["rate"].update({"first_page_per_min": 0}), "first_page_per_min"),
+        (lambda p: p["session"]["new_since"].update({"typo": 1}), "new_since.typo"),
+        (
+            lambda p: p["exposure"].update(
+                {"length_buckets": [{"max_chars": 900, "scale": 1}, {"max_chars": 200, "scale": 1}]}
+            ),
+            "max_chars must be strictly ascending",
+        ),
+    ],
+)
+def test_v4_bounds_and_unknown_keys(mutate, problem):
+    params = _v2c()
+    mutate(params)
+    assert any(problem in p for p in schema.validate("home", params)), problem
+
+
+def test_exposure_ranking_needs_the_stored_version_to_carry_rotation():
+    from intel import config
+
+    old = config.from_params("home", {"schema_version": 1})
+    assert not schema.exposure_ranking(old.params)
+    # Every older version still resolves the ingest and visit keys from the package.
+    for key in (
+        "exposure.ledger.cap",
+        "exposure.ledger.ttl_h",
+        "exposure.skip_dwell_ms",
+        "exposure.viewed_dwell_ms",
+        "exposure.consumed_dwell_ms",
+        "exposure.length_buckets",
+        "session.ongoing_idle_s",
+        "session.rate.first_page_per_min",
+        "session.new_since.max_age_h",
+        "peek.max_count",
+    ):
+        old.get(key)
+    v2b = config.from_params("home", store.defaults("home", 1) | {"schema_version": 2})
+    assert not schema.exposure_ranking(v2b.params)
+    assert schema.exposure_ranking(config.from_params("home", _v2c()).params)
+
+
+@pytest.mark.django_db
+def test_the_migration_stored_the_three_v2c_variants_as_drafts():
+    from intel.models import RankingConfig
+
+    rows = {
+        r.note: r for r in RankingConfig.objects.filter(surface="home", note__startswith="home@2c")
+    }
+    assert set(rows) == {"home@2c", "home@2c-r15", "home@2c-r30"}
+    for row in rows.values():
+        assert row.status == "draft" and row.schema_version == 4
+        assert schema.validate("home", row.params) == []
+        assert schema.exposure_ranking(row.params)

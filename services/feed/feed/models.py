@@ -252,6 +252,15 @@ class CommentState(models.Model):
 
     class Meta:
         db_table = "comment_state"
+        indexes = [
+            # R3: the first page's commenter reads (features, conversation, the
+            # exposure multiplier's conversation exception); migration 0013.
+            models.Index(fields=["post_id", "occurred_at"], name="comment_state_post_idx"),
+            models.Index(fields=["author_id", "occurred_at"], name="comment_state_author_idx"),
+            models.Index(
+                fields=["post_author_id", "occurred_at"], name="comment_state_post_author_idx"
+            ),
+        ]
 
 
 class AuthorRef(models.Model):

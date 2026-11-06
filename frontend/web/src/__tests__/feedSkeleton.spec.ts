@@ -51,7 +51,8 @@ describe("first paint from snapshots", () => {
     // One API call before the first post: /feed/ (no limit sent, the server applies the sizes).
     const feedCalls = get.mock.calls.filter(([url]) => url === "/feed/");
     expect(feedCalls).toHaveLength(1);
-    expect(feedCalls[0][1]?.params).toMatchObject({ entry: "open" });
+    // R3 (06 §4.2): the first page names how it was reached (`load`, then `nav`).
+    expect(feedCalls[0][1]?.params).toMatchObject({ entry: expect.stringMatching(/^(load|nav)$/) });
     expect(feedCalls[0][1]?.params).not.toHaveProperty("limit");
 
     expect(items(el)).toEqual([`${A}:snapshot`, `${B}:snapshot`]);

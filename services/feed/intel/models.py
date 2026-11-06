@@ -68,6 +68,8 @@ class EventType(models.TextChoices):
     VIDEO_SKIP = "video_skip", "Video skipped"
     REEL_VIEW = "reel_view", "Reel viewed"
     PROFILE_VISIT = "profile_visit", "Profile visited"
+    # Accumulated >= 50%-visible time of one card, once per (session, item) (06 5.1).
+    FEED_DWELL = "feed_dwell", "Feed dwell"
     # Bus (domain events, authoritative).
     POST_LIKE = "post_like", "Reacted"
     POST_UNLIKE = "post_unlike", "Reaction removed"
@@ -104,6 +106,7 @@ CLIENT_EVENT_TYPES = frozenset(
         EventType.VIDEO_SKIP,
         EventType.REEL_VIEW,
         EventType.PROFILE_VISIT,
+        EventType.FEED_DWELL,
     }
 )
 SERVER_ONLY_EVENT_TYPES = frozenset(set(EventType.values) - {str(t) for t in CLIENT_EVENT_TYPES})
@@ -206,7 +209,12 @@ class SignalEvent(models.Model):  # noqa: DJ001 - NULL means "not attributed", n
 
 class UserItemEngagement(models.Model):
     """Per (account, item) engagement within the retention window (read-only model;
-    the table is partitioned by ``first_at`` week). Filled by the aggregator (WP 6.3)."""
+    the table is partitioned by ``first_at`` week). Filled by the aggregator (WP 6.3).
+
+    The exposure columns (06 section 13, 07 WP 4b.13; ``intel/0008``) carry the
+    durable half of the exposure ledger: ``state`` is the highest state reached
+    (``ExposureState``), ``visits`` the number of distinct visits with at least a
+    display, ``consumed_dwell_only`` marks a consumption reached by dwell alone."""
 
     pk = models.CompositePrimaryKey("account_id", "item_id", "first_at")
     account_id = models.UUIDField()
@@ -223,10 +231,25 @@ class UserItemEngagement(models.Model):
     first_at = models.DateTimeField()
     last_at = models.DateTimeField()
     data_origin = models.CharField(max_length=10, choices=DataOrigin.choices)
+    dwell_ms = models.IntegerField(default=0)
+    state = models.SmallIntegerField(null=True)
+    consumed_dwell_only = models.BooleanField(default=False)
+    last_displayed_at = models.DateTimeField(null=True)
+    visits = models.SmallIntegerField(default=0)
 
     class Meta:
         managed = False
         db_table = "intel_user_item_engagement"
+
+
+class ExposureState(models.IntegerChoices):
+    """``intel_user_item_engagement.state`` and the hot ledger's state bits (06 5.1).
+    ``retrieved`` has no value on purpose: an item only served is never "seen"."""
+
+    DISPLAYED = 0, "Displayed"
+    SKIPPED = 1, "Skipped"
+    VIEWED = 2, "Viewed"
+    CONSUMED = 3, "Consumed"
 
 
 # ---- Phase 3: read models built from events (03 sections 2.1 and 2.2) ---------------
@@ -396,6 +419,8 @@ class BlockPair(models.Model):
 
     class Meta:
         db_table = "intel_block_pair"
+        # R3: ``feed.ranking.visible_items`` looks blocks up from either side.
+        indexes = [models.Index(fields=["high"], name="intel_block_high_idx")]
 
 
 class PageRef(models.Model):
@@ -494,6 +519,46 @@ class UserPreference(models.Model):
 
     class Meta:
         db_table = "intel_user_preference"
+
+
+# ---- Phase 4b (R3): the visit summary (06 sections 4.3 and 13; WP 4b.4) -------------
+
+
+class FeedSession(models.Model):
+    """One row per Home visit: written once at the visit start (``INSERT``) and closed
+    lazily at the next visit start (one ``UPDATE`` that flushes the ``feed:sess``
+    counters). Backs "last visit" when the Redis hash expired. Never holds item ids or
+    topics. Not written under ``personalization_off`` (decision 24); deleted on account
+    deletion; kept ``session.feed_session_retention_d`` days (``intel.purge_feed_sessions``)."""
+
+    class Kind(models.TextChoices):
+        NEW = "new", "New visit"
+        RETURNING = "returning", "Returning"
+        LAPSED = "lapsed", "Lapsed"
+
+    id = models.UUIDField(primary_key=True)
+    account_id = models.UUIDField()
+    client_sid = models.UUIDField(null=True)  # a hint only
+    kind = models.CharField(max_length=10, choices=Kind.choices)
+    entry_surface = models.CharField(max_length=12)
+    started_at = models.DateTimeField()
+    last_activity_at = models.DateTimeField()
+    ended_at = models.DateTimeField(null=True)
+    first_pages = models.SmallIntegerField(default=0)
+    refreshes = models.SmallIntegerField(default=0)
+    displayed = models.IntegerField(default=0)
+    consumed = models.IntegerField(default=0)
+    new_since_count = models.SmallIntegerField(default=0)
+    intent = models.CharField(max_length=16, null=True)  # noqa: DJ001 - stays NULL in R3
+    head_overlap = models.FloatField(null=True)
+    data_origin = models.CharField(max_length=10, choices=DataOrigin.choices)
+
+    class Meta:
+        db_table = "intel_feed_session"
+        indexes = [
+            models.Index(fields=["account_id", "-started_at"], name="intel_fsess_account_idx"),
+            models.Index(fields=["started_at"], name="intel_fsess_started_idx"),
+        ]
 
 
 # ---- Phase 4: the central ranking config (03 section 2.7; WP 4.1) -------------------

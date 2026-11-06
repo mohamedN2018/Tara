@@ -109,3 +109,12 @@ def gaps_seconds(times_by_account: dict[object, Sequence[float]]) -> list[float]
 
 def share(part: int, whole: int) -> float | None:
     return None if whole <= 0 else part / whole
+
+
+def repeat_rate(served: Sequence, shown_before: set) -> float | None:
+    """Share of ``served`` items already displayed in an earlier visit (06 section 16,
+    scenario C's repeat-exposure rate); None for an empty page."""
+    items = list(served)
+    if not items:
+        return None
+    return sum(1 for i in items if i in shown_before) / len(items)

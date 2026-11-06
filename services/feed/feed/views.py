@@ -7,22 +7,24 @@ inverse row. Items carry ``st``, a serve token that attributes telemetry (WP 2.3
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
-from intel import age, clock, config, preferences
+from intel import age, clock, config, discovery, exposure, session_ctx
 from intel import head as first_page_head
 from intel import metrics as intel_metrics
-from intel.models import EventType, ItemType
-from intel.ranking import serve_tokens
+from intel.models import EventType, ItemType, UserPreference
+from intel.ranking import exposure_rank, serve_tokens
 from intel.signals.server import record as menu_signal
 from rest_framework import generics, status
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.settings import api_settings
 from rest_framework.views import APIView
 
 from tara_common.pagination import CursorPagination, KeysetCursorPagination
@@ -37,10 +39,12 @@ from .serializers import (
     PostHideSerializer,
     SnoozeRequestSerializer,
 )
+from .throttles import FeedFirstPageThrottle, FeedPeekThrottle
 
-# How the client reached this page (08 section 7.6; recorded from R3 on). Validated
-# in R2, changes nothing and stores nothing yet.
-ENTRIES = ("open", "reload", "refresh", "return")
+# How the client reached this first page (06 section 4.2, 08 section 7.6): a hint for
+# the visit classifier (``intel.session_ctx``), never for eligibility. The R3 names plus
+# the R2 ones the web already sends (``open`` = ``nav``, ``refresh`` = ``pull``).
+ENTRIES = session_ctx.ENTRIES
 
 
 def _delivery_size(request) -> int:
@@ -80,11 +84,14 @@ def _mode(request) -> str:
     asked = request.query_params.get("mode") or None
     if asked is not None and asked not in services.MODES:
         raise ValidationError({"mode": [f"Must be one of: {', '.join(services.MODES)}."]})
-    mode = preferences.resolve_mode(
-        request.user.account_id,
-        asked,
-        request.query_params.get("mode_hint"),
-        services.DEFAULT_MODE,
+    # Precedence of ``preferences.resolve_mode`` (WP 4.6), on the one preference row
+    # the request reads anyway (R3 A8: the remembered mode and personalization_off).
+    hint = request.query_params.get("mode_hint")
+    mode = (
+        asked
+        or _preference_row(request)[0]
+        or (hint if hint in services.MODES else None)
+        or services.DEFAULT_MODE
     )
     request._feed_mode = mode
     return mode
@@ -139,6 +146,12 @@ class HomeFeedView(generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = FeedItemSerializer
     pagination_class = FeedCursorPagination
+    # R3 WP 4b.8: first pages and peeks per account, rates from the active config.
+    throttle_classes = [
+        *api_settings.DEFAULT_THROTTLE_CLASSES,
+        FeedFirstPageThrottle,
+        FeedPeekThrottle,
+    ]
 
     @extend_schema(
         parameters=[
@@ -153,12 +166,24 @@ class HomeFeedView(generics.ListAPIView):
                 "and without a remembered mode.",
             ),
             OpenApiParameter("peek", OpenApiTypes.BOOL, description="New rows only (D4)."),
-            OpenApiParameter("since", OpenApiTypes.STR, description="Peek: rows after this."),
+            OpenApiParameter(
+                "since",
+                OpenApiTypes.STR,
+                description="Peek: rows after this (ISO 8601 or epoch seconds), clamped "
+                "to `session.new_since.max_age_h`.",
+            ),
             OpenApiParameter(
                 "entry",
                 OpenApiTypes.STR,
                 enum=list(ENTRIES),
-                description="How the client reached this page (validated; used from R3).",
+                description="How the client reached this first page: a hint only, the "
+                "server classifies the visit from its own timestamps (`open` = `nav`, "
+                "`refresh` = `pull`).",
+            ),
+            OpenApiParameter(
+                "sid",
+                OpenApiTypes.UUID,
+                description="The client's telemetry session id (a hint only).",
             ),
             OpenApiParameter(
                 "limit",
@@ -177,17 +202,53 @@ class HomeFeedView(generics.ListAPIView):
         entry = request.query_params.get("entry")
         if entry is not None and entry not in ENTRIES:
             raise ValidationError({"entry": [f"Must be one of: {', '.join(ENTRIES)}."]})
+        sid = _client_sid(request)
         mode = _mode(request)
         if request.query_params.get("peek") in ("1", "true"):
             return self._peek(request, mode)
+        viewer = request.user.account_id
+        first = request.query_params.get("cursor") is None
+        cfg = config.for_surface("home")
+        visit, hot_state = None, None
+        if first:
+            # WP 4b.15: the test clock (dev, flag on, seed or test account only).
+            request._feed_now = clock.request_now(request, viewer)
+            off = _personalization_off(request)
+            ranked = mode == "for_you"
+            hot_state = exposure_rank.prefetch(
+                viewer,
+                cfg,
+                visit=not off,
+                ledger=ranked and not off and exposure_rank.applies(cfg),
+                head=ranked and not off and "head" in cfg.params,
+                pools=ranked and discovery.retrieves(cfg),
+            )
+            if not off:
+                visit = session_ctx.classify(
+                    viewer,
+                    ranking.SURFACE,
+                    request._feed_now,
+                    cfg,
+                    entry=entry,
+                    sid=sid,
+                    state=hot_state.visit if hot_state.ok else None,
+                )
+                intel_metrics.visit(visit.kind)
+        else:
+            session_ctx.touch(viewer, timezone.now())
         if mode == "for_you":
-            response = self._ranked(request)
+            response = self._ranked(request, cfg, visit, hot_state)
         else:
             response = super().get(request, *args, **kwargs)
         if response.status_code == 200:
             if mode != "for_you":  # ranked pages are stamped in _ranked (they know positions)
                 serve_tokens.stamp_home_items(
-                    request.user.account_id, response.data["data"], mode, offset=None, ranked=False
+                    viewer,
+                    response.data["data"],
+                    mode,
+                    offset=None,
+                    ranked=False,
+                    visit_ord=visit.visit_ord if visit else None,
                 )
             response.data["mode"] = mode
             # WP 4c.2-B3: every page carries the Home delivery block, so the web holds
@@ -198,50 +259,107 @@ class HomeFeedView(generics.ListAPIView):
             }
             # Ads go in after the organic page is complete (02 section 18), at the
             # config's slots, on the first page only; they never block organic content.
-            if request.query_params.get("cursor") is None:
+            if first:
+                if mode != "for_you":
+                    self._chronological_visit(request, response, mode, cfg, visit)
                 slots = ad_slots()
-                ads = sponsored_for_slots(request.user.account_id, slots)
+                ads = sponsored_for_slots(viewer, slots)
                 response.data["sponsored"] = ads[0] if ads else None
                 response.data["sponsored_slots"] = ads
                 response.data["meta"] = {
                     **response.data.get("meta", {}),
                     "ad_slots": slots,
                     "as_of": timezone.now().isoformat(),
+                    # 06 section 6.1: the client's refresh timers come from the config.
+                    "refresh_after_s": int(cfg.get("session.refresh_after_s")),
+                    "auto_refetch_after_s": int(cfg.get("session.auto_refetch_after_s")),
                 }
         return response
 
+    def _chronological_visit(self, request, response, mode: str, cfg, visit) -> None:
+        """``meta.visit`` and the caught-up marker of a chronological first page (06
+        section 6.2): the rows newer than ``since`` are counted on the page's own
+        queryset; in ``recent`` they are exactly the top ``new_count`` rows, so the
+        divider sits after them and the caught-up marker at the first older row. The
+        order never changes."""
+        new_count, capped = 0, False
+        if visit is not None and visit.since is not None:
+            new_count, capped = services.new_since_count(
+                request.user.account_id, mode, visit.since, int(cfg.get("peek.max_count"))
+            )
+        anchor = new_count if new_count and not capped else None
+        data = response.data.get("data") or []
+        response.data["meta"] = {
+            **response.data.get("meta", {}),
+            "visit": session_ctx.meta(visit, cfg, new_count=new_count, anchor_index=anchor),
+            "caught_up_index": anchor if anchor is not None and anchor < len(data) else None,
+        }
+        if visit is not None:
+            session_ctx.finish(request.user.account_id, visit, new_count=new_count)
+
     def _peek(self, request, mode: str) -> Response:
-        """``?peek=1`` (D4, WP 4.7): new rows for the "new posts" pill. Read only:
-        it never writes or replaces the ranking session and never calls ads."""
+        """``?peek=1`` (D4, WP 4.7; R3): new **eligible** rows for the "new posts" pill.
+        Read only: it never writes or replaces the ranking session and never calls ads."""
         viewer = request.user.account_id
-        rows, count = services.peek(
+        cfg = config.for_surface("home")
+        found = services.peek(
             viewer,
             mode,
             _since(request),
             _page_size(request),
-            config.for_surface("home").get("peek.max_since_hours"),
+            cfg,
+            claims=getattr(request.user, "claims", None),
+            now=clock.request_now(request, viewer),
         )
-        data = FeedItemSerializer(rows, many=True).data
+        data = FeedItemSerializer(found.rows, many=True).data
         serve_tokens.stamp_home_items(viewer, data, mode, offset=None, ranked=False)
-        return Response({"data": data, "mode": mode, "peek": True, "new_count": count})
+        return Response(
+            {
+                "data": data,
+                "ids": [str(r.post_id) for r in found.rows],
+                "mode": mode,
+                "peek": True,
+                "new_count": found.new_count,
+                "new_count_capped": found.capped,
+                "since": found.since.isoformat(),
+            }
+        )
 
-    def _ranked(self, request) -> Response:
+    def _ranked(self, request, cfg, visit, hot_state) -> Response:
         viewer, size = request.user.account_id, _delivery_size(request)
         token = request.query_params.get("cursor")
         claims = getattr(request.user, "claims", None)  # age claims for eligibility
+        overlap = None
         try:
             if token is None:
-                # WP 4b.15: the test clock (dev, flag on, seed or test account only).
-                now = clock.request_now(request, viewer)
-                page, offset = ranking.first_page(viewer, size, now, claims), 0
+                page = None
+                if (
+                    visit is not None
+                    and visit.kind in (session_ctx.REFRESH, session_ctx.ONGOING)
+                    and visit.entry in REUSE_ENTRIES
+                ):
+                    # A reload or a way back during the visit: the live frozen list
+                    # again, same sid, no re-rank (08 scenario 5).
+                    page = ranking.reuse_page(viewer, size, claims)
+                if page is None:
+                    page = ranking.first_page(
+                        viewer,
+                        size,
+                        request._feed_now,
+                        claims,
+                        ctx=_exposure_context(request._feed_now, visit, hot_state),
+                        pools=hot_state.pools if hot_state is not None else None,
+                        since=visit.since if visit is not None else None,
+                    )
+                offset = 0
             else:
                 cursor = ranking.decode_cursor(token)
                 page = ranking.next_page(viewer, token, size, claims)
                 offset = int(cursor.get("o", 0)) if cursor.get("k") == "r" else None
         except ranking.InvalidCursor as exc:
             raise NotFound("Invalid cursor.") from exc
-        # The first page is ranked even when its session could not be stored; a later
-        # page is ranked only while it reads the session (not the latest-order fallback).
+        # A first page is ranked even when its session could not be stored; a later
+        # page is ranked only while it reads the session (not the chronological fallback).
         ranked = offset is not None and (token is None or not page.fallback)
         data = FeedItemSerializer(page.items, many=True).data
         if ranked and page.sources:
@@ -256,15 +374,33 @@ class HomeFeedView(generics.ListAPIView):
             offset=offset if ranked else None,
             ranked=ranked,
             cfg_version=page.cfg_version if ranked else None,
+            visit_ord=visit.visit_ord if visit is not None else None,
         )
         if page.caught_up and ranked:
             intel_metrics.caught_up()
+        meta = {"caught_up_index": page.caught_up_index if ranked else None}
         if token is None:
-            # WP 4b.11: overlap with the previous first page (ids only; nothing stored
-            # under personalization_off or a version without the head block).
-            first_page_head.record(
-                viewer, ranking.SURFACE, [i["post_id"] for i in data], ranking.home_config()
-            )
+            if not page.reused:
+                # WP 4b.11: overlap with the previous first page (ids only; nothing
+                # stored under personalization_off or a version without the head block).
+                overlap = first_page_head.record(
+                    viewer,
+                    ranking.SURFACE,
+                    [i["post_id"] for i in data],
+                    cfg,
+                    previous=hot_state.head if hot_state is not None and hot_state.ok else None,
+                    personalization_off=visit is None,
+                )
+            new_count, anchor = _visit_counts(page, visit)
+            meta["visit"] = session_ctx.meta(visit, cfg, new_count=new_count, anchor_index=anchor)
+            if visit is not None:
+                session_ctx.finish(
+                    viewer,
+                    visit,
+                    new_count=new_count,
+                    anchor_index=anchor,
+                    head_overlap=overlap,
+                )
         return Response(
             {
                 "data": data,
@@ -275,12 +411,78 @@ class HomeFeedView(generics.ListAPIView):
                     "fallback": page.fallback,
                 },
                 # WP 4b.6: where this page's items leave the connection inventory.
-                "meta": {"caught_up_index": page.caught_up_index if ranked else None},
+                "meta": meta,
             }
         )
 
     def get_queryset(self):
         return services.home_feed(self.request.user.account_id, _mode(self.request))
+
+
+# The first-page hints that reuse a live ranking session during a visit (refresh or
+# ongoing): a browser reload, in-app navigation. ``pull``, ``return`` and ``load``
+# re-rank (06 section 4.2).
+REUSE_ENTRIES = frozenset({"reload", "nav"})
+
+
+def _client_sid(request) -> str | None:
+    raw = request.query_params.get("sid")
+    if not raw:
+        return None
+    try:
+        return uuid.UUID(raw).hex
+    except ValueError as exc:
+        raise ValidationError({"sid": ["A UUID."]}) from exc
+
+
+def _exposure_context(now, visit, hot_state):
+    """The ranker's exposure context from the first page's pipelined read (None under
+    personalization_off: nothing behavioural is read or used)."""
+    if visit is None:
+        return None
+    folds = {}
+    if hot_state is not None and hot_state.ledger:
+        folds = exposure.fold(hot_state.ledger, visit.visit_ord)
+    previous = first_page_head.unpack(hot_state.head) if hot_state is not None else []
+    return exposure_rank.Context(
+        now=now,
+        folds=folds,
+        previous_head=frozenset(previous),
+        since=visit.since,
+        lapsed=visit.is_lapsed,
+    )
+
+
+def _visit_counts(page, visit) -> tuple[int, int | None]:
+    """``(new_count, anchor_index)`` of a ranked first page: from its ranking, or, for
+    a reused frozen list, what the visit's last ranked page stored."""
+    if visit is None or visit.since is None:
+        return 0, None
+    if page.reused or page.new_count is None:
+        return visit.stored_new_count, visit.stored_anchor
+    return page.new_count, page.anchor_index
+
+
+def _personalization_off(request) -> bool:
+    """The viewer's ``personalization_off``, read with the remembered mode (one row)."""
+    _preference_row(request)
+    return request._feed_pref[1]
+
+
+def _preference_row(request) -> tuple[str | None, bool]:
+    cached = getattr(request, "_feed_pref", None)
+    if cached is None:
+        try:
+            row = (
+                UserPreference.objects.filter(account_id=request.user.account_id)
+                .values_list("default_mode", "personalization_off")
+                .first()
+            )
+        except Exception:  # noqa: BLE001 - fail closed: unreadable counts as off
+            row = (None, True)
+        mode, off = row if row else (None, False)
+        cached = request._feed_pref = (mode if mode in services.MODES else None, bool(off))
+    return cached
 
 
 DELIVERY_SURFACES = ("home", "reels", "video")

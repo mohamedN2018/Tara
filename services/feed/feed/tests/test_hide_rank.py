@@ -509,32 +509,35 @@ def test_cursor_is_signed_and_opaque(client_for, world):
 
 
 def test_a_lost_session_falls_back_to_latest_order(client_for, world):
+    """R3 (08 section 7.3): the fallback continues chronologically strictly below the
+    oldest row the session served (``t_min``/``id_min`` in the cursor), so nothing
+    already served comes back."""
     viewer, author, items = world
     client = client_for(viewer)
     body = client.get(reverse("feed:home-feed"), {"mode": "for_you", "limit": 5}).json()
+    served = [i["post_id"] for i in body["data"]]
     cursor = body["page"]["next_cursor"]
     caches["hot"].clear()  # expired, evicted or redis-hot restarted
     newer = _item(viewer, author, minutes_ago=-1)
 
-    body = client.get(
-        reverse("feed:home-feed"), {"mode": "for_you", "limit": 5, "cursor": cursor}
-    ).json()
-    assert body["page"]["fallback"] is True
+    by_post = {str(i.post_id): i for i in items}
+    t_min = min((by_post[p].post_created_at, str(by_post[p].id)) for p in served)
     expected = [
-        str(i.post_id) for i in sorted(items, key=lambda i: i.post_created_at, reverse=True)
+        str(i.post_id)
+        for i in sorted(items, key=lambda i: (i.post_created_at, str(i.id)), reverse=True)
+        if (i.post_created_at, str(i.id)) < t_min
     ]
-    assert [i["post_id"] for i in body["data"]] == expected[:5]
-    assert str(newer.post_id) not in [i["post_id"] for i in body["data"]]
-    # The fallback goes on page by page in latest order to the end.
     rest = []
-    cursor = body["page"]["next_cursor"]
     while cursor:
         body = client.get(
             reverse("feed:home-feed"), {"mode": "for_you", "limit": 5, "cursor": cursor}
         ).json()
+        assert body["page"]["fallback"] is True or rest
         rest += [i["post_id"] for i in body["data"]]
         cursor = body["page"]["next_cursor"]
-    assert rest == expected[5:]
+    assert rest == expected
+    assert not set(rest) & set(served)
+    assert str(newer.post_id) not in rest
 
 
 def test_a_newer_first_page_replaces_the_session(client_for, world):

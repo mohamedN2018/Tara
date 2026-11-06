@@ -23,6 +23,7 @@ import adCtaAr from "./adCta.ar";
 import socialShellAr from "./socialShell.ar";
 import suggestedAr from "./suggested.ar";
 import deliveryAr from "./delivery.ar";
+import homeRefreshAr from "./homeRefresh.ar";
 
 export default {
   app: { name: "Tara", tagline: "تواصل. شارك. انتمِ.", promise: "أكثر من شبكة اجتماعية… مكان تنتمي إليه." },
@@ -1475,6 +1476,7 @@ export default {
   socialShell: socialShellAr,
   suggested: suggestedAr,
   delivery: deliveryAr,
+  homeRefresh: homeRefreshAr,
   landing: {
     getStarted: "ابدأ الآن",
     headline: "مكانك بين",

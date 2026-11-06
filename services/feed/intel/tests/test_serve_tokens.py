@@ -146,3 +146,90 @@ def test_chronological_items_carry_tokens_without_config(client_for):
     claims = st.verify(item["st"], viewer, "post", item["post_id"])
     assert claims.surface == "home" and claims.reason == "recent"
     assert claims.cfg_version is None and claims.position is None
+
+
+# ---- R3 WP 4b.16: serve token v2 ---------------------------------------------------------
+
+
+def test_v2_carries_format_topic_length_author_and_visit():
+    author = uuid.uuid4()
+    token = _issue(fmt="image", topic_id=513, length_bucket=2, author_id=author, visit_ord=37)
+    claims = st.verify(token, VIEWER, "post", ITEM)
+    assert claims.version == 2
+    assert (claims.fmt, claims.topic_id, claims.length_bucket) == ("image", 513, 2)
+    assert claims.author_prefix == author.bytes[:8]
+    assert claims.visit_ord == 37 % 32
+    assert len(token) <= 180
+
+
+def test_v1_tokens_keep_validating_until_they_expire():
+    now = time.time()
+    v1 = _issue(version=1, now=now)
+    claims = st.verify(v1, VIEWER, "post", ITEM, now=now + 60)
+    assert claims is not None and claims.version == 1
+    assert (claims.fmt, claims.length_bucket, claims.author_prefix, claims.visit_ord) == (
+        None,
+        None,
+        None,
+        None,
+    )
+    assert claims.cfg_version == "home@1" and claims.position == 3
+    assert st.verify(v1, VIEWER, "post", ITEM, now=now + st.TTL_SECONDS + 1) is None
+    with pytest.raises(ValueError):
+        _issue(version=3)
+
+
+def test_v2_extension_is_signed():
+    raw = bytearray(base64.urlsafe_b64decode(_issue(fmt="text", length_bucket=1) + "=="))
+    raw[-17] ^= 0x01  # the visit byte, just before the MAC
+    forged = base64.urlsafe_b64encode(bytes(raw)).rstrip(b"=").decode()
+    assert st.verify(forged, VIEWER, "post", ITEM) is None
+    # A v1 body relabelled as v2 (or the reverse) no longer parses.
+    raw = bytearray(base64.urlsafe_b64decode(_issue(version=1) + "=="))
+    raw[0] = 2
+    assert st.decode(base64.urlsafe_b64encode(bytes(raw)).rstrip(b"=").decode()) is None
+
+
+def test_length_bucket_follows_the_config_buckets():
+    buckets = [{"max_chars": 10, "scale": 0.5}, {"max_chars": 100, "scale": 1.0}]
+    assert st.length_bucket(None, buckets) == 0
+    assert st.length_bucket("x" * 10, buckets) == 1
+    assert st.length_bucket("x" * 11, buckets) == 2
+    assert st.length_bucket("x" * 1000, buckets) == 2
+    assert st.length_bucket("x", []) == 0
+
+
+@pytest.mark.django_db
+def test_stamp_home_items_v2_from_the_served_snapshot():
+    from intel import config
+
+    viewer, author = acct(), str(uuid.uuid4())
+    buckets = config.for_surface("home").get("exposure.length_buckets")
+    items = [
+        {
+            "post_id": str(uuid.uuid4()),
+            "author_id": author,
+            "reason": "friend",
+            "snapshot": {"type": "image", "excerpt": "x" * 5},
+        },
+        # Content stripped for this viewer: no excerpt, so the bucket is unknown.
+        {
+            "post_id": str(uuid.uuid4()),
+            "author_id": author,
+            "reason": "friend",
+            "snapshot": {"type": "reel"},
+        },
+    ]
+    st.stamp_home_items(viewer, items, "for_you", offset=0, ranked=True, visit_ord=5)
+    first = st.verify(items[0]["st"], viewer, "post", items[0]["post_id"])
+    second = st.verify(items[1]["st"], viewer, "post", items[1]["post_id"])
+    assert (first.fmt, first.length_bucket, first.visit_ord) == (
+        "image",
+        st.length_bucket("x" * 5, buckets),
+        5,
+    )
+    assert first.author_prefix == uuid.UUID(author).bytes[:8]
+    assert (second.fmt, second.length_bucket) == ("reel", 0)
+    # Callers that pass no visit (Track A passes it) get 0.
+    st.stamp_home_items(viewer, items, "recent", offset=None, ranked=False)
+    assert st.decode(items[0]["st"]).visit_ord == 0

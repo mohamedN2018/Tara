@@ -246,3 +246,88 @@ def test_recommended_slots_inside_the_re_ranker_keep_pages_whole():
             assert max(authors.count(a) for a in set(authors)) <= block["max_per_author_page"]
         kinds = [p.feats.type for p in out[:100]]
         assert not any(len(set(kinds[i : i + 3])) == 1 for i in range(len(kinds) - 2))
+
+
+# ---- R3 verifier: the per-slot predicate and the seen-item contest --------------------------
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_the_page_predicate_answers_like_the_ok_methods(seed):
+    """``_Page.predicate`` reads the page state once per slot; it must give exactly the
+    answers of ``ok_author``, ``ok_format`` and ``ok_topic`` for every relaxation level."""
+    rng = random.Random(seed)
+    for run, gap in ((2, 0), (2, 1), (3, 2), (0, 0)):
+        block = {**BLOCK, "max_same_format_run": run, "author_gap": gap}
+        page = diversity._Page(block)
+        pool = [
+            Item(
+                key=i,
+                score=0.0,
+                author=f"a{rng.randrange(5)}",
+                type=rng.choice(["text", "video"]),
+                topics=frozenset({f"t{rng.randrange(3)}"}) if rng.random() < 0.5 else frozenset(),
+            )
+            for i in range(40)
+        ]
+        for it in pool[:12]:
+            for k in range(len(diversity.RELAX_ORDER) + 1):
+                names = diversity.RELAX_ORDER[k:]
+                keeps = page.predicate(names)
+                for other in pool:
+                    expected = all(getattr(page, f"ok_{n}")(other) for n in names)
+                    assert keeps(other) is expected
+            page.add(it)
+
+
+def _scored(key, author, kind, value):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        key=key,
+        value=value,
+        feats=SimpleNamespace(post_id=key, author_id=author, type=kind),
+    )
+
+
+def _capped_world():
+    """06 scenario C's worst case (R3 harness): every unseen connection item belongs to
+    one friend (``f0``, capped at 2 per page); the other friends' items were all seen
+    (``m`` < ``revisit.min_m``, so their ``score'`` is low); unseen pool items score
+    higher than those seen items."""
+    conn = [_scored(f"u{i}", "f0", ["text", "image"][i % 2], 5.0 - i * 0.01) for i in range(40)]
+    conn += [_scored(f"s{i}", f"a{i}", ["text", "image"][i % 2], 1.0 - i * 0.01) for i in range(30)]
+    conn.sort(key=lambda s: -s.value)
+    recs = [_scored(f"r{i}", f"p{i}", ["video", "link"][i % 2], 3.0 - i * 0.01) for i in range(60)]
+    demoted = frozenset(f"s{i}" for i in range(30))
+    return conn, recs, demoted
+
+
+def test_a_seen_connection_item_yields_its_slot_to_a_better_pool_item():
+    from intel.ranking import home
+
+    block = _v2b_block()
+    conn, recs, demoted = _capped_world()
+    before, _ = home._mix_diverse(conn, recs, 0.15, 10, block)
+    after, _ = home._mix_diverse(conn, recs, 0.15, 10, block, demoted)
+    first = lambda out: [p.key for p in out[:20]]  # noqa: E731
+    assert any(k.startswith("s") for k in first(before))  # the R3 harness finding
+    assert not any(k.startswith("s") for k in first(after))  # rotation by score x m
+    for out in (before, after):
+        page = out[:20]
+        authors = [p.feats.author_id for p in page]
+        assert len(page) == 20
+        assert max(authors.count(a) for a in set(authors)) <= block["max_per_author_page"]
+    # Every item is still served exactly once (nothing dropped or duplicated).
+    assert sorted(p.key for p in after) == sorted(p.key for p in before)
+
+
+def test_the_contest_never_runs_in_the_control_arm():
+    """The control (no continuation, ``tail`` 0) keeps its decision-23 share: no pool
+    item takes a seen item's slot, so the order is the one without ``demoted``."""
+    from intel.ranking import home
+
+    block = _v2b_block()
+    conn, recs, demoted = _capped_world()
+    plain, _ = home._mix_diverse(conn, recs, 0.15, 0, block)
+    with_seen, _ = home._mix_diverse(conn, recs, 0.15, 0, block, demoted)
+    assert [p.key for p in with_seen] == [p.key for p in plain]

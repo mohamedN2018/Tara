@@ -20,7 +20,20 @@ from . import validate
 IGNORED_CLIENT_FIELDS = frozenset({"cfg", "variant"})
 _BATCH_FIELDS = frozenset({"batch_id", "session_id", "events"})
 _EVENT_FIELDS = frozenset(
-    {"id", "t", "item", "ts", "st", "pos", "watch_ms", "pos_ms", "play_index", "surface", "idef"}
+    {
+        "id",
+        "t",
+        "item",
+        "ts",
+        "st",
+        "pos",
+        "watch_ms",
+        "pos_ms",
+        "play_index",
+        "surface",
+        "idef",
+        "dwell_ms",
+    }
 )
 
 
@@ -66,6 +79,8 @@ class SignalEventSerializer(serializers.Serializer):
     # ``feed_impression`` only: the impression rule the client measured with (WP
     # 4c.9-B3). Its range comes from the config (``validate.check_shape``).
     idef = serializers.IntegerField(required=False)
+    # ``feed_dwell`` only (WP 4b.2): accumulated >= 50%-visible time of the card.
+    dwell_ms = serializers.IntegerField(min_value=0, max_value=2**31 - 1, required=False)
 
     def to_internal_value(self, data):
         if not isinstance(data, dict):
@@ -91,6 +106,10 @@ class SignalEventSerializer(serializers.Serializer):
         if "idef" in attrs and attrs["t"] != EventType.FEED_IMPRESSION:
             # Like any field an event type does not define.
             raise serializers.ValidationError({"idef": ["Unknown field."]}, code="unknown_field")
+        if "dwell_ms" in attrs and attrs["t"] != EventType.FEED_DWELL:
+            raise serializers.ValidationError(
+                {"dwell_ms": ["Unknown field."]}, code="unknown_field"
+            )
         return attrs
 
 

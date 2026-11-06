@@ -28,6 +28,11 @@ COMPLETE_MIN_FRACTION = 0.9
 SKIP_MAX_MS = 2_000
 SKIP_MAX_FRACTION = 0.2
 REEL_VIEW_MIN_MS = 1_000
+# ``feed_dwell`` (06 section 5.1, 07 WP 4b.2): one card's accumulated >= 50%-visible
+# time, at most 10 minutes, and never more than the wall clock allows since the item
+# was served (the serve token's ``issued_at``) plus the skew tolerance.
+MAX_DWELL_MS = 600_000
+DWELL_SKEW_MS = 5_000
 MAX_POSITION = 10_000
 MAX_PLAY_INDEX = 1_000
 
@@ -45,6 +50,7 @@ ITEM_TYPES_FOR = {
     EventType.VIDEO_SKIP: VIDEO_KINDS,
     EventType.REEL_VIEW: frozenset({ItemType.REEL}),
     EventType.PROFILE_VISIT: frozenset({ItemType.PROFILE, ItemType.PAGE}),
+    EventType.FEED_DWELL: POST_KINDS,
 }
 
 # Fields each client event must carry (besides id, t, item, ts).
@@ -60,6 +66,7 @@ REQUIRED = {
     EventType.VIDEO_SKIP: ("watch_ms",),
     EventType.REEL_VIEW: ("watch_ms",),
     EventType.PROFILE_VISIT: (),
+    EventType.FEED_DWELL: ("dwell_ms",),
 }
 
 # Events whose ``watch_ms`` is the cumulative watch time of one play
@@ -125,6 +132,16 @@ def check_shape(event: dict, *, idef_max: int | None = None) -> None:
         raise Reject("invalid_rewatch")
     if t == EventType.REEL_VIEW and event["watch_ms"] < REEL_VIEW_MIN_MS:
         raise Reject("short_view")
+
+
+def check_dwell(dwell_ms: int, issued_at: int | None, now_s: float) -> None:
+    """A ``feed_dwell`` over 10 minutes, or longer than the time since its serve token
+    was issued (the card cannot have been on screen before it was served), is dropped
+    (``dwell_overclaim``), never clamped into a plausible value."""
+    if dwell_ms > MAX_DWELL_MS:
+        raise Reject("dwell_overclaim")
+    if issued_at and dwell_ms > max(0.0, now_s - issued_at) * 1000 + DWELL_SKEW_MS:
+        raise Reject("dwell_overclaim")
 
 
 def check_skip(watch_ms: int, duration_ms: int | None) -> None:

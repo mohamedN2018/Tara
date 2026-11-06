@@ -145,6 +145,10 @@ CELERY_BEAT_SCHEDULE = {
     # WP 4b.6: a one-minute tick; the task rebuilds the Home pools only when the
     # active version's pools.rebuild_s has passed (the period lives in the config).
     "intel-rebuild-pools": {"task": "intel.rebuild_pools", "schedule": 60.0},
+    # R3 WP 4b.13: the engagement aggregator (idempotent window, every 60 s).
+    "intel-aggregate-engagement": {"task": "intel.aggregate_engagement", "schedule": 60.0},
+    # R3 WP 4b.4: intel_feed_session retention (session.feed_session_retention_d), nightly.
+    "intel-purge-feed-sessions": {"task": "intel.purge_feed_sessions", "schedule": 86400.0},
 }
 
 # ---- Tara Intelligence (docs/intelligence) ---------------------------------------

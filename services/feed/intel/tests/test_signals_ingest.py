@@ -1,6 +1,7 @@
 """WP 2.3: ``POST /api/v1/feed/signals/`` (schema, clamps, dedupe, attribution, origin)."""
 
 import json
+import time
 import uuid
 from datetime import timedelta
 
@@ -341,3 +342,58 @@ def test_impression_without_position_is_kept(client_for):
     assert rows[post]["position"] is None and rows[post]["surface"] == "profile"
     assert rows[post]["attributed"] is False
     assert rows[served]["attributed"] is True and rows[served]["position"] is None
+
+
+# ---- R3 WP 4b.2: feed_dwell ------------------------------------------------------------
+
+
+def test_feed_dwell_is_stored_with_its_dwell(client_for):
+    me, post = acct(), str(uuid.uuid4())
+    token = st.issue(me, "post", post, "home", reason="recent", now=time.time() - 120)
+    data = _send(client_for, me, ev("feed_dwell", f"post:{post}", st=token, dwell_ms=4_200)).json()[
+        "data"
+    ]
+    assert data == {"accepted": 1, "duplicate": False, "rejected": {}}
+    row = signal_rows(account_id=me)[0]
+    assert (row["event_type"], row["watch_ms"], row["attributed"]) == ("feed_dwell", 4_200, True)
+
+
+def test_feed_dwell_over_the_wall_clock_is_dropped(client_for):
+    me = acct()
+    young, old = str(uuid.uuid4()), str(uuid.uuid4())
+    # Served 10 s ago: 60 s of dwell is impossible.
+    token = st.issue(me, "post", young, "home", reason="recent", now=time.time() - 10)
+    data = _send(
+        client_for,
+        me,
+        ev("feed_dwell", f"post:{young}", st=token, dwell_ms=60_000),
+        ev("feed_dwell", f"post:{old}", dwell_ms=validate.MAX_DWELL_MS + 1),  # > 10 min
+        ev("feed_dwell", f"post:{uuid.uuid4()}", dwell_ms=validate.MAX_DWELL_MS),
+    ).json()["data"]
+    assert data["accepted"] == 1
+    assert data["rejected"] == {"dwell_overclaim": 2}
+
+
+def test_feed_dwell_once_per_item_in_a_batch(client_for):
+    me, post = acct(), f"post:{uuid.uuid4()}"
+    data = _send(
+        client_for,
+        me,
+        ev("feed_dwell", post, dwell_ms=2_000),
+        ev("feed_dwell", post, dwell_ms=9_000),
+    ).json()["data"]
+    assert (data["accepted"], data["rejected"]) == (1, {"duplicate_dwell": 1})
+    assert [r["watch_ms"] for r in signal_rows(account_id=me)] == [2_000]
+
+
+def test_feed_dwell_shape(client_for):
+    me = acct()
+    data = _send(
+        client_for,
+        me,
+        ev("feed_dwell", f"post:{uuid.uuid4()}"),  # dwell_ms missing
+        ev("feed_dwell", f"profile:{uuid.uuid4()}", dwell_ms=10),  # not a post kind
+        ev("post_open", f"post:{uuid.uuid4()}", dwell_ms=10),  # field of another type
+    ).json()["data"]
+    assert data["accepted"] == 0
+    assert data["rejected"] == {"missing_field": 1, "item_type": 1, "unknown_field": 1}

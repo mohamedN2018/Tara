@@ -43,7 +43,8 @@ for (const lang of ["ar", "en"] as const) {
     await expect(page.locator("html")).toHaveAttribute("dir", lang === "ar" ? "rtl" : "ltr");
     const modes = page.getByTestId("feed-modes");
     await expect(modes.getByRole("button", { name: l.latest })).toHaveAttribute("aria-pressed", "true");
-    await expect(modes.locator("button")).toHaveCount(5);
+    // The five modes (R3 adds a refresh control beside them, not a mode).
+    await expect(modes.locator("button[aria-pressed]")).toHaveCount(5);
 
     // Friends: the friend's post, never the viewer's own.
     const remembered = page.waitForResponse((r) => r.url().includes("/feed/preferences/") && r.request().method() === "PATCH");

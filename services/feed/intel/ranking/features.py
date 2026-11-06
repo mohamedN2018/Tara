@@ -1,7 +1,8 @@
 """Stage 2: one ``CandidateFeatures`` row per eligible candidate (02 section 6.2; WP 4.2).
 
-Batched lookups only: one ``IN`` query per table, at most ``MAX_QUERIES`` for any
-number of candidates, and **no cross-service call** (no graph ``mutual_count``,
+Batched lookups only: ``MAX_QUERIES`` statements for any number of candidates (R3
+WP A8: one per-post statement and one viewer x author statement, each joining the
+tables below), and **no cross-service call** (no graph ``mutual_count``,
 02 section 6.2). Everything comes from ``feed_db``:
 
 ====================  ==========================================================
@@ -37,7 +38,7 @@ from django.db import connection
 from ..config import SurfaceConfig
 from ..retrieval.sources import Candidate
 
-MAX_QUERIES = 10
+MAX_QUERIES = 2
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,11 @@ class CandidateFeatures:
     conversation: float
     # viewer x content (phase 6)
     interest_rel: float = 0.0
+    # R3: the durable exposure (``intel_user_item_engagement``); only under a version
+    # carrying ``rotation`` (``build(..., exposure=...)``), else the defaults.
+    exp_state: int | None = None
+    exp_last_at: datetime | None = None
+    exp_visits: int = 0
 
     @property
     def discussion_depth(self) -> float:
@@ -114,109 +120,159 @@ def _fetch(sql: str, params) -> list[tuple]:
         return cur.fetchall()
 
 
-_CONTENT_SQL = """
-SELECT c.post_id, c.type, c.lang, c.group_id, c.shared_post_id, c.bait_score,
+# Per post, one statement (R3 WP A8: was five): content (+ first media, + the live
+# original a duplicate points at), post_stats, fan-out reach, hides and distinct live
+# commenters. The aggregates read the same indexes the separate queries did.
+_POSTS_SQL = """
+WITH p AS (SELECT DISTINCT unnest(%(posts)s::uuid[]) AS post_id)
+SELECT p.post_id, c.post_id IS NOT NULL AS has_ref,
+       c.type, c.lang, c.group_id, c.shared_post_id, c.bait_score,
        c.pending_reports, c.moderation_open,
        (c.dup_of IS NOT NULL AND o.post_id IS NOT NULL) AS duplicate,
-       m.duration_ms, m.quality
-FROM intel_content_ref c
+       m.duration_ms, m.quality,
+       s.post_id IS NOT NULL AS has_stats, s.reactions, s.comments, s.shares, s.flags,
+       coalesce(r.n, 0), coalesce(h.n, 0), coalesce(k.n, 0)
+FROM p
+LEFT JOIN intel_content_ref c ON c.post_id = p.post_id
 LEFT JOIN intel_media_ref m ON m.media_id = c.media_ids[1]
 LEFT JOIN intel_content_ref o ON o.post_id = c.dup_of AND o.state = 'live'
-WHERE c.post_id = ANY(%s::uuid[])
+LEFT JOIN post_stats s ON s.post_id = p.post_id
+LEFT JOIN (SELECT post_id, count(*) AS n FROM feed_item
+           WHERE post_id = ANY(%(posts)s::uuid[]) GROUP BY post_id) r ON r.post_id = p.post_id
+LEFT JOIN (SELECT post_id, count(*) AS n FROM post_hide
+           WHERE post_id = ANY(%(posts)s::uuid[]) GROUP BY post_id) h ON h.post_id = p.post_id
+LEFT JOIN (SELECT post_id, count(DISTINCT author_id) AS n FROM comment_state
+           WHERE active AND author_id IS NOT NULL AND post_id = ANY(%(posts)s::uuid[])
+           GROUP BY post_id) k ON k.post_id = p.post_id
 """
-_STATS_SQL = """
-SELECT post_id, reactions, comments, shares, flags FROM post_stats
-WHERE post_id = ANY(%s::uuid[])
-"""
-_REACH_SQL = """
-SELECT post_id, count(*) FROM feed_item WHERE post_id = ANY(%s::uuid[]) GROUP BY post_id
-"""
-_HIDES_SQL = """
-SELECT post_id, count(*) FROM post_hide WHERE post_id = ANY(%s::uuid[]) GROUP BY post_id
-"""
-_COMMENTERS_SQL = """
-SELECT post_id, count(DISTINCT author_id) FROM comment_state
-WHERE active AND author_id IS NOT NULL AND post_id = ANY(%s::uuid[]) GROUP BY post_id
-"""
-_FAVORITES_SQL = """
-SELECT target_id FROM relationship_flag
-WHERE actor_id = %s AND kind = 'favorite' AND active AND target_id = ANY(%s::uuid[])
-"""
-_AFFINITY_SQL = """
-SELECT author_id, interactions FROM affinity
-WHERE account_id = %s AND author_id = ANY(%s::uuid[])
-"""
-_DISLIKES_SQL = """
-SELECT author_id, count(*) FROM post_hide
-WHERE account_id = %s AND author_id = ANY(%s::uuid[]) AND reason = ANY(%s)
+# R3 (06 section 5.2, WP 4b.5): the durable half of the exposure ledger rides in the
+# same statement (the "seen_before" read: +0 queries): the viewer's engagement state
+# in any weekly partition. (The conversation exception's commenter count is a
+# separate, small read of the demoted items only: ``exposure_rank.new_commenters``;
+# a correlated count here made the planner's estimate large enough to JIT-compile
+# the whole statement, about 0.5 s.)
+_EXPOSURE_POSTS_SQL = (
+    _POSTS_SQL.replace(
+        "WITH p AS (SELECT DISTINCT unnest(%(posts)s::uuid[]) AS post_id)",
+        """WITH p AS (SELECT DISTINCT unnest(%(posts)s::uuid[]) AS post_id),
+e AS (
+    SELECT item_id, max(state) AS state, max(last_displayed_at) AS last_at,
+           max(visits) AS visits
+    FROM intel_user_item_engagement
+    WHERE account_id = %(v)s AND item_id = ANY(%(posts)s::uuid[]) AND state IS NOT NULL
+    GROUP BY item_id)""",
+    )
+    .replace(
+        "coalesce(r.n, 0), coalesce(h.n, 0), coalesce(k.n, 0)",
+        "coalesce(r.n, 0), coalesce(h.n, 0), coalesce(k.n, 0), e.state, e.last_at,"
+        " coalesce(e.visits, 0)",
+    )
+    .replace(
+        "LEFT JOIN post_stats s ON s.post_id = p.post_id",
+        "LEFT JOIN post_stats s ON s.post_id = p.post_id LEFT JOIN e ON e.item_id = p.post_id",
+    )
+)
+# Viewer x author, one statement (was five): favorites, affinity, the viewer's creator
+# dislikes, shared active groups, and comments exchanged each way in the window.
+# Rows are (kind, author, x, y).
+_AUTHORS_SQL = """
+SELECT 'favorite', target_id, 0::bigint, 0::bigint FROM relationship_flag
+WHERE actor_id = %(v)s AND kind = 'favorite' AND active AND target_id = ANY(%(a)s::uuid[])
+UNION ALL
+SELECT 'affinity', author_id, interactions::bigint, 0::bigint FROM affinity
+WHERE account_id = %(v)s AND author_id = ANY(%(a)s::uuid[])
+UNION ALL
+SELECT 'dislike', author_id, count(*), 0::bigint FROM post_hide
+WHERE account_id = %(v)s AND author_id = ANY(%(a)s::uuid[]) AND reason = ANY(%(reasons)s)
 GROUP BY author_id
-"""
-_SHARED_GROUPS_SQL = """
-SELECT o.account_id, count(*) FROM intel_group_membership v
+UNION ALL
+SELECT 'shared', o.account_id, count(*), 0::bigint FROM intel_group_membership v
 JOIN intel_group_membership o ON o.group_id = v.group_id AND o.state = 'active'
-WHERE v.account_id = %s AND v.state = 'active' AND o.account_id = ANY(%s::uuid[])
+WHERE v.account_id = %(v)s AND v.state = 'active' AND o.account_id = ANY(%(a)s::uuid[])
 GROUP BY o.account_id
-"""
-# Comments exchanged within the window, per direction (viewer -> author, author -> viewer).
-_CONVERSATION_SQL = """
-SELECT CASE WHEN author_id = %(v)s THEN post_author_id ELSE author_id END AS other,
-       count(*) FILTER (WHERE author_id = %(v)s) AS mine,
-       count(*) FILTER (WHERE post_author_id = %(v)s) AS theirs
+UNION ALL
+SELECT 'conversation',
+       CASE WHEN author_id = %(v)s THEN post_author_id ELSE author_id END,
+       count(*) FILTER (WHERE author_id = %(v)s),
+       count(*) FILTER (WHERE post_author_id = %(v)s)
 FROM comment_state
 WHERE active AND occurred_at >= %(since)s AND (
       (author_id = %(v)s AND post_author_id = ANY(%(a)s::uuid[]))
    OR (post_author_id = %(v)s AND author_id = ANY(%(a)s::uuid[])))
-GROUP BY 1
+GROUP BY 2
 """
 
 
 def build(
-    viewer_id, candidates: Sequence[Candidate], cfg: SurfaceConfig, now: datetime
+    viewer_id,
+    candidates: Sequence[Candidate],
+    cfg: SurfaceConfig,
+    now: datetime,
+    exposure: dict | None = None,
 ) -> list[CandidateFeatures]:
-    """Features of ``candidates`` for ``viewer_id``, in the same order."""
+    """Features of ``candidates`` for ``viewer_id``, in the same order. Two queries.
+
+    ``exposure`` (R3, a version carrying ``rotation``): any dict (the hot-ledger minutes
+    by post); the durable exposure columns are then read in the same per-post
+    statement."""
     from feed import feedback
 
     if not candidates:
         return []
     viewer = str(viewer_id)
     posts = sorted({c.post_id for c in candidates})
-    content = {str(r[0]): r for r in _fetch(_CONTENT_SQL, [posts])}
+    if exposure is None:
+        rows = _fetch(_POSTS_SQL, {"posts": posts})
+    else:
+        rows = _fetch(_EXPOSURE_POSTS_SQL, {"v": viewer, "posts": posts})
+    per_post = {str(r[0]): r for r in rows}
     # The viewer's own posts are included: today's ranking reads a self-dislike too.
     authors = sorted({c.author_id for c in candidates if c.author_id})
-    stats = {str(r[0]): r for r in _fetch(_STATS_SQL, [posts])}
-    reach = {str(p): n for p, n in _fetch(_REACH_SQL, [posts])}
-    hides = {str(p): n for p, n in _fetch(_HIDES_SQL, [posts])}
-    commenters = {str(p): n for p, n in _fetch(_COMMENTERS_SQL, [posts])}
     rel = cfg.section("relationship")
+    favorites: set[str] = set()
+    affinity: dict[str, int] = {}
+    dislikes: dict[str, int] = {}
+    shared: dict[str, int] = {}
+    conversation: dict[str, float] = {}
     if authors:
-        favorites = {str(r[0]) for r in _fetch(_FAVORITES_SQL, [viewer, authors])}
-        affinity = {str(a): n for a, n in _fetch(_AFFINITY_SQL, [viewer, authors])}
-        dislikes = {
-            str(a): n
-            for a, n in _fetch(
-                _DISLIKES_SQL,
-                [viewer, authors, sorted(str(r) for r in feedback.AUTHOR_DOWNWEIGHT_REASONS)],
-            )
-        }
-        shared = {str(a): n for a, n in _fetch(_SHARED_GROUPS_SQL, [viewer, authors])}
-        since = now - timedelta(days=rel["conversation_days"])
-        conversation = {
-            str(o): math.log1p(min(mine, theirs))
-            for o, mine, theirs in _fetch(
-                _CONVERSATION_SQL, {"v": viewer, "a": authors, "since": since}
-            )
-            if o is not None
-        }
-    else:
-        favorites, affinity, dislikes, shared, conversation = set(), {}, {}, {}, {}
+        for kind, author, x, y in _fetch(
+            _AUTHORS_SQL,
+            {
+                "v": viewer,
+                "a": authors,
+                "reasons": sorted(str(r) for r in feedback.AUTHOR_DOWNWEIGHT_REASONS),
+                "since": now - timedelta(days=rel["conversation_days"]),
+            },
+        ):
+            if author is None:
+                continue
+            key = str(author)
+            if kind == "favorite":
+                favorites.add(key)
+            elif kind == "affinity":
+                affinity[key] = int(x)
+            elif kind == "dislike":
+                dislikes[key] = int(x)
+            elif kind == "shared":
+                shared[key] = int(x)
+            else:
+                conversation[key] = math.log1p(min(int(x), int(y)))
 
     out = []
     for c in candidates:
-        ref = content.get(c.post_id)
-        st = stats.get(c.post_id)
+        row = per_post.get(c.post_id)
+        ref = row if row is not None and row[1] else None
+        has_stats = bool(row is not None and row[12])
         author = c.author_id or ""
         created = c.created_at
         age_h = max((now - created).total_seconds() / 3600.0, 0.0) if created else 0.0
+        extra = {}
+        if exposure is not None and row is not None:
+            extra = {
+                "exp_state": None if row[20] is None else int(row[20]),
+                "exp_last_at": row[21],
+                "exp_visits": int(row[22] or 0),
+            }
         out.append(
             CandidateFeatures(
                 post_id=c.post_id,
@@ -226,30 +282,31 @@ def build(
                 tie_id=c.item_id or c.post_id,
                 created_at=created,
                 age_h=age_h,
-                type=(ref[1] if ref and ref[1] else c.type) or "",
-                lang=ref[2] if ref else "und",
-                group_id=str(ref[3]) if ref and ref[3] else None,
-                is_reshare=bool(ref and ref[4]),
-                duplicate=bool(ref and ref[8]),
-                bait_score=ref[5] if ref else None,
-                pending_reports=int(ref[6]) if ref else 0,
-                moderation_open=bool(ref and ref[7]),
-                duration_ms=ref[9] if ref else None,
-                media_quality=ref[10] if ref and ref[9] is not None else None,
-                has_stats=st is not None,
-                reactions=max(st[1], 0) if st else 0,
-                comments=max(st[2], 0) if st else 0,
-                shares=max(st[3], 0) if st else 0,
-                flags=max(st[4], 0) if st else 0,
+                type=(ref[2] if ref and ref[2] else c.type) or "",
+                lang=ref[3] if ref else "und",
+                group_id=str(ref[4]) if ref and ref[4] else None,
+                is_reshare=bool(ref and ref[5]),
+                duplicate=bool(ref and ref[9]),
+                bait_score=ref[6] if ref else None,
+                pending_reports=int(ref[7]) if ref else 0,
+                moderation_open=bool(ref and ref[8]),
+                duration_ms=ref[10] if ref else None,
+                media_quality=ref[11] if ref and ref[10] is not None else None,
+                has_stats=has_stats,
+                reactions=max(row[13], 0) if has_stats else 0,
+                comments=max(row[14], 0) if has_stats else 0,
+                shares=max(row[15], 0) if has_stats else 0,
+                flags=max(row[16], 0) if has_stats else 0,
                 stored_score=c.stored_score,
-                reach=int(reach.get(c.post_id, 0)),
-                hides=int(hides.get(c.post_id, 0)),
-                commenters=int(commenters.get(c.post_id, 0)),
+                reach=int(row[17]) if row is not None else 0,
+                hides=int(row[18]) if row is not None else 0,
+                commenters=int(row[19]) if row is not None else 0,
                 favorite=author in favorites,
                 affinity=int(affinity.get(author, 0)),
                 author_dislikes=int(dislikes.get(author, 0)),
                 shared_groups=0 if author == viewer else int(shared.get(author, 0)),
                 conversation=0.0 if author == viewer else conversation.get(author, 0.0),
+                **extra,
             )
         )
     return out

@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 
 from django.db import connection
 
-from . import metrics, ports
+from . import metrics
 from .config import SurfaceConfig
 from .retrieval.sources import CONNECTIONS, FOLLOW_PULL, GROUPS, REELS, VIDEO, Candidate
 
@@ -248,8 +248,8 @@ def e6b_page_published(c: Candidate, ctx: Context) -> bool:
 
 
 def e7_pending_integrity(c: Candidate, ctx: Context) -> bool:
-    integrity = ctx.cfg.section("integrity")
-    if not integrity["exclude_pending_from_discovery"]:
+    # ``get`` (read only, no copy): this rule runs once per candidate.
+    if not ctx.cfg.get("integrity.exclude_pending_from_discovery"):
         return True
     ref = ctx.ref(c)
     if ref is None:
@@ -257,7 +257,7 @@ def e7_pending_integrity(c: Candidate, ctx: Context) -> bool:
     return not (
         ref["moderation_open"]
         or ref["moderation_state"] == "pending"
-        or ref["pending_reports"] >= integrity["pending_report_min_reporters"]
+        or ref["pending_reports"] >= ctx.cfg.get("integrity.pending_report_min_reporters")
     )
 
 
@@ -350,84 +350,138 @@ def _s(value) -> str:
     return str(value)
 
 
+_CONTEXT_CONTENT_SQL = """
+SELECT c.post_id, c.author_id, c.author_type, c.type, c.audience, c.group_id,
+       c.approval_state, c.reel_state, c.lang, c.state, c.moderation_state,
+       c.pending_reports, c.moderation_open, c.created_at,
+       EXISTS (SELECT 1 FROM feed_item i WHERE i.recipient_id = %(v)s
+               AND i.post_id = c.post_id) AS in_feed,
+       g.privacy AS g_privacy, g.status AS g_status, m.state AS m_state
+FROM intel_content_ref c
+LEFT JOIN intel_group_ref g ON g.group_id = c.group_id
+LEFT JOIN intel_group_membership m ON m.group_id = c.group_id AND m.account_id = %(v)s
+WHERE c.post_id = ANY(%(posts)s::uuid[])
+"""
+# Everything else ``filter``'s rules read, in one round trip (R3 WP A8: the first page
+# went from 14 eligibility queries to 2, same data): pages of the authors, group
+# owners, blocks either way (authors, the pages' owners, the groups' owners), friends,
+# restrictions (authors and page owners), follows, author refs, and the viewer's
+# hides, snoozes, mutes and creator dislikes. Rows are (kind, key, a, b, c, d) text.
+_CONTEXT_RELATIONS_SQL = """
+WITH pages AS (
+    SELECT page_id, owner_id, status, deleted FROM intel_page_ref
+    WHERE page_id = ANY(%(authors)s::uuid[])),
+owners AS (
+    SELECT group_id, account_id FROM intel_group_membership
+    WHERE group_id = ANY(%(groups)s::uuid[]) AND role = 'owner' AND state = 'active'),
+others AS (
+    SELECT unnest(%(authors)s::uuid[]) AS id
+    UNION SELECT owner_id FROM pages WHERE owner_id IS NOT NULL
+    UNION SELECT account_id FROM owners)
+SELECT 'page', page_id::text, owner_id::text, status, deleted::text, NULL FROM pages
+UNION ALL
+SELECT 'owner', group_id::text, account_id::text, NULL, NULL, NULL FROM owners
+UNION ALL
+SELECT 'blocked', (CASE WHEN low = %(v)s THEN high ELSE low END)::text, NULL, NULL, NULL, NULL
+FROM intel_block_pair
+WHERE (low_blocks OR high_blocks)
+  AND ((low = %(v)s AND high IN (SELECT id FROM others))
+    OR (high = %(v)s AND low IN (SELECT id FROM others)))
+UNION ALL
+SELECT 'friend', friend_id::text, NULL, NULL, NULL, NULL FROM intel_friend_edge
+WHERE account_id = %(v)s AND active AND friend_id = ANY(%(authors)s::uuid[])
+UNION ALL
+SELECT 'restricted', account_id::text, NULL, NULL, NULL, NULL FROM intel_account_restriction
+WHERE active AND (account_id = ANY(%(authors)s::uuid[])
+                  OR account_id IN (SELECT owner_id FROM pages WHERE owner_id IS NOT NULL))
+UNION ALL
+SELECT 'follow', target_id::text, NULL, NULL, NULL, NULL FROM follow_edge
+WHERE follower_id = %(v)s AND active AND target_id = ANY(%(authors)s::uuid[])
+UNION ALL
+SELECT 'author', account_id::text, kind, active::text, searchable::text, age_class
+FROM author_ref WHERE account_id = ANY(%(authors)s::uuid[])
+UNION ALL
+SELECT 'hidden', post_id::text, NULL, NULL, NULL, NULL FROM post_hide
+WHERE account_id = %(v)s AND post_id = ANY(%(posts)s::uuid[])
+UNION ALL
+SELECT 'snoozed', author_id::text, NULL, NULL, NULL, NULL FROM author_snooze
+WHERE account_id = %(v)s AND until > %(now)s AND author_id = ANY(%(authors)s::uuid[])
+UNION ALL
+SELECT 'muted', target_id::text, NULL, NULL, NULL, NULL FROM relationship_flag
+WHERE actor_id = %(v)s AND kind = 'mute' AND active AND target_id = ANY(%(authors)s::uuid[])
+UNION ALL
+SELECT 'disliked', author_id::text, NULL, NULL, NULL, NULL FROM post_hide
+WHERE account_id = %(v)s AND reason = 'dislike_creator' AND author_id = ANY(%(authors)s::uuid[])
+"""
+_GROUP_KEYS = ("g_privacy", "g_status", "m_state")
+
+
+def _bool(value) -> bool:
+    return value in ("true", "t", True)
+
+
 def load_context(viewer: Viewer, candidates: list[Candidate], cfg: SurfaceConfig) -> Context:
+    """Everything the rules read for ``candidates``, in **two** queries (content with
+    its group and the viewer's membership; then every relation, ``_CONTEXT_RELATIONS_SQL``)."""
+    from django.utils import timezone
+
     post_ids = sorted({c.post_id for c in candidates})
-    content = {
-        _s(r["post_id"]): r
-        for r in _fetch(
-            "SELECT c.post_id, c.author_id, c.author_type, c.type, c.audience, c.group_id,"
-            " c.approval_state, c.reel_state, c.lang, c.state, c.moderation_state,"
-            " c.pending_reports, c.moderation_open, c.created_at,"
-            " EXISTS (SELECT 1 FROM feed_item i WHERE i.recipient_id = %s"
-            " AND i.post_id = c.post_id) AS in_feed"
-            " FROM intel_content_ref c WHERE c.post_id = ANY(%s::uuid[])",
-            [viewer.id, post_ids],
-        )
-    }
+    content, groups, memberships = {}, {}, {}
+    for r in _fetch(_CONTEXT_CONTENT_SQL, {"v": viewer.id, "posts": post_ids}):
+        g_privacy, g_status, m_state = (r.pop(k) for k in _GROUP_KEYS)
+        content[_s(r["post_id"])] = r
+        if r["group_id"] and g_privacy is not None:
+            group_id = _s(r["group_id"])
+            groups[group_id] = {"group_id": r["group_id"], "privacy": g_privacy, "status": g_status}
+        if r["group_id"] and m_state is not None:
+            memberships[_s(r["group_id"])] = {"group_id": r["group_id"], "state": m_state}
     authors = sorted(
         {_s(r["author_id"]) for r in content.values() if r["author_id"]}
         | {c.author_id for c in candidates if c.author_id}
     )
-    pages = {
-        _s(r["page_id"]): r
-        for r in _fetch(
-            "SELECT page_id, owner_id, status, deleted FROM intel_page_ref"
-            " WHERE page_id = ANY(%s::uuid[])",
-            [authors],
-        )
-    }
     group_ids = sorted({_s(r["group_id"]) for r in content.values() if r["group_id"]})
-    groups = {
-        _s(r["group_id"]): r
-        for r in _fetch(
-            "SELECT group_id, privacy, status FROM intel_group_ref"
-            " WHERE group_id = ANY(%s::uuid[])",
-            [group_ids],
-        )
-    }
-    memberships = {
-        _s(r["group_id"]): r
-        for r in _fetch(
-            "SELECT group_id, state FROM intel_group_membership"
-            " WHERE account_id = %s AND group_id = ANY(%s::uuid[])",
-            [viewer.id, group_ids],
-        )
-    }
+    pages: dict[str, dict] = {}
     group_owners: dict[str, set[str]] = {}
-    for r in _fetch(
-        "SELECT group_id, account_id FROM intel_group_membership"
-        " WHERE group_id = ANY(%s::uuid[]) AND role = 'owner' AND state = 'active'",
-        [group_ids],
-    ):
-        group_owners.setdefault(_s(r["group_id"]), set()).add(_s(r["account_id"]))
-    owners = {_s(p["owner_id"]) for p in pages.values() if p["owner_id"]}
-    others = sorted(set(authors) | owners | {o for s in group_owners.values() for o in s})
-    blocked = {
-        _s(r["other"])
-        for r in _fetch(
-            "SELECT CASE WHEN low = %(v)s THEN high ELSE low END AS other FROM intel_block_pair"
-            " WHERE (low_blocks OR high_blocks) AND ("
-            " (low = %(v)s AND high = ANY(%(o)s::uuid[]))"
-            " OR (high = %(v)s AND low = ANY(%(o)s::uuid[])))",
-            {"v": viewer.id, "o": others},
+    authors_ref: dict[str, dict] = {}
+    sets: dict[str, set[str]] = {
+        k: set()
+        for k in (
+            "blocked",
+            "friend",
+            "restricted",
+            "follow",
+            "hidden",
+            "snoozed",
+            "muted",
+            "disliked",
         )
     }
-    friends = {
-        _s(r["friend_id"])
-        for r in _fetch(
-            "SELECT friend_id FROM intel_friend_edge"
-            " WHERE account_id = %s AND active AND friend_id = ANY(%s::uuid[])",
-            [viewer.id, authors],
+    with connection.cursor() as cur:
+        cur.execute(
+            _CONTEXT_RELATIONS_SQL,
+            {
+                "v": viewer.id,
+                "authors": authors,
+                "groups": group_ids,
+                "posts": post_ids,
+                "now": timezone.now(),
+            },
         )
-    }
-    restricted = {
-        _s(r["account_id"])
-        for r in _fetch(
-            "SELECT account_id FROM intel_account_restriction"
-            " WHERE active AND account_id = ANY(%s::uuid[])",
-            [sorted(set(authors) | owners)],
-        )
-    }
+        for kind, key, a, b, c, d in cur.fetchall():
+            if kind == "page":
+                pages[key] = {"page_id": key, "owner_id": a, "status": b, "deleted": _bool(c)}
+            elif kind == "owner":
+                group_owners.setdefault(key, set()).add(a)
+            elif kind == "author":
+                authors_ref[key] = {
+                    "account_id": key,
+                    "kind": a,
+                    "active": _bool(b),
+                    "searchable": _bool(c),
+                    "age_class": d,
+                }
+            else:
+                sets[kind].add(key)
     return Context(
         viewer=viewer,
         cfg=cfg,
@@ -436,12 +490,17 @@ def load_context(viewer: Viewer, candidates: list[Candidate], cfg: SurfaceConfig
         groups=groups,
         memberships=memberships,
         group_owners=group_owners,
-        blocked=blocked,
-        friends=friends,
-        follows=ports.followed_among(viewer.id, authors),
-        authors=ports.author_refs(authors),
-        restricted=restricted,
-        exclusions=ports.viewer_exclusions(viewer.id, authors, post_ids),
+        blocked=sets["blocked"],
+        friends=sets["friend"],
+        follows=sets["follow"],
+        authors=authors_ref,
+        restricted=sets["restricted"],
+        exclusions={
+            "hidden": sets["hidden"],
+            "snoozed": sets["snoozed"],
+            "muted": sets["muted"],
+            "disliked": sets["disliked"],
+        },
     )
 
 
