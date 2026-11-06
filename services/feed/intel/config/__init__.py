@@ -24,7 +24,7 @@ from typing import Any
 from . import store
 from .schema import SURFACES
 
-__all__ = ["SURFACES", "SurfaceConfig", "for_surface", "store"]
+__all__ = ["SURFACES", "SurfaceConfig", "delivery_for", "for_surface", "store"]
 
 
 @dataclass(frozen=True)
@@ -75,3 +75,10 @@ def from_params(surface: str, params: dict) -> SurfaceConfig:
     """A config built from explicit params (merged over the package defaults)."""
     merged = store.merge(store.defaults(surface), params)
     return SurfaceConfig(surface, f"{surface}@{merged['version']}", merged)
+
+
+def delivery_for(surface: str) -> dict:
+    """The ``delivery`` block of ``surface``'s active config as the clients receive it
+    (``meta.delivery``, ``GET /feed/delivery/``; WP 4c.2-B3). The block has no
+    server-only key, so it is served exactly as validated."""
+    return for_surface(surface).section("delivery")

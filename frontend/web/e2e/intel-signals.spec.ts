@@ -68,6 +68,8 @@ for (const lang of ["ar", "en"] as const) {
     const item = `post:${postId}`;
     const mine = signals.events().filter((e) => e.item === item);
     expect(mine.map((e) => e.t).sort()).toEqual(["feed_impression", "post_open"]);
+    // Stamped with the rule it followed: the server's v2 once delivery is known, else v1.
+    expect([1, 2]).toContain(mine.find((e) => e.t === "feed_impression")?.idef);
     for (const batch of signals.batches) {
       expect(batch.batch_id).toMatch(UUID);
       expect(batch.session_id).toMatch(UUID);
@@ -76,7 +78,8 @@ for (const lang of ["ar", "en"] as const) {
         expect(e).not.toHaveProperty("cfg");
         expect(e).not.toHaveProperty("variant");
         for (const key of Object.keys(e)) {
-          expect(["id", "t", "item", "ts", "st", "surface", "pos", "watch_ms", "pos_ms", "play_index"]).toContain(key);
+          // `idef`: the impression rule the client applied (08 §7.12, WP 4c.9-B3).
+          expect(["id", "t", "item", "ts", "st", "surface", "pos", "watch_ms", "pos_ms", "play_index", "idef"]).toContain(key);
         }
         expect(String(e.id)).toMatch(UUID);
       }

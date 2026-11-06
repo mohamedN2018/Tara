@@ -25,7 +25,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from tara_common.pagination import CursorPagination
+from tara_common.pagination import CursorPagination, KeysetCursorPagination
 from tara_common.responses import data_response
 
 from . import feedback, ranking, services
@@ -38,9 +38,33 @@ from .serializers import (
     SnoozeRequestSerializer,
 )
 
+# How the client reached this page (08 section 7.6; recorded from R3 on). Validated
+# in R2, changes nothing and stores nothing yet.
+ENTRIES = ("open", "reload", "refresh", "return")
 
-class FeedCursorPagination(CursorPagination):
+
+def _delivery_size(request) -> int:
+    """The page size of a non-peek page (08 section 7.2, WP 4c.2-B3): ``limit`` when
+    sent (1 to ``max_page_size``), else ``delivery.first_page_size`` without a cursor
+    and ``delivery.page_size`` with one, from the Home config."""
+    raw = request.query_params.get("limit")
+    if raw:
+        try:
+            return max(1, min(int(raw), CursorPagination.max_page_size))
+        except ValueError:
+            pass
+    key = "page_size" if request.query_params.get("cursor") else "first_page_size"
+    return int(config.for_surface("home").get(f"delivery.{key}"))
+
+
+class FeedCursorPagination(KeysetCursorPagination):
+    """The chronological modes: a keyset over ``(post_created_at, id)`` (WP 4c.8-B3)."""
+
+    key_field = "post_created_at"
     ordering = "-post_created_at"
+
+    def get_page_size(self, request) -> int:
+        return _delivery_size(request)
 
 
 class SnoozeCursorPagination(CursorPagination):
@@ -130,6 +154,18 @@ class HomeFeedView(generics.ListAPIView):
             ),
             OpenApiParameter("peek", OpenApiTypes.BOOL, description="New rows only (D4)."),
             OpenApiParameter("since", OpenApiTypes.STR, description="Peek: rows after this."),
+            OpenApiParameter(
+                "entry",
+                OpenApiTypes.STR,
+                enum=list(ENTRIES),
+                description="How the client reached this page (validated; used from R3).",
+            ),
+            OpenApiParameter(
+                "limit",
+                OpenApiTypes.INT,
+                description="Items per page (1 to 100). Without it, the first page has "
+                "`delivery.first_page_size` items and later pages `delivery.page_size`.",
+            ),
         ],
         responses={200: FeedItemSerializer(many=True)},
         tags=["feed"],
@@ -138,6 +174,9 @@ class HomeFeedView(generics.ListAPIView):
         # WP 4b.14: the requesting account's own age class (rule E9b), from its own
         # token claims; safety data, captured whatever the personalization setting.
         age.capture(request.user.account_id, getattr(request.user, "claims", None))
+        entry = request.query_params.get("entry")
+        if entry is not None and entry not in ENTRIES:
+            raise ValidationError({"entry": [f"Must be one of: {', '.join(ENTRIES)}."]})
         mode = _mode(request)
         if request.query_params.get("peek") in ("1", "true"):
             return self._peek(request, mode)
@@ -151,6 +190,12 @@ class HomeFeedView(generics.ListAPIView):
                     request.user.account_id, response.data["data"], mode, offset=None, ranked=False
                 )
             response.data["mode"] = mode
+            # WP 4c.2-B3: every page carries the Home delivery block, so the web holds
+            # no delivery constants (08 section 7.2).
+            response.data["meta"] = {
+                **response.data.get("meta", {}),
+                "delivery": config.delivery_for("home"),
+            }
             # Ads go in after the organic page is complete (02 section 18), at the
             # config's slots, on the first page only; they never block organic content.
             if request.query_params.get("cursor") is None:
@@ -181,7 +226,7 @@ class HomeFeedView(generics.ListAPIView):
         return Response({"data": data, "mode": mode, "peek": True, "new_count": count})
 
     def _ranked(self, request) -> Response:
-        viewer, size = request.user.account_id, _page_size(request)
+        viewer, size = request.user.account_id, _delivery_size(request)
         token = request.query_params.get("cursor")
         claims = getattr(request.user, "claims", None)  # age claims for eligibility
         try:
@@ -236,6 +281,22 @@ class HomeFeedView(generics.ListAPIView):
 
     def get_queryset(self):
         return services.home_feed(self.request.user.account_id, _mode(self.request))
+
+
+DELIVERY_SURFACES = ("home", "reels", "video")
+
+
+class DeliveryView(APIView):
+    """``GET /feed/delivery/`` (WP 4c.2-B3): the delivery block of Home, Reels and
+    Video from the central config, for the surfaces whose pages do not come from
+    ``/feed/``. The same for every viewer: no per-viewer data, no version label."""
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: OpenApiTypes.OBJECT}, tags=["feed"])
+    def get(self, request):
+        body = {surface: config.delivery_for(surface) for surface in DELIVERY_SURFACES}
+        return data_response(body, headers={"Cache-Control": "private, max-age=300"})
 
 
 class HideView(APIView):

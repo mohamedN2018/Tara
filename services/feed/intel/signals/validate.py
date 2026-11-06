@@ -92,11 +92,32 @@ def watch_ceiling_ms(duration_ms: int | None) -> int:
     return base * REWATCH_CAP
 
 
-def check_shape(event: dict) -> None:
-    """Type, item kind, required fields and per-type value rules."""
+def impression_def_max() -> int:
+    """The newest impression rule a client may claim: the active Home config's
+    ``delivery.impression.def_version`` (read without copying the params)."""
+    from ..config import store
+
+    return int(store.resolve("home")[1]["delivery"]["impression"]["def_version"])
+
+
+def check_shape(event: dict, *, idef_max: int | None = None) -> None:
+    """Type, item kind, required fields and per-type value rules.
+
+    A ``feed_impression`` gets ``impression_def``: its ``idef`` when it is within 1
+    and ``idef_max`` (default: ``impression_def_max()``), else the event is dropped
+    (``invalid_idef``); 1 when it carries none (a client of the first rule)."""
     t = event["t"]
     if event["item_type"] not in ITEM_TYPES_FOR[t]:
         raise Reject("item_type")
+    if t == EventType.FEED_IMPRESSION:
+        idef = event.get("idef")
+        if idef is None:
+            event["impression_def"] = 1
+        else:
+            top = impression_def_max() if idef_max is None else idef_max
+            if not 1 <= idef <= top:
+                raise Reject("invalid_idef")
+            event["impression_def"] = idef
     for name in REQUIRED[t]:
         if event.get(name) is None:
             raise Reject("missing_field")

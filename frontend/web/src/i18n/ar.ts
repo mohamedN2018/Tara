@@ -22,6 +22,7 @@ import profileToolsAr from "./profileTools.ar";
 import adCtaAr from "./adCta.ar";
 import socialShellAr from "./socialShell.ar";
 import suggestedAr from "./suggested.ar";
+import deliveryAr from "./delivery.ar";
 
 export default {
   app: { name: "Tara", tagline: "تواصل. شارك. انتمِ.", promise: "أكثر من شبكة اجتماعية… مكان تنتمي إليه." },
@@ -1473,6 +1474,7 @@ export default {
   adCta: adCtaAr,
   socialShell: socialShellAr,
   suggested: suggestedAr,
+  delivery: deliveryAr,
   landing: {
     getStarted: "ابدأ الآن",
     headline: "مكانك بين",

@@ -143,9 +143,10 @@ export const postService = {
   },
 
   /** Published video posts the viewer may see, newest first (a page can be short: keep paging). */
-  async videos(cursor?: string | null, authorId?: string): Promise<CursorPage<Post>> {
+  /** `limit`: the page size from `delivery.video` (08 §7.2); the server's default without it. */
+  async videos(cursor?: string | null, authorId?: string, limit?: number): Promise<CursorPage<Post>> {
     const { data } = await api.get<CursorPage<Post>>("/posts/", {
-      params: { type: "video", cursor: cursor || undefined, author_id: authorId },
+      params: { type: "video", cursor: cursor || undefined, author_id: authorId, limit },
     });
     return data;
   },

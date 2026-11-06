@@ -784,7 +784,9 @@ it does not conflict.
   `MEDIA_VIDEO_MP4_FALLBACK`, `MEDIA_KEEP_VIDEO_ORIGINALS`,
   `MEDIA_TRANSCODE_STEP_TIMEOUT`, `MEDIA_PLAYBACK_SECRET` (empty: derived from
   `MEDIA_SECRET_KEY`), `MEDIA_PLAYBACK_TOKEN_TTL`,
-  `MEDIA_HLS_URL_WINDOW_SECONDS`, `MEDIA_PLAYBACK_ACCESS_CACHE_SECONDS`.
+  `MEDIA_HLS_URL_WINDOW_SECONDS`, `MEDIA_PLAYBACK_ACCESS_CACHE_SECONDS`,
+  `MEDIA_DISPLAY_URL_BUCKET_SECONDS` (3600: display URLs are signed per hour so
+  browsers cache them; each stays valid to the bucket's end plus 55 minutes).
   See `.env_prod.example`.
 - **S3 or Cloudflare R2 instead of MinIO:** set `MEDIA_TRANSCODER_S3_ACCESS_KEY`
   and `MEDIA_TRANSCODER_S3_SECRET_KEY` to a token limited to `videos/*` of the

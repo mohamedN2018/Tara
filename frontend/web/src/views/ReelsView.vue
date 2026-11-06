@@ -17,6 +17,7 @@ import ReelPager from "@/components/reels/ReelPager.vue";
 import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import StoryDialog from "@/components/stories/StoryDialog.vue";
+import { delivery, loadDelivery } from "@/lib/delivery";
 import { postService, REPORT_ERRORS } from "@/services/post";
 import { REEL_ERRORS, REEL_TABS, type Reel, type ReelTab, reelsService } from "@/services/reels";
 import { useAuthStore } from "@/stores/auth";
@@ -46,8 +47,11 @@ const creating = computed(() => route.query.create === "1");
 const current = computed(() => reels.value[activeIndex.value] ?? null);
 const isOwn = computed(() => !!current.value && current.value.author_id === auth.account?.id);
 
+// Page sizes from `delivery.reels` (08 §7.2): `first_page_size` first, then `page_size`.
+// The pager keeps its own "two left" trigger for the next page.
 function fetchPage(next: string | null): Promise<CursorPage<Reel>> {
-  return author.value ? reelsService.byAuthor(author.value, next) : reelsService.feed(tab.value, next);
+  const limit = next ? delivery("reels").page_size : delivery("reels").first_page_size;
+  return author.value ? reelsService.byAuthor(author.value, next) : reelsService.feed(tab.value, next, limit);
 }
 
 function merge(list: Reel[], extra: Reel[]): Reel[] {
@@ -101,7 +105,20 @@ async function loadMore() {
   if (loadingMore.value || !hasMore.value) return;
   loadingMore.value = true;
   try {
-    const page = await fetchPage(cursor.value);
+    // Retried with backoff (`next_page_retries`, `next_page_backoff_ms` × 2^n), then left
+    // for the next scroll near the end.
+    const { next_page_retries: retries, next_page_backoff_ms: backoff } = delivery("reels");
+    let page: CursorPage<Reel> | null = null;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        page = await fetchPage(cursor.value);
+        break;
+      } catch (e) {
+        if (attempt >= retries) throw e;
+        await new Promise<void>((resolve) => setTimeout(resolve, backoff * 2 ** attempt));
+      }
+    }
+    if (!page) return;
     reels.value = merge(reels.value, page.data);
     cursor.value = page.page.next_cursor;
     hasMore.value = page.page.has_more;
@@ -139,7 +156,10 @@ watch(
     void load();
   },
 );
-onMounted(load);
+onMounted(() => {
+  void loadDelivery();
+  void load();
+});
 
 function setTab(next: ReelTab) {
   void router.push({ name: "reels", query: next === "for_you" ? {} : { tab: next } });

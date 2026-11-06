@@ -24,6 +24,8 @@ export default defineConfig({
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
   build: {
+    // The manifest lets scripts/check-perf-budget.mjs sum the critical JS (08 §7.13).
+    manifest: true,
     // Split vendors so the framework + icons cache independently of app code
     // and load in parallel (smaller, long-cacheable chunks).
     rollupOptions: {

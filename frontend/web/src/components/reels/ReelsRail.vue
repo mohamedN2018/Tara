@@ -77,7 +77,7 @@ function scrollByTile(step: 1 | -1) {
             data-testid="reels-rail-item"
             :data-reel-id="r.id"
           >
-            <img v-if="thumbs[r.id]" :src="thumbs[r.id] ?? undefined" alt="" class="absolute inset-0 h-full w-full object-cover transition group-hover:scale-105" />
+            <img v-if="thumbs[r.id]" :src="thumbs[r.id] ?? undefined" alt="" loading="lazy" decoding="async" class="absolute inset-0 h-full w-full object-cover transition group-hover:scale-105" />
             <span class="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-black/20" />
             <span class="absolute start-2 top-2 flex items-center gap-1 rounded-full bg-black/45 px-1.5 py-0.5 text-[11px] font-semibold text-white">
               <Play class="h-3 w-3" aria-hidden="true" />{{ compactCount(r.reel.view_count, locale) }}

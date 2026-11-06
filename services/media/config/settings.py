@@ -176,6 +176,11 @@ MEDIA_PLAYBACK_SECRET = (
 MEDIA_PLAYBACK_TOKEN_TTL = int(os.getenv("MEDIA_PLAYBACK_TOKEN_TTL", "3600"))
 MEDIA_HLS_URL_WINDOW_SECONDS = int(os.getenv("MEDIA_HLS_URL_WINDOW_SECONDS", "300"))
 MEDIA_PLAYBACK_ACCESS_CACHE_SECONDS = int(os.getenv("MEDIA_PLAYBACK_ACCESS_CACHE_SECONDS", "30"))
+# Display GETs (images, thumbnails, display sizes, posters; Tara Intelligence WP
+# 4c.5-B3) are signed per bucket of this many seconds: one URL per object per bucket,
+# so browsers cache them across reloads (Cache-Control private, max-age=<bucket>).
+# Each URL is valid to the bucket's end plus 55 minutes.
+MEDIA_DISPLAY_URL_BUCKET_SECONDS = int(os.getenv("MEDIA_DISPLAY_URL_BUCKET_SECONDS", "3600"))
 
 # Restricted (non-public post) media ask post who may see them; fails closed.
 POST_INTERNAL_URL = os.getenv("POST_INTERNAL_URL", "http://post:8000")

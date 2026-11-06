@@ -50,7 +50,8 @@ def _crawl(client_for, viewer):
     client = client_with_claims(viewer, **ADULT_CLAIMS)  # E9: discovery needs an adult
     pages, cursor = [], None
     while True:
-        params = {"mode": "for_you"}
+        # 20 per page, as when these were written (first page 10 since WP 4c.2-B3).
+        params = {"mode": "for_you", "limit": 20}
         if cursor:
             params["cursor"] = cursor
         body = client.get("/api/v1/feed/", params).json()

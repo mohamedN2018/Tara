@@ -25,32 +25,22 @@ import {
   Users,
   X,
 } from "lucide-vue-next";
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { type RouteLocationRaw, useRoute } from "vue-router";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import VideoPlayer from "@/components/media/VideoPlayer.vue";
-import AudienceDialog from "@/components/post/AudienceDialog.vue";
 import CommentInput from "@/components/post/CommentInput.vue";
 import CommentItem from "@/components/post/CommentItem.vue";
-import CommentList from "@/components/post/CommentList.vue";
-import ComposerDialog from "@/components/post/ComposerDialog.vue";
 import LinkPreviewCard from "@/components/post/LinkPreviewCard.vue";
 import MediaGrid from "@/components/post/MediaGrid.vue";
-import MediaTheater from "@/components/post/MediaTheater.vue";
-import PostTheaterPanel, { type PanelState } from "@/components/post/PostTheaterPanel.vue";
+import type { PanelState } from "@/components/post/PostTheaterPanel.vue";
 import PollCard from "@/components/post/PollCard.vue";
 import PostActions from "@/components/post/PostActions.vue";
 import PostComposerMeta from "@/components/post/PostComposerMeta.vue";
-import ReactionsDialog from "@/components/post/ReactionsDialog.vue";
 import RichText from "@/components/post/RichText.vue";
-import SaveToCollection from "@/components/post/SaveToCollection.vue";
-import ShareBox from "@/components/post/ShareBox.vue";
 import SharedPostCard from "@/components/post/SharedPostCard.vue";
-import SharesDialog from "@/components/post/SharesDialog.vue";
-import WhyThisPost from "@/components/post/WhyThisPost.vue";
-import ConfirmActionDialog from "@/components/social/ConfirmActionDialog.vue";
 import NameHoverCard from "@/components/social/NameHoverCard.vue";
 import { AUDIENCE_ICON, audienceLabel } from "@/lib/audiences";
 import { downloadMedia } from "@/lib/downloadMedia";
@@ -71,6 +61,19 @@ import { useDirectoryStore } from "@/stores/directory";
 import { usePageDirectoryStore } from "@/stores/pageDirectory";
 import { useToastStore } from "@/stores/toasts";
 import type { Post } from "@/types";
+
+// Opened on demand: loaded as its own chunk, off the first-post path (08 §7.13, WP 4c.10-B3).
+const AudienceDialog = defineAsyncComponent(() => import("@/components/post/AudienceDialog.vue"));
+const PostTheaterPanel = defineAsyncComponent(() => import("@/components/post/PostTheaterPanel.vue"));
+const CommentList = defineAsyncComponent(() => import("@/components/post/CommentList.vue"));
+const ComposerDialog = defineAsyncComponent(() => import("@/components/post/ComposerDialog.vue"));
+const MediaTheater = defineAsyncComponent(() => import("@/components/post/MediaTheater.vue"));
+const ReactionsDialog = defineAsyncComponent(() => import("@/components/post/ReactionsDialog.vue"));
+const SaveToCollection = defineAsyncComponent(() => import("@/components/post/SaveToCollection.vue"));
+const ShareBox = defineAsyncComponent(() => import("@/components/post/ShareBox.vue"));
+const SharesDialog = defineAsyncComponent(() => import("@/components/post/SharesDialog.vue"));
+const WhyThisPost = defineAsyncComponent(() => import("@/components/post/WhyThisPost.vue"));
+const ConfirmActionDialog = defineAsyncComponent(() => import("@/components/social/ConfirmActionDialog.vue"));
 
 const props = withDefaults(
   defineProps<{
@@ -98,6 +101,8 @@ const props = withDefaults(
     feedReason?: FeedReason | null;
     /** The feed's sort, shown in "Why am I seeing this post?". */
     feedMode?: string | null;
+    /** The first card of a feed: its first image loads eagerly at high priority (08 §7.4). */
+    eagerMedia?: boolean;
   }>(),
   {
     startCommentsOpen: false,
@@ -111,6 +116,7 @@ const props = withDefaults(
     snoozable: false,
     feedReason: null,
     feedMode: null,
+    eagerMedia: false,
   },
 );
 const emit = defineEmits<{
@@ -906,7 +912,7 @@ const iconCls = "h-5 w-5 shrink-0 text-gray-600 dark:text-gray-300";
       >
         {{ t("reels.watchInReels") }}
       </RouterLink>
-      <MediaGrid v-if="post.type !== 'video' && post.type !== 'reel'" :media-ids="mediaIds" :author-name="authorDisplay" compact @open="viewer.open" />
+      <MediaGrid v-if="post.type !== 'video' && post.type !== 'reel'" :media-ids="mediaIds" :author-name="authorDisplay" compact :eager="eagerMedia" @open="viewer.open" />
     </div>
     <MediaTheater
       v-if="viewer.index.value !== null"

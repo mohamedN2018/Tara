@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 
 import { birthdaysService, type FriendBirthday } from "@/services/birthdays";
 import { useDirectoryStore } from "@/stores/directory";
+import { railsReady } from "@/lib/delivery";
 
 import { railHeading, railSection } from "./rightRail";
 
@@ -22,7 +23,9 @@ const keypath = computed(() =>
   today.value.length === 1 ? "socialShell.birthdays.railOne" : today.value.length === 2 ? "socialShell.birthdays.railTwo" : "socialShell.birthdays.railMany",
 );
 
+// Home holds the rails until its first post is on screen (08 §7.4); elsewhere they start at once.
 onMounted(async () => {
+  await railsReady();
   today.value = await birthdaysService
     .list(1)
     .then((rows) => rows.filter((r) => r.days_until === 0))

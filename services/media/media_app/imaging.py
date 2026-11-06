@@ -145,6 +145,84 @@ def thumbnail(content: bytes, size: int) -> bytes:
     return out.getvalue()
 
 
+# ---- display sizes (Tara Intelligence 08 section 7.8, WP 4c.5-B3) ---------------------
+
+
+def _display_mode(image):
+    """RGB, or RGBA when the image has transparency (WebP keeps it)."""
+    has_alpha = "A" in image.getbands() or "transparency" in image.info
+    want = "RGBA" if has_alpha else "RGB"
+    return image if image.mode == want else image.convert(want)
+
+
+def dimensions(content: bytes) -> tuple[int, int, bool]:
+    """``(width, height, animated)`` as displayed: the EXIF orientation applied
+    (a sanitized copy has none left, so this is its stored size)."""
+    with _open(content) as image:
+        width, height = image.size
+        if image.getexif().get(0x0112) in (5, 6, 7, 8):  # rotated a quarter turn
+            width, height = height, width
+        return width, height, getattr(image, "n_frames", 1) > 1
+
+
+def _scaled(image, size: tuple[int, int]):
+    from PIL import Image
+
+    return image if image.size == size else image.resize(size, Image.Resampling.LANCZOS)
+
+
+def _encode(image, fmt: str, quality: int) -> bytes:
+    out = io.BytesIO()
+    if fmt == "JPEG":
+        image.convert("RGB").save(out, "JPEG", quality=quality, optimize=True)
+    else:
+        image.save(out, fmt, quality=quality, method=4)
+    return out.getvalue()
+
+
+def longest_side_copies(
+    content: bytes, sides: tuple[int, ...], *, fmt: str = "WEBP", quality: int = 80
+) -> list[tuple[int, bytes, int, int]]:
+    """``(side, bytes, width, height)`` for each ``side`` the image reaches: a copy
+    whose longest side is ``side``. Never upscaled: a side longer than the image
+    is skipped (nothing is made for it). The image is decoded once."""
+    from PIL import ImageOps
+
+    with _open(content) as source:
+        if source.format == "JPEG" and sides:
+            # Decode at a reduced scale, still at least twice the largest copy.
+            source.draft("RGB", (2 * max(sides), 2 * max(sides)))
+        image = _display_mode(ImageOps.exif_transpose(source))
+        width, height = image.size
+        longest = max(width, height)
+        out = []
+        for side in sides:
+            if side > longest:
+                continue
+            size = (max(1, round(width * side / longest)), max(1, round(height * side / longest)))
+            copy = _scaled(image, size)
+            out.append((side, _encode(copy, fmt, quality), *copy.size))
+        return out
+
+
+def short_side_copy(
+    content: bytes, side: int, *, fmt: str = "JPEG", quality: int = 80
+) -> tuple[bytes, int, int] | None:
+    """A copy whose shorter side is ``side`` (``poster_480``), or None when the
+    image is smaller than that (never upscaled)."""
+    from PIL import ImageOps
+
+    with _open(content) as source:
+        image = _display_mode(ImageOps.exif_transpose(source))
+        width, height = image.size
+        short = min(width, height)
+        if side > short:
+            return None
+        size = (max(1, round(width * side / short)), max(1, round(height * side / short)))
+        copy = _scaled(image, size)
+        return _encode(copy, fmt, quality), *copy.size
+
+
 # ---- GIF: keep the image data, the frame timing and the loop count -------------------
 
 # Application extensions that rendering needs: the loop count and the ICC profile.

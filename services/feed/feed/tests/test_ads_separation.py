@@ -112,7 +112,9 @@ def test_later_pages_carry_no_ads(client_for, world, monkeypatch):
     second = client.get(
         reverse("feed:home-feed"), {"mode": "recent", "cursor": first["page"]["next_cursor"]}
     ).json()
-    assert "sponsored" not in second and "meta" not in second
+    assert "sponsored" not in second
+    # A later page's meta is the delivery block only (WP 4c.2-B3): no ad slots.
+    assert set(second["meta"]) == {"delivery"}
 
 
 def test_two_slots_only_when_the_config_says_so(client_for, world, monkeypatch):

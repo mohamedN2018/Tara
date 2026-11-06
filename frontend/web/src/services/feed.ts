@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import { applyDelivery, type DeliveryBlock } from "@/lib/delivery";
 import { postService } from "@/services/post";
 import type { CursorPage, FeedItem, Post, SponsoredSlot } from "@/types";
 
@@ -7,7 +8,7 @@ export interface FeedResponse {
   sponsored: SponsoredSlot | null;
   /** One ad per configured slot at most (WP 4.9); absent from older servers. */
   sponsored_slots?: SponsoredSlot[];
-  page: { next_cursor: string | null; has_more: boolean };
+  page: { next_cursor: string | null; has_more: boolean; prev_cursor?: string | null; fallback?: boolean };
   /** The ranking mode the server applied (2A). Absent from a server without modes. */
   mode?: string;
   /** First pages: the ad positions from the server's config, and the server time. */
@@ -16,8 +17,14 @@ export interface FeedResponse {
     as_of?: string;
     /** For-you pages (4b.6): where the viewer's own circle ran out and suggestions begin. */
     caught_up_index?: number | null;
+    /** The `delivery` block of the Home config (08 §7.2): page sizes, prefetch, video policy… */
+    delivery?: DeliveryBlock;
   };
 }
+
+/** Why a first page is asked for (08 §7.6): a normal open, a reload, a refresh, a return. */
+export const FEED_ENTRIES = ["open", "reload", "refresh", "return"] as const;
+export type FeedEntry = (typeof FEED_ENTRIES)[number];
 
 /** `?peek=1` (WP 4.7): new rows for the "new posts" pill, no session or ads touched. */
 export interface FeedPeek {
@@ -92,6 +99,31 @@ export interface HydratedFeedPage {
   asOf?: string;
   /** For-you (4b.6): index in this page's items where suggestions begin; null when none. */
   caughtUpIndex?: number | null;
+  /**
+   * Snapshot-first pages (08 §7.4): `posts` are the `/feed/` snapshots, to draw at
+   * once, and this resolves the live posts in feed order (a post the batch omits is
+   * gone). It rejects when the batch cannot be reached.
+   */
+  hydrated?: Promise<Post[]>;
+  /** post id -> the snapshot carried content (public, or the viewer's own); else ids only. */
+  snapshotContent?: Record<string, boolean>;
+  /** The server continued a ranked session in chronological order (08 §7.3). */
+  fallback?: boolean;
+}
+
+/** Whether the server sent this item's content in its snapshot (it strips it otherwise). */
+export function snapshotHasContent(item: FeedItem): boolean {
+  const s = item.snapshot ?? {};
+  const media = Array.isArray(s.media_ids) && s.media_ids.length > 0;
+  return (typeof s.excerpt === "string" && s.excerpt.length > 0) || (typeof s.body === "string" && s.body.length > 0) || media;
+}
+
+/** Live posts for feed items, in feed order; throws when the batch fails (no snapshot fallback). */
+export async function hydrateLive(items: FeedItem[]): Promise<Post[]> {
+  if (!items.length) return [];
+  const hints = { surface: "home", src: items.map((i) => i.source ?? i.reason ?? "") };
+  const live = new Map((await postService.batch(items.map((i) => i.post_id), hints)).map((p) => [p.id, p]));
+  return items.flatMap((i) => live.get(i.post_id) ?? []);
 }
 
 // Upper bound on fully-filtered pages followed in a row.
@@ -135,10 +167,12 @@ export async function hydrateFeed(items: FeedItem[]): Promise<Post[]> {
 export const feedService = {
   /** Home feed. `sponsored` is a sibling of `data` in the envelope (see docs). */
   /** `modeHint`: the offline fallback, used by the server only when it remembers no mode. */
-  async home(cursor?: string, mode?: FeedMode, modeHint?: FeedMode): Promise<FeedResponse> {
+  /** `entry`: first pages only (08 §7.6). No `limit`: the server applies the delivery page sizes. */
+  async home(cursor?: string, mode?: FeedMode, modeHint?: FeedMode, entry?: FeedEntry): Promise<FeedResponse> {
     const params: Record<string, string | undefined> = { cursor };
     if (mode) params.mode = mode;
     else if (modeHint) params.mode_hint = modeHint;
+    if (entry && !cursor) params.entry = entry;
     const { data } = await api.get<FeedResponse>("/feed/", { params });
     return data;
   },
@@ -151,10 +185,17 @@ export const feedService = {
 
   /** The next hydrated page, skipping pages whose posts have all disappeared.
    * With no `mode` the server picks the viewer's remembered one (`modeHint` as fallback). */
-  async page(cursor?: string, mode?: FeedMode, modeHint?: FeedMode): Promise<HydratedFeedPage> {
-    let resp = await this.home(cursor, mode, modeHint);
+  async page(
+    cursor?: string,
+    mode?: FeedMode,
+    modeHint?: FeedMode,
+    options: { entry?: FeedEntry; snapshots?: boolean } = {},
+  ): Promise<HydratedFeedPage> {
+    let resp = await this.home(cursor, mode, modeHint, options.entry);
     const served = isFeedMode(resp.mode) ? resp.mode : undefined;
     const modeApplied = !!served && (!mode || served === mode);
+    if (resp.meta?.delivery) applyDelivery("home", resp.meta.delivery);
+    if (options.snapshots) return snapshotPage(resp, served, modeApplied);
     let posts = await hydrateFeed(resp.data);
     const reasons: Record<string, FeedReason> = {};
     const serveTokens: Record<string, string> = {};
@@ -233,3 +274,46 @@ export const feedService = {
     return data;
   },
 };
+
+function noteOf(items: FeedItem[]) {
+  const reasons: Record<string, FeedReason> = {};
+  const serveTokens: Record<string, string> = {};
+  for (const i of items) {
+    reasons[i.post_id] = i.reason as FeedReason;
+    if (typeof i.st === "string" && i.st) serveTokens[i.post_id] = i.st;
+  }
+  return { reasons, serveTokens };
+}
+
+/** A page to draw from its snapshots at once; `hydrated` brings the live posts (08 §7.4). */
+function snapshotPage(resp: FeedResponse, served: FeedMode | undefined, modeApplied: boolean): HydratedFeedPage {
+  const { reasons, serveTokens } = noteOf(resp.data);
+  const snapshotContent: Record<string, boolean> = {};
+  const posts = resp.data.map((item) => {
+    const content = snapshotHasContent(item);
+    snapshotContent[item.post_id] = content;
+    const post = snapshotToPost(item);
+    // Only what the server sent: no content, no audience guess.
+    return content ? post : { ...post, body: "", media_ids: [], audience: (item.snapshot?.audience as string) ?? "" };
+  });
+  const caught = resp.meta?.caught_up_index;
+  const hydrated = hydrateLive(resp.data);
+  // A rejection is handled by the caller; keep it from being reported as unhandled meanwhile.
+  hydrated.catch(() => undefined);
+  return {
+    posts,
+    reasons,
+    serveTokens,
+    sponsored: resp.sponsored_slots ?? (resp.sponsored ? [resp.sponsored] : []),
+    caughtUpIndex: Number.isInteger(caught) ? (caught as number) : null,
+    nextCursor: resp.page.next_cursor,
+    hasMore: resp.page.has_more,
+    modeApplied,
+    mode: served,
+    adSlots: resp.meta?.ad_slots?.filter((n) => Number.isInteger(n) && n >= 0),
+    asOf: resp.meta?.as_of,
+    hydrated,
+    snapshotContent,
+    fallback: resp.page.fallback === true,
+  };
+}

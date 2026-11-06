@@ -124,7 +124,7 @@ def _v2b_problems(mutate):
 
 def test_home_v2b_is_valid_and_carries_the_planned_values():
     params = _v2b()
-    assert schema.SCHEMA_VERSION == 2
+    assert schema.SCHEMA_VERSION >= 2  # 3 since WP 4c.2-B3 (delivery)
     assert schema.validate("home", params) == []
     assert params["schema_version"] == 2
     assert params["mix"] == {

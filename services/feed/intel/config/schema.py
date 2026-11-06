@@ -12,7 +12,10 @@ or activated. The rules:
   (``exposure``, ``session`` v2, ``delivery`` ...) arrives with a schema bump and its
   own spec, never by accepting unknown keys. Version 2 (07 WP 4b.6, 4b.11) adds
   ``mix``, ``continuation``, ``head`` and the ``popular`` / ``fresh`` pool keys; a
-  version-1 params set that carries any of them is rejected.
+  version-1 params set that carries any of them is rejected. Version 3 (08 sections
+  7.2 and 15.1, WP 4c.2-B3) adds ``delivery`` (home, reels, video); a stored
+  version below 3 that carries it is rejected. Versions stored before it get the
+  block from the package defaults (``store.merge``).
 
 The specs are frozen dataclasses (``Num``, ``Int``, ``Bool``, ``Section``, ``Map``,
 ``ListOf``); ``validate(surface, params)`` returns the list of problems (empty when
@@ -25,8 +28,10 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SURFACES = ("home", "reels", "video", "groups")
+# The surfaces that carry a ``delivery`` block (WP 4c.2-B3).
+DELIVERY_SURFACES = ("home", "reels", "video")
 POST_TYPES = ("text", "image", "video", "link", "share", "poll", "reel")
 SOURCES = ("connections", "follow_pull", "groups", "reels", "video")
 # Candidate reasons a relationship prior can name (sources' ``reason`` codes).
@@ -423,6 +428,55 @@ ADS = Section(
     optional=frozenset({"first_page_only"}),
 )
 WHY = Section({"max_factors": Int(1, 10), "interacted_min_interactions": Int(0, 1_000)})
+# How the web loads and shows a surface (08 sections 7.2, 7.9, 7.12, 15.1; WP
+# 4c.2-B3). Served as ``meta.delivery`` and by ``GET /feed/delivery/`` exactly as
+# validated (it has no server-only key), so the web holds no delivery constants.
+DELIVERY_VIDEO = Section(
+    {
+        "autoplay": Str(("muted_single", "click")),
+        "min_visible": UNIT,
+        "min_visible_ms": Int(0, 10_000),
+        "pause_below": UNIT,
+        "load_margin_vp": Num(0.0, 10.0),
+        "unmount_beyond_vp": Num(0.0, 20.0),
+        "respect_save_data": Bool(),
+        "respect_reduced_motion": Bool(),
+    }
+)
+# The impression rule (08 section 7.12): >= ``min_card_visible`` of the card OR >=
+# ``min_viewport_cover`` of the viewport covered by it, for ``min_ms``; telemetry
+# rows carry ``def_version`` (``impression_def``) so rates of two rules never mix.
+DELIVERY_IMPRESSION = Section(
+    {
+        "min_card_visible": UNIT,
+        "min_viewport_cover": UNIT,
+        "min_ms": Int(100, 10_000),
+        "def_version": Int(1, 2),
+    }
+)
+DELIVERY = Section(
+    {
+        "first_page_size": Int(1, 100),
+        "page_size": Int(1, 100),
+        "prefetch_remaining_items": Int(0, 50),
+        "prefetch_root_margin_vp": Num(0.0, 10.0),
+        "media_warm_items": Int(0, 50),
+        "media_resolve_window_ms": Int(0, 200),
+        "virtualize_after_items": Int(0, 1_000),
+        "keep_mounted_vp": Num(1.0, 20.0),
+        "next_page_retries": Int(0, 10),
+        "next_page_backoff_ms": Int(0, 60_000),
+        "defer_rails_until_first_post": Bool(),
+        # The rail fallback of 08 section 7.4 (1.5 s), so it is not a web literal.
+        "defer_rails_max_ms": Int(0, 10_000),
+        # Reload position (08 section 7.6): a reload within this many minutes returns
+        # to the card on screen, paging forward at most ``reload_max_pages`` pages.
+        "reload_window_min": Int(0, 1_440),
+        "reload_max_pages": Int(0, 10),
+        "video": DELIVERY_VIDEO,
+        "impression": DELIVERY_IMPRESSION,
+    }
+)
 
 _HEADER = {
     "schema_version": Int(1, SCHEMA_VERSION),
@@ -467,6 +521,7 @@ SCHEMAS: dict[str, Section] = {
             "mix": MIX,
             "continuation": CONTINUATION,
             "head": HEAD,
+            "delivery": DELIVERY,
         },
         optional=frozenset(
             {
@@ -479,13 +534,21 @@ SCHEMAS: dict[str, Section] = {
                 "mix",
                 "continuation",
                 "head",
+                "delivery",
             }
         ),
     ),
     **{
         s: Section(
-            {**_HEADER, **_COMMON, "media_quality": MEDIA_QUALITY},
-            optional=frozenset({"retrieval", "pools", "media_quality", *_RANKING_BLOCKS}),
+            {
+                **_HEADER,
+                **_COMMON,
+                "media_quality": MEDIA_QUALITY,
+                **({"delivery": DELIVERY} if s in DELIVERY_SURFACES else {}),
+            },
+            optional=frozenset(
+                {"retrieval", "pools", "media_quality", "delivery", *_RANKING_BLOCKS}
+            ),
         )
         for s in ("reels", "video", "groups")
     },
@@ -507,11 +570,17 @@ def validate(surface: str, params: Any) -> list[str]:
 
 # Blocks and pool keys that schema version 2 introduced (WP 4b.6, 4b.11).
 V2_SECTIONS = ("mix", "continuation", "head")
+# Blocks that schema version 3 introduced (WP 4c.2-B3).
+V3_SECTIONS = ("delivery",)
 
 
 def _version_rules(params: dict) -> list[str]:
     out = []
     version = params.get("schema_version")
+    if isinstance(version, int) and not isinstance(version, bool) and version < 3:
+        for name in V3_SECTIONS:
+            if name in params:
+                out.append(f"{name}: needs schema_version 3")
     if isinstance(version, int) and not isinstance(version, bool) and version < 2:
         for name in V2_SECTIONS:
             if name in params:

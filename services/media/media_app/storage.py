@@ -294,7 +294,12 @@ def _hmac(key: bytes, msg: str) -> bytes:
 
 
 def presign_get_at(
-    storage_key: str, *, signed_at: int, expires: int, content_type: str = ""
+    storage_key: str,
+    *,
+    signed_at: int,
+    expires: int,
+    content_type: str = "",
+    cache_control: str = "",
 ) -> str:
     """A SigV4 presigned GET URL signed *as of* ``signed_at`` (epoch seconds).
 
@@ -303,6 +308,8 @@ def presign_get_at(
     instead (roadmap 5.3): everyone gets the same URL for a segment within a
     bucket, so browser and edge caches keep working, and the URL still expires.
     Same algorithm as boto3's ``generate_presigned_url`` for a path-style GET.
+    ``cache_control`` is signed in as ``response-cache-control`` (the object is
+    served with that ``Cache-Control``).
     """
     if _backend() in ("fake", "memory"):
         query = urlencode(
@@ -310,6 +317,7 @@ def presign_get_at(
                 "fake-download": 1,
                 "X-Amz-Date": time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(signed_at)),
                 "X-Amz-Expires": expires,
+                **({"response-cache-control": cache_control} if cache_control else {}),
                 **({"response-content-type": content_type} if content_type else {}),
             }
         )
@@ -329,6 +337,8 @@ def presign_get_at(
     }
     if content_type:
         params["response-content-type"] = content_type
+    if cache_control:
+        params["response-cache-control"] = cache_control
     query = "&".join(
         f"{quote(k, safe='-_.~')}={quote(v, safe='-_.~')}" for k, v in sorted(params.items())
     )
@@ -341,3 +351,35 @@ def presign_get_at(
         key = _hmac(key, part)
     signature = hmac.new(key, to_sign.encode(), hashlib.sha256).hexdigest()
     return f"{endpoint.scheme}://{host}{uri}?{query}&X-Amz-Signature={signature}"
+
+
+# ---- display URLs (Tara Intelligence 08 section 7.8, WP 4c.5-B3) ---------------------
+
+# Every display URL stays valid at least this long after it is served (55 min), so
+# a client that caches it for its ``urls_expire_at`` never holds a dead one.
+DISPLAY_URL_MIN_VALID_SECONDS = 3300
+
+
+def display_window(now: float | None = None) -> tuple[int, int, int]:
+    """``(signed_at, expires, bucket)``: the start of the current bucket of
+    ``MEDIA_DISPLAY_URL_BUCKET_SECONDS``, and a lifetime running the rest of the
+    bucket plus ``DISPLAY_URL_MIN_VALID_SECONDS``. Every request in one bucket
+    gets the same URL, so the browser cache hits across reloads."""
+    bucket = max(60, int(settings.MEDIA_DISPLAY_URL_BUCKET_SECONDS))
+    now = int(now if now is not None else time.time())
+    return now - now % bucket, bucket + DISPLAY_URL_MIN_VALID_SECONDS, bucket
+
+
+def presign_display(storage_key: str, *, content_type: str, now: float | None = None):
+    """``(url, expires_at)``: a bucketed GET of something shown in place (an image,
+    a thumbnail, a display size, a poster), served with ``Cache-Control: private,
+    max-age=<bucket>``. ``expires_at`` is epoch seconds."""
+    signed_at, expires, bucket = display_window(now)
+    url = presign_get_at(
+        storage_key,
+        signed_at=signed_at,
+        expires=expires,
+        content_type=content_type,
+        cache_control=f"private, max-age={bucket}",
+    )
+    return url, signed_at + expires

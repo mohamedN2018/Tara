@@ -195,9 +195,14 @@ def ingest(account_id, batch: dict, *, now: datetime | None = None) -> IngestRes
         state = _load_session(account_id, batch["session_id"], now)
 
     rows = []
+    idef_max = (
+        validate.impression_def_max()
+        if any(e["t"] == EventType.FEED_IMPRESSION for e in events)
+        else None
+    )
     for event in events:
         try:
-            validate.check_shape(event)
+            validate.check_shape(event, idef_max=idef_max)
             occurred, flags = event["ts"], 0
             if abs(occurred - now) > validate.TS_WINDOW:
                 occurred, flags = now, SignalFlag.TS_CLAMPED
@@ -217,6 +222,7 @@ def ingest(account_id, batch: dict, *, now: datetime | None = None) -> IngestRes
                 watch_ms=event.get("watch_ms"),
                 pos_ms=event.get("pos_ms"),
                 play_index=event.get("play_index"),
+                impression_def=event.get("impression_def"),
                 **{k: v for k, v in attribution.items() if k != "flags"},
             )
             row.flags = flags | attribution["flags"]

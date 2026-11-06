@@ -36,7 +36,7 @@ from django.db import transaction
 from django.utils import timezone
 from PIL import Image
 
-from . import events, storage, video
+from . import events, imaging, storage, video
 from .models import MediaAsset, MediaVariant
 from .tasks import RETRY_BACKOFF, is_transient
 from .video import Probe, VideoError
@@ -154,11 +154,16 @@ def prepare(self, media_id: str) -> None:
                 width, height = img.size
             key = f"{asset.storage_key}/poster.jpg"
             storage.upload_from(key, poster, "image/jpeg")
+            small = poster_480(asset, poster.read_bytes())
         MediaVariant.objects.update_or_create(
             media=asset,
             kind=MediaVariant.Kind.POSTER,
             defaults={"storage_key": key, "width": width, "height": height},
         )
+        if small is not None:
+            MediaVariant.objects.update_or_create(
+                media=asset, kind=MediaVariant.Kind.POSTER_480, defaults=small
+            )
         rungs = video.ladder(probe)
         meta = dict(MediaAsset.objects.get(pk=asset.pk).video_meta or {})
         meta.update({"probe": probe.as_meta(), "rungs": rungs})
@@ -175,6 +180,22 @@ def prepare(self, media_id: str) -> None:
         _mark_chain_started(asset.pk)
 
     _run_step(self, media_id, "prepare", body)
+
+
+POSTER_480_SIDE = 480
+
+
+def poster_480(asset: MediaAsset, poster: bytes) -> dict | None:
+    """Write the thumb-sized poster next to ``poster.jpg`` (WP 4c.6-B3): a JPEG
+    whose short side is 480, never upscaled (None, nothing written, for a smaller
+    poster). Returns the variant row's fields."""
+    made = imaging.short_side_copy(poster, POSTER_480_SIDE)
+    if made is None:
+        return None
+    content, width, height = made
+    key = f"{asset.storage_key}/poster_480.jpg"
+    storage.write(key, content, "image/jpeg")
+    return {"storage_key": key, "width": width, "height": height}
 
 
 def _bandwidth(manifest: str, sizes: dict[str, int]) -> tuple[int, int]:

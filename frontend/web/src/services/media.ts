@@ -1,5 +1,6 @@
 import { api } from "@/lib/api";
 import { createBatchLoader } from "@/lib/batchLoader";
+import { delivery } from "@/lib/delivery";
 import { uploadMime } from "@/lib/heic";
 
 export interface MediaVariant {
@@ -19,7 +20,23 @@ export interface MediaAsset {
   visibility?: string;
   url: string | null; // presigned GET url, present only once status === "ready"
   variants?: MediaVariant[];
+  /** Image size in pixels (08 §7.8); null or absent on older assets. */
+  width?: number | null;
+  height?: number | null;
+  /** When the signed URLs of this answer stop working (epoch seconds; 08 §7.8). */
+  urls_expire_at?: number | null;
 }
+
+/** What an <img> needs for one media id (08 §7.8): never a size the server did not send. */
+export interface MediaView {
+  src: string;
+  srcset?: string;
+  width?: number;
+  height?: number;
+}
+
+// The variants a feed image may use, in srcset order (08 §7.8).
+const SRCSET_KINDS = ["thumb", "display_640", "display_1280"] as const;
 
 interface SignResult {
   media_id: string;
@@ -29,10 +46,38 @@ interface SignResult {
   expires_in: number;
 }
 
-// Cache resolved display URLs by media id. Presigned URLs expire (~15 min), so
-// entries carry a timestamp and are re-resolved after a TTL safely below that.
-const urlCache = new Map<string, { url: string; at: number }>();
+// Cache resolved display URLs by media id, with the asset's variants and size.
+// An answer that says when its signed URLs expire (`urls_expire_at`, hour
+// buckets on the server) is kept until then minus a safety margin; an older
+// server's answer is kept for URL_TTL_MS, safely below its ~15 min signature.
+interface CachedMedia {
+  url: string;
+  until: number;
+  variants: Record<string, { url: string; width?: number; height?: number }>;
+  width?: number;
+  height?: number;
+}
+const urlCache = new Map<string, CachedMedia>();
 const URL_TTL_MS = 10 * 60 * 1000;
+const EXPIRY_MARGIN_MS = 2 * 60 * 1000;
+const fresh = (c: CachedMedia | undefined): c is CachedMedia => !!c && Date.now() < c.until;
+const size = (n: unknown): number | undefined => (typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.round(n) : undefined);
+
+function remember(id: string, asset: MediaAsset): CachedMedia | null {
+  const url = viaStorageProxy(asset.url);
+  if (!url) return null;
+  const expires = typeof asset.urls_expire_at === "number" && asset.urls_expire_at > 0 ? asset.urls_expire_at * 1000 : null;
+  const until = expires ? Math.max(Date.now(), expires - EXPIRY_MARGIN_MS) : Date.now() + URL_TTL_MS;
+  const variants: CachedMedia["variants"] = {};
+  for (const v of asset.variants ?? []) {
+    const vurl = viaStorageProxy(v.url);
+    if (v.kind && vurl) variants[v.kind] = { url: vurl, width: size(v.width), height: size(v.height) };
+  }
+  const entry: CachedMedia = { url, until, variants, width: size(asset.width), height: size(asset.height) };
+  urlCache.set(id, entry);
+  return entry;
+}
+
 // Ids media left out (unknown, deleted, not visible to this viewer): not asked
 // again for a short while, so every remount of a tile does not repeat the call.
 const missCache = new Map<string, number>();
@@ -40,10 +85,13 @@ const MISS_TTL_MS = 60 * 1000;
 
 // Every lookup made while a page renders goes out in one `POST /media/resolve/`
 // (at most 100 ids), with 429s retried; see lib/batchLoader.ts.
+// The gathering window is the server's `delivery.media_resolve_window_ms` (08 §7.8),
+// so one page's mounts make one or two calls.
 const assets = createBatchLoader<MediaAsset>({
   label: "media",
   fetch: async (ids) => (await api.post<{ data: MediaAsset[] }>("/media/resolve/", { ids })).data.data,
   idOf: (a) => a.id,
+  windowMs: () => delivery("home").media_resolve_window_ms,
 });
 
 /** Forget cached URLs and misses (sign-out, tests). */
@@ -120,7 +168,7 @@ export const mediaService = {
   /** A still-fresh cached URL, synchronously (no request); null otherwise. */
   cachedUrl(id: string): string | null {
     const cached = urlCache.get(id);
-    return cached && Date.now() - cached.at < URL_TTL_MS ? cached.url : null;
+    return fresh(cached) ? cached.url : null;
   },
 
   /**
@@ -137,10 +185,15 @@ export const mediaService = {
    * batch loader and falls back to the last good URL.
    */
   async resolveUrl(id: string): Promise<string | null> {
+    return (await this.resolveCached(id))?.url ?? null;
+  },
+
+  /** The cache entry for `id`, resolving it when missing or expired; the last good one on failure. */
+  async resolveCached(id: string): Promise<CachedMedia | null> {
     const cached = urlCache.get(id);
-    if (cached && Date.now() - cached.at < URL_TTL_MS) return cached.url;
+    if (fresh(cached)) return cached;
     const missed = missCache.get(id);
-    if (missed && Date.now() - missed < MISS_TTL_MS) return cached?.url ?? null;
+    if (missed && Date.now() - missed < MISS_TTL_MS) return cached ?? null;
     try {
       const asset = await this.resolveAsset(id);
       if (!asset) {
@@ -148,11 +201,53 @@ export const mediaService = {
         return null;
       }
       missCache.delete(id);
-      const url = viaStorageProxy(asset.url);
-      if (url) urlCache.set(id, { url, at: Date.now() });
-      return url ?? cached?.url ?? null;
+      return remember(id, asset) ?? cached ?? null;
     } catch {
-      return cached?.url ?? null;
+      return cached ?? null;
     }
   },
+
+  /** The 320 px thumbnail (grid tiles, avatars); the display URL when there is none. */
+  async resolveThumb(id: string): Promise<string | null> {
+    const entry = await this.resolveCached(id);
+    return entry ? (entry.variants.thumb?.url ?? entry.url) : null;
+  },
+
+  /** A cached thumbnail, synchronously (no request); null otherwise. */
+  cachedThumb(id: string): string | null {
+    const entry = urlCache.get(id);
+    return fresh(entry) ? (entry.variants.thumb?.url ?? entry.url) : null;
+  },
+
+  /**
+   * A single image's src, srcset and size (08 §7.8): `thumb 320w, display_640 640w,
+   * display_1280 1280w` from the widths the server sent; a variant without a width
+   * is left out, and no srcset is made from nothing.
+   */
+  async resolveSrcset(id: string): Promise<MediaView | null> {
+    const entry = await this.resolveCached(id);
+    return entry ? srcsetOf(entry) : null;
+  },
+
+  /** Warm the URLs of these ids in one batched call (08 §7.5); thumbs load at low priority. */
+  warm(ids: string[]): Promise<void> {
+    return Promise.all(ids.map((id) => this.resolveCached(id))).then(() => undefined);
+  },
 };
+
+/** The <img> attributes for a cache entry (exported for tests). */
+export function srcsetOf(entry: Pick<CachedMedia, "url" | "variants" | "width" | "height">): MediaView {
+  const parts: string[] = [];
+  for (const kind of SRCSET_KINDS) {
+    const v = entry.variants[kind];
+    if (v?.url && v.width) parts.push(`${v.url} ${v.width}w`);
+  }
+  const src = entry.variants.display_640?.url ?? entry.url;
+  const view: MediaView = { src };
+  if (parts.length > 1) view.srcset = parts.join(", ");
+  if (entry.width && entry.height) {
+    view.width = entry.width;
+    view.height = entry.height;
+  }
+  return view;
+}

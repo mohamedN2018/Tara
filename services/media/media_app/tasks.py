@@ -110,21 +110,52 @@ def clean_image(asset: MediaAsset) -> None:
 
 
 def derive_variants(asset: MediaAsset) -> list[tuple[str, str, dict]]:
-    """Write the thumbnail of an image and make sure its variant row exists.
+    """Write the thumbnail and the display sizes of an image, make sure their
+    variant rows exist, and record the image's real width and height.
 
-    Video and audio are served as uploaded for now.
+    Display sizes (WP 4c.5-B3): WebP copies with the longest side 640 and 1280,
+    never upscaled (a size the image does not reach is not made), and none for an
+    animated image (a still copy would stop the animation). Every size recorded is
+    read from the copy itself. Video and audio are served as uploaded for now.
     """
     if asset.kind != MediaAsset.Kind.IMAGE:
         return []
     key = f"{asset.storage_key}/thumb.jpg"
-    if settings.STORAGE_BACKEND != "fake":
-        storage.write(key, _thumbnail(storage.read(asset.storage_key)), "image/jpeg")
-    variants = [(MediaVariant.Kind.THUMB, key, {"width": THUMB_SIZE, "height": THUMB_SIZE})]
+    if settings.STORAGE_BACKEND == "fake":  # no object to read (unit tests)
+        variants = [(MediaVariant.Kind.THUMB, key, {"width": THUMB_SIZE, "height": THUMB_SIZE})]
+    else:
+        source = storage.read(asset.storage_key)
+        thumb = _thumbnail(source)
+        storage.write(key, thumb, "image/jpeg")
+        width, height, _ = imaging.dimensions(thumb)
+        variants = [(MediaVariant.Kind.THUMB, key, {"width": width, "height": height})]
+        variants += display_variants(asset, source)
     for kind, variant_key, meta in variants:
-        MediaVariant.objects.get_or_create(
+        MediaVariant.objects.update_or_create(
             media=asset, kind=kind, defaults={"storage_key": variant_key, **meta}
         )
     return variants
+
+
+DISPLAY_SIZES = ((MediaVariant.Kind.DISPLAY_640, 640), (MediaVariant.Kind.DISPLAY_1280, 1280))
+
+
+def display_variants(asset: MediaAsset, source: bytes) -> list[tuple[str, str, dict]]:
+    """Write the display sizes of the image ``source`` (its clean copy) and set the
+    asset's real ``width``/``height`` (saved here, whoever the caller is)."""
+    width, height, animated = imaging.dimensions(source)
+    if (asset.width, asset.height) != (width, height):
+        asset.width, asset.height = width, height
+        MediaAsset.objects.filter(pk=asset.pk).update(width=width, height=height)
+    if animated:
+        return []
+    kinds = {side: kind for kind, side in DISPLAY_SIZES}
+    out = []
+    for side, content, w, h in imaging.longest_side_copies(source, tuple(kinds)):
+        key = f"{asset.storage_key}/{kinds[side]}.webp"
+        storage.write(key, content, "image/webp")
+        out.append((kinds[side], key, {"width": w, "height": h}))
+    return out
 
 
 def _thumbnail(content: bytes) -> bytes:

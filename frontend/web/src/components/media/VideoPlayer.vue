@@ -6,10 +6,20 @@
 // controls and the timeline stay left to right in every language (they follow
 // the media, not the text: Material and Apple guidelines), so the range input
 // must not inherit the page's dir="rtl" and run backwards.
+//
+// Delivery policy (08 §7.9, WP 4c.6-B3), from the surface's `delivery.video`:
+// the playback token and the poster are asked for only once the player comes
+// within `load_margin_vp` viewports; a player more than `unmount_beyond_vp`
+// viewports away gives up its <video> and hls.js and shows its poster; feed
+// players (those with a signal item) follow lib/playbackCoordinator
+// (`muted_single`: one muted autoplay at a time, data-saver and reduced-motion
+// respected). `preload="none"` stays.
 import { AlertTriangle, Loader2, Maximize, Minimize, Pause, Play, VideoOff, Volume2, VolumeX } from "lucide-vue-next";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
+import { delivery, type DeliverySurface } from "@/lib/delivery";
+import { claim, type CoordinatedPlayer, noteUnmute, register, report, userPaused } from "@/lib/playbackCoordinator";
 import type { SignalSurface } from "@/lib/signals";
 import { bindWatchSignals } from "@/lib/videoSignals";
 import { viaStorageProxy } from "@/services/media";
@@ -53,6 +63,20 @@ const fullscreen = ref(false);
 let hls: HlsInstance | null = null;
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let observer: IntersectionObserver | null = null;
+let nearObserver: IntersectionObserver | null = null;
+let farObserver: IntersectionObserver | null = null;
+
+// The surface's delivery block (Home's for any other surface).
+const BLOCK_OF: Partial<Record<SignalSurface, DeliverySurface>> = { home: "home", reels: "reels", video: "video" };
+const policy = () => delivery(BLOCK_OF[props.signalSurface] ?? "home").video;
+const observable = typeof IntersectionObserver !== "undefined";
+// Without IntersectionObserver (old browsers, tests) the player loads at once, as before.
+const active = ref(!observable);
+const asked = ref(false);
+const poster = computed(() => {
+  const p = info.value as (Playback & { poster_480_url?: string | null }) | null;
+  return p?.poster_480_url || p?.poster_url || undefined;
+});
 // Segment URLs expire every few minutes, so a long video needs many refreshes. A
 // refresh counts as done once playback resumes (`playing`); a failure before
 // that, or a second one within REFRESH_MIN_GAP_MS, is a real error, not a loop.
@@ -103,6 +127,7 @@ function schedulePoll() {
 }
 
 async function load(): Promise<Playback | null> {
+  asked.value = true;
   try {
     const p = await videoService.playback(props.mediaId);
     if (!disposed) apply(p);
@@ -206,8 +231,13 @@ async function play() {
 function toggle() {
   const video = el.value;
   if (!video) return;
-  if (!started.value || video.paused) void play();
-  else video.pause();
+  if (!started.value || video.paused) {
+    if (coordinated) claim(self);
+    void play();
+  } else {
+    video.pause();
+    if (coordinated) userPaused(self);
+  }
 }
 
 function seek(e: Event) {
@@ -222,6 +252,8 @@ function toggleMute() {
   if (!el.value) return;
   el.value.muted = !el.value.muted;
   muted.value = el.value.muted;
+  // The viewer wants sound: the next video the policy starts keeps it (once).
+  if (!muted.value && coordinated) noteUnmute();
 }
 
 async function toggleFullscreen() {
@@ -264,24 +296,85 @@ async function retry() {
   await load();
 }
 
+// The coordinator's view of this player (feed players only: they carry a signal item).
+const coordinated = !!props.signalItem;
+const self: CoordinatedPlayer = {
+  ratio: 0,
+  policy,
+  autoplay: async (mute: boolean) => {
+    const video = el.value;
+    if (!video || state.value !== "ready" || !info.value) return false;
+    video.muted = mute;
+    muted.value = mute;
+    await play();
+    if (!video.paused) return true;
+    if (!mute) return self.autoplay(true); // sound refused by the browser: muted then
+    return false;
+  },
+  pause: () => {
+    if (el.value && !el.value.paused) el.value.pause();
+  },
+};
+let unregister: (() => void) | null = null;
+
+/** Far away: give the <video> and hls.js back, keep the poster. */
+function park() {
+  if (!active.value) return;
+  self.pause();
+  hls?.destroy();
+  hls = null;
+  started.value = false;
+  playing.value = false;
+  waiting.value = false;
+  active.value = false;
+}
+
+function observeDistance(node: HTMLElement) {
+  const vh = window.innerHeight || 800;
+  const p = policy();
+  nearObserver = new IntersectionObserver(
+    ([entry]) => {
+      if (!entry?.isIntersecting) return;
+      active.value = true;
+      if (!asked.value) void load();
+    },
+    { rootMargin: `${Math.round(p.load_margin_vp * vh)}px 0px` },
+  );
+  nearObserver.observe(node);
+  farObserver = new IntersectionObserver(
+    ([entry]) => {
+      if (entry && !entry.isIntersecting) park();
+    },
+    { rootMargin: `${Math.round(p.unmount_beyond_vp * vh)}px 0px` },
+  );
+  farObserver.observe(node);
+}
+
 onMounted(() => {
-  void load();
+  if (!observable) void load();
   document.addEventListener("fullscreenchange", onFullscreenChange);
-  // Leaving the screen pauses, like a feed should.
-  if (typeof IntersectionObserver !== "undefined" && root.value) {
+  if (observable && root.value) {
+    observeDistance(root.value);
+    // Leaving the screen pauses, like a feed should; feed players report how visible they are.
     observer = new IntersectionObserver(
       ([entry]) => {
-        if (!entry?.isIntersecting && el.value && !el.value.paused) el.value.pause();
+        const ratio = entry?.isIntersecting ? entry.intersectionRatio : 0;
+        if (ratio < policy().pause_below && el.value && !el.value.paused) el.value.pause();
+        if (coordinated) report(self, ratio);
       },
-      { threshold: 0.25 },
+      { threshold: [0, 0.1, 0.25, 0.4, 0.6, 0.8, 1] },
     );
     observer.observe(root.value);
   }
+  if (coordinated) unregister = register(self);
 });
 
 watch(
   () => props.mediaId,
-  () => void retry(),
+  () => {
+    if (active.value || !observable) void retry();
+    else asked.value = false; // asked for again when it comes near
+  },
 );
 
 // Watch signals from what really played (start, progress, complete, rewatch, skip).
@@ -301,6 +394,9 @@ onBeforeUnmount(() => {
   disposed = true;
   if (pollTimer) clearTimeout(pollTimer);
   observer?.disconnect();
+  nearObserver?.disconnect();
+  farObserver?.disconnect();
+  unregister?.();
   document.removeEventListener("fullscreenchange", onFullscreenChange);
   hls?.destroy();
   hls = null;
@@ -316,12 +412,24 @@ defineExpose({ play, state });
     :style="{ aspectRatio: ratio, maxHeight: '75vh' }"
     data-testid="video-player"
     :data-state="state"
+    :data-loaded="asked ? '1' : '0'"
     @keydown="onKey"
   >
+    <!-- Far away (or not near yet): no <video>; the poster once known. -->
+    <img
+      v-if="!active && poster"
+      :src="poster"
+      alt=""
+      class="h-full w-full object-contain"
+      loading="lazy"
+      decoding="async"
+      data-poster
+    />
     <video
+      v-if="active"
       ref="el"
       class="h-full w-full object-contain"
-      :poster="info?.poster_url || undefined"
+      :poster="poster"
       playsinline
       preload="none"
       :aria-label="label || t('video.player.label')"
@@ -372,7 +480,7 @@ defineExpose({ play, state });
         class="absolute inset-0 m-auto flex h-16 w-16 items-center justify-center rounded-full bg-black/55 text-white shadow-lg transition hover:bg-brand-600 focus:outline-none focus-visible:ring-4 focus-visible:ring-brand-400"
         :aria-label="t('video.player.play')"
         data-testid="video-play"
-        @click="play"
+        @click="toggle"
       >
         <Play class="h-8 w-8" aria-hidden="true" />
       </button>

@@ -7,6 +7,7 @@ import UserAvatar from "@/components/common/UserAvatar.vue";
 import { graphService } from "@/services/graph";
 import { type PageSuggestion, relationshipsService } from "@/services/relationships";
 import { useToastStore } from "@/stores/toasts";
+import { railsReady } from "@/lib/delivery";
 
 import { MAX_RAIL_PAGES, railHeading, railSection } from "./rightRail";
 
@@ -67,7 +68,8 @@ async function undo() {
   }
 }
 
-onMounted(load);
+// Home holds the rails until its first post is on screen (08 §7.4); elsewhere they start at once.
+onMounted(() => void railsReady().then(load));
 </script>
 
 <template>

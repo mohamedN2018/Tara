@@ -44,6 +44,7 @@
           "watch_ms": {"type": "integer", "minimum": 0},
           "pos_ms": {"type": "integer", "minimum": 0},
           "play_index": {"type": "integer", "minimum": 1, "maximum": 1000},
+          "idef": {"type": "integer", "minimum": 1, "description": "feed_impression only: the impression rule the client measured with (1: >= 50% of the card for 1 s; 2: also >= 50% of the viewport covered, 08 section 7.12). The upper bound is the active Home config's delivery.impression.def_version; above it the event is dropped (invalid_idef). Absent = 1. On any other event type it is an unknown field."},
           "cfg": {"description": "Ignored."},
           "variant": {"description": "Ignored."}
         }

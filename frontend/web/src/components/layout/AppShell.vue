@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { defineAsyncComponent, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
-import ChatDock from "@/components/chat/ChatDock.vue";
 import AppNavbar from "@/components/layout/AppNavbar.vue";
 import LeftSidebar from "@/components/layout/LeftSidebar.vue";
 import MobileBottomNavigation from "@/components/layout/MobileBottomNavigation.vue";
@@ -13,6 +12,10 @@ import { useChatUnreadStore } from "@/stores/chatUnread";
 import { useNotificationStore } from "@/stores/notifications";
 import { usePresenceStore } from "@/stores/presence";
 import { useUiStore } from "@/stores/ui";
+import { railsReady } from "@/lib/delivery";
+
+// Opened on demand: loaded as its own chunk, off the first-post path (08 §7.13, WP 4c.10-B3).
+const ChatDock = defineAsyncComponent(() => import("@/components/chat/ChatDock.vue"));
 
 // `right=false` lets a view drop the right rail (e.g. full-width pages like chat);
 // `left=false` drops the start rail (profile, friends hub: their own navigation).
@@ -29,7 +32,8 @@ const chatUnread = useChatUnreadStore();
 
 onMounted(() => {
   notifications.bind();
-  notifications.refresh();
+  // The unread count waits like the rails on Home (08 §7.4); at once elsewhere.
+  void railsReady().then(() => notifications.refresh());
   presence.bind();
   chatUnread.bind(() => auth.account?.id ?? "");
 });

@@ -22,6 +22,7 @@ import profileToolsEn from "./profileTools.en";
 import adCtaEn from "./adCta.en";
 import socialShellEn from "./socialShell.en";
 import suggestedEn from "./suggested.en";
+import deliveryEn from "./delivery.en";
 
 export default {
   app: { name: "Tara", tagline: "Connect. Share. Belong.", promise: "More than a social network… a place to belong." },
@@ -1458,6 +1459,7 @@ export default {
   adCta: adCtaEn,
   socialShell: socialShellEn,
   suggested: suggestedEn,
+  delivery: deliveryEn,
   landing: {
     getStarted: "Get started",
     headline: "Your place among",

@@ -4,6 +4,8 @@
 import axios, {
   type AxiosError,
   type AxiosInstance,
+  type AxiosRequestConfig,
+  type AxiosResponse,
   type InternalAxiosRequestConfig,
 } from "axios";
 
@@ -19,6 +21,74 @@ export const api: AxiosInstance = axios.create({
   withCredentials: true,
   timeout: TIMEOUT_MS,
 });
+
+// In-flight de-duplication (08 §7.11, WP 4c.8-B3). Identical GETs (same URL and
+// params) and the idempotent lookups (`/posts/batch/`, `/media/resolve/`,
+// `/users/lookup/` with the same ids) made while one is pending share its
+// answer; the entry is removed when it settles, so nothing is cached here.
+// Each extra caller gets its own copy of the body, so no caller can change
+// another's data.
+const inflight = new Map<string, Promise<unknown>>();
+const IDEMPOTENT_POSTS = /\/(posts\/batch|media\/resolve|users\/lookup)\/?$/;
+
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value as Record<string, unknown>)
+        .filter((k) => (value as Record<string, unknown>)[k] !== undefined)
+        .sort()
+        .map((k) => [k, canonical((value as Record<string, unknown>)[k])]),
+    );
+  }
+  return value;
+}
+
+/** The sharing key of a request; null when it must go out on its own. */
+export function dedupKey(method: "get" | "post", url: string, config?: AxiosRequestConfig, body?: unknown): string | null {
+  if (config?.signal || config?.onDownloadProgress || config?.onUploadProgress || config?.responseType === "blob") return null;
+  // Per-call headers (an idempotency key, a content type…) make a request its own.
+  if (config?.headers && Object.keys(config.headers).length) return null;
+  const params = JSON.stringify(canonical(config?.params ?? {}));
+  if (method === "get") return `GET ${url} ${params}`;
+  if (!IDEMPOTENT_POSTS.test(url) || !body || typeof body !== "object" || Array.isArray(body)) return null;
+  const b = { ...(body as Record<string, unknown>) };
+  // Same ids in any order are the same lookup, unless other fields are matched to their order.
+  const perId = Object.entries(b).some(([k, v]) => k !== "ids" && Array.isArray(v));
+  if (Array.isArray(b.ids) && !perId) b.ids = [...b.ids].map(String).sort();
+  return `POST ${url} ${params} ${JSON.stringify(canonical(b))}`;
+}
+
+function copyOf<T>(resp: T): T {
+  const r = resp as unknown as AxiosResponse;
+  try {
+    return { ...r, data: structuredClone(r.data) } as unknown as T;
+  } catch {
+    return resp;
+  }
+}
+
+function shared<T>(key: string | null, send: () => Promise<T>): Promise<T> {
+  if (key === null) return send();
+  const pending = inflight.get(key) as Promise<T> | undefined;
+  if (pending) return pending.then(copyOf);
+  const p = send().finally(() => {
+    if (inflight.get(key) === p) inflight.delete(key);
+  });
+  inflight.set(key, p);
+  return p;
+}
+
+const rawGet = api.get.bind(api);
+const rawPost = api.post.bind(api);
+api.get = ((url: string, config?: AxiosRequestConfig) => shared(dedupKey("get", url, config), () => rawGet(url, config))) as typeof api.get;
+api.post = ((url: string, body?: unknown, config?: AxiosRequestConfig) =>
+  shared(dedupKey("post", url, config, body), () => rawPost(url, body, config))) as typeof api.post;
+
+/** Requests waiting to settle (tests). */
+export function inflightCount(): number {
+  return inflight.size;
+}
 
 let onUnauthorized: () => void = () => {};
 export function setUnauthorizedHandler(fn: () => void) {

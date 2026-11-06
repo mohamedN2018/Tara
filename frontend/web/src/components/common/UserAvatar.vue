@@ -2,7 +2,7 @@
 import { computed } from "vue";
 
 import { initials } from "@/lib/format";
-import { useMediaUrl } from "@/lib/useMediaUrl";
+import { useMediaThumb } from "@/lib/useMediaList";
 
 const props = withDefaults(
   defineProps<{ name: string; mediaId?: string | null; size?: number; ring?: boolean }>(),
@@ -26,7 +26,8 @@ function pick(key: string): string {
   return GRADIENTS[Math.abs(hash) % GRADIENTS.length];
 }
 
-const url = useMediaUrl(() => props.mediaId);
+// Avatars are at most a few dozen pixels: always the 320 px thumbnail (08 §7.8).
+const url = useMediaThumb(() => props.mediaId);
 const style = computed(() => ({
   width: `${props.size}px`,
   height: `${props.size}px`,

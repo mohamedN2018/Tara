@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { BarChart3, ImagePlus, Smile } from "lucide-vue-next";
-import { ref, watch } from "vue";
+import { defineAsyncComponent, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
-import ComposerDialog from "@/components/post/ComposerDialog.vue";
 import { IMAGE_ACCEPT } from "@/lib/heic";
 import type { ComposerPost } from "@/services/composer";
 import { useAuthStore } from "@/stores/auth";
 import { useUiStore } from "@/stores/ui";
 import type { Post } from "@/types";
+
+// Opened on demand: loaded as its own chunk, off the first-post path (08 §7.13, WP 4c.10-B3).
+const ComposerDialog = defineAsyncComponent(() => import("@/components/post/ComposerDialog.vue"));
 
 // The "What's on your mind?" card. Everything is written in ComposerDialog (one
 // composer for text, photos, polls, tags, feeling, location, drafts and

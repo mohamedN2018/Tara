@@ -60,6 +60,8 @@ export interface SignalInput {
   watch_ms?: number;
   pos_ms?: number;
   play_index?: number;
+  /** Impressions only: the impression rule the client applied (08 §7.12; 1 = legacy). */
+  idef?: number;
 }
 
 /** The wire shape: exactly these fields, never `cfg` or `variant`. */
@@ -74,6 +76,7 @@ export interface SignalEvent {
   watch_ms?: number;
   pos_ms?: number;
   play_index?: number;
+  idef?: number;
 }
 
 interface Batch {
@@ -203,6 +206,9 @@ export function track(input: SignalInput): boolean {
   // The feed position belongs to impressions; the server reads it from the token when there is one.
   const pos = input.t === "feed_impression" ? whole(input.pos ?? served?.pos) : undefined;
   if (pos !== undefined) event.pos = pos;
+  // The impression definition (08 §7.12): a whole number ≥ 1, impressions only.
+  const idef = input.t === "feed_impression" ? whole(input.idef) : undefined;
+  if (idef !== undefined && idef >= 1) event.idef = idef;
   for (const field of ["watch_ms", "pos_ms", "play_index"] as const) {
     const value = whole(input[field]);
     if (value !== undefined) event[field] = value;

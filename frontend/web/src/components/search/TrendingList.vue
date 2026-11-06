@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 
 import { tagRoute } from "@/lib/searchRoutes";
 import { searchService, type TrendingTag } from "@/services/search";
+import { railsReady } from "@/lib/delivery";
 
 // "Trending on Tara" with a Last 24 h / Last 7 days toggle (GET /search/trending/).
 // `compact` (the right rail) hides itself when nothing is trending.
@@ -44,7 +45,8 @@ async function load() {
   }
 }
 watch(win, load);
-onMounted(load);
+// Home holds the rails until its first post is on screen (08 §7.4); elsewhere they start at once.
+onMounted(() => void railsReady().then(load));
 </script>
 
 <template>

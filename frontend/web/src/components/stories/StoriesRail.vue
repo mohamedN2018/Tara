@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { ChevronLeft, ChevronRight, Plus } from "lucide-vue-next";
-import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, defineAsyncComponent, nextTick, onActivated, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
-import { useMediaUrl } from "@/lib/useMediaUrl";
+import { useMediaCover } from "@/lib/useMediaList";
 import { storiesService, type Story, type StoryGroup } from "@/services/stories";
 import { useAuthStore } from "@/stores/auth";
+import { railsReady } from "@/lib/delivery";
 
-import StoryCreateDialog from "./StoryCreateDialog.vue";
 import StoryTrayCard from "./StoryTrayCard.vue";
-import StoryViewer from "./StoryViewer.vue";
+
+// Opened on demand: loaded as its own chunk, off the first-post path (08 §7.13, WP 4c.10-B3).
+const StoryCreateDialog = defineAsyncComponent(() => import("./StoryCreateDialog.vue"));
+const StoryViewer = defineAsyncComponent(() => import("./StoryViewer.vue"));
 
 // The stories rail at the top of Home: a "Create story" card, then my story and
 // my friends' stories (unseen first), with arrows that scroll in the reading
@@ -26,7 +29,8 @@ const canNext = ref(false);
 
 const meId = computed(() => auth.account?.id ?? "");
 const myName = computed(() => auth.profile?.display_name || auth.account?.email?.split("@")[0] || "?");
-const myAvatar = useMediaUrl(() => auth.profile?.avatar_media_id ?? null);
+// The 128 × 156 "create" tile: a display copy, not the original (08 §7.8).
+const myAvatar = useMediaCover(() => auth.profile?.avatar_media_id ?? null, 128, 156);
 const isRtl = computed(() => locale.value === "ar");
 
 async function load() {
@@ -79,15 +83,16 @@ function onCreated() {
 }
 
 let resizeObserver: ResizeObserver | undefined;
+// Home holds the rails until its first post is on screen (08 §7.4); elsewhere they start at once.
 onMounted(() => {
-  void load();
+  void railsReady().then(load);
   if (typeof ResizeObserver !== "undefined" && scroller.value) {
     resizeObserver = new ResizeObserver(measure);
     resizeObserver.observe(scroller.value);
   }
 });
 // Home is kept alive: coming back refreshes the rail.
-onActivated(() => void load());
+onActivated(() => void railsReady().then(load));
 onBeforeUnmount(() => resizeObserver?.disconnect());
 
 const PrevIcon = computed(() => (isRtl.value ? ChevronRight : ChevronLeft));
@@ -105,7 +110,7 @@ const NextIcon = computed(() => (isRtl.value ? ChevronLeft : ChevronRight));
         @click="creating = true"
       >
         <span class="relative h-[156px] w-full overflow-hidden bg-tara-gradient">
-          <img v-if="myAvatar" :src="myAvatar" alt="" class="h-full w-full object-cover transition duration-300 group-hover:scale-105" />
+          <img v-if="myAvatar" :src="myAvatar.src" :srcset="myAvatar.srcset" :sizes="myAvatar.sizes" alt="" class="h-full w-full object-cover transition duration-300 group-hover:scale-105" />
           <span v-else class="flex h-full w-full items-center justify-center text-3xl font-bold text-white">{{ myName.slice(0, 1) }}</span>
         </span>
         <span class="absolute inset-x-0 top-[138px] mx-auto flex h-9 w-9 items-center justify-center rounded-full border-4 border-white bg-brand-600 text-white dark:border-gray-900">

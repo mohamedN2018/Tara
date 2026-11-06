@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import { Bell, CalendarDays, Home, Menu, MonitorPlay, Search, Store, Users, UsersRound } from "lucide-vue-next";
-import { ref } from "vue";
+import { defineAsyncComponent, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import MessengerDropdown from "@/components/chat/MessengerDropdown.vue";
 import MainMenu from "@/components/layout/MainMenu.vue";
 import ProfileMenu from "@/components/layout/ProfileMenu.vue";
 import TaraLogo from "@/components/brand/TaraLogo.vue";
-import NotificationPanel from "@/components/notifications/NotificationPanel.vue";
 import GlobalSearch from "@/components/search/GlobalSearch.vue";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import { useNotificationStore } from "@/stores/notifications";
 import { useUiStore } from "@/stores/ui";
+
+// Opened on demand: loaded as its own chunk, off the first-post path (08 §7.13, WP 4c.10-B3).
+const NotificationPanel = defineAsyncComponent(() => import("@/components/notifications/NotificationPanel.vue"));
 
 const { t } = useI18n();
 const ui = useUiStore();

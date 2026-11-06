@@ -85,6 +85,12 @@ class MediaVariant(models.Model):
         HLS = "hls", "HLS rendition"
         POSTER = "poster", "Poster"
         MP4 = "mp4", "Progressive MP4"
+        # Display sizes (WP 4c.5-B3, 4c.6-B3): WebP copies of an image with the
+        # longest side 640 / 1280 (never upscaled), and a poster whose short side
+        # is 480. ``width``/``height`` are the real size of the copy.
+        DISPLAY_640 = "display_640", "Display 640"
+        DISPLAY_1280 = "display_1280", "Display 1280"
+        POSTER_480 = "poster_480", "Poster 480"
 
     id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
     media = models.ForeignKey(MediaAsset, on_delete=models.CASCADE, related_name="variants")

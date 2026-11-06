@@ -67,7 +67,7 @@ function scrollByTile(step: 1 | -1) {
             class="group relative block aspect-[9/16] overflow-hidden rounded-xl bg-gradient-to-br from-brand-700 via-brand-500 to-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400"
             :aria-label="t('postsFeed.videos.open', { name: directory.label(v.author_id) })"
           >
-            <img v-if="posters[v.id]" :src="posters[v.id] ?? undefined" alt="" class="absolute inset-0 h-full w-full object-cover transition group-hover:scale-105" />
+            <img v-if="posters[v.id]" :src="posters[v.id] ?? undefined" alt="" loading="lazy" decoding="async" class="absolute inset-0 h-full w-full object-cover transition group-hover:scale-105" />
             <span class="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
             <span class="absolute inset-0 flex items-center justify-center">
               <Play class="h-10 w-10 rounded-full bg-black/40 p-2 text-white" aria-hidden="true" />

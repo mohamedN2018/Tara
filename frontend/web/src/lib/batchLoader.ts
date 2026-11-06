@@ -14,8 +14,10 @@ export interface BatchLoaderOptions<T> {
   idOf: (item: T) => string;
   /** Ids per request (the server's cap). */
   max?: number;
-  /** How long to gather lookups before sending, in ms (0: the rest of this tick). */
-  windowMs?: number;
+  /** How long to gather lookups before sending, in ms (0: the rest of this tick). A
+   * function is read at each batch, so a server setting (`delivery.media_resolve_window_ms`)
+   * that arrives later applies to the next batch. */
+  windowMs?: number | (() => number);
   /** Retries of a rate-limited (429) or unreachable request before giving up. */
   retries?: number;
   /** First backoff in ms; doubles each retry unless the server sends Retry-After. */
@@ -57,6 +59,11 @@ export function createBatchLoader<T>(options: BatchLoaderOptions<T>) {
     label = "batch",
     sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
   } = options;
+
+  const windowOf = (): number => {
+    const ms = typeof windowMs === "function" ? windowMs() : windowMs;
+    return Number.isFinite(ms) && ms > 0 ? ms : 0;
+  };
 
   type Waiter = { resolve: (v: T | null) => void; reject: (e: unknown) => void };
   const queued = new Map<string, Waiter[]>();
@@ -108,7 +115,7 @@ export function createBatchLoader<T>(options: BatchLoaderOptions<T>) {
       queued.set(id, list);
     });
     inflight.set(id, promise);
-    if (!timer) timer = setTimeout(flush, windowMs);
+    if (!timer) timer = setTimeout(flush, windowOf());
     return promise;
   }
 

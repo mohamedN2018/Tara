@@ -16,6 +16,7 @@ import { type FriendRequest, graphService } from "@/services/graph";
 import { useDirectoryStore } from "@/stores/directory";
 import { usePresenceStore } from "@/stores/presence";
 import { useToastStore } from "@/stores/toasts";
+import { railsReady } from "@/lib/delivery";
 
 import RailBirthdays from "./RailBirthdays.vue";
 import RailPageSuggestions from "./RailPageSuggestions.vue";
@@ -93,7 +94,8 @@ async function openChat(friendId: string) {
 
 const badge = (iso: string) => dateBadge(iso, locale.value);
 
-onMounted(load);
+// Home holds the rails until its first post is on screen (08 §7.4); elsewhere they start at once.
+onMounted(() => void railsReady().then(load));
 
 const heading = railHeading;
 const section = railSection;

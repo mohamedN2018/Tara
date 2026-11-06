@@ -125,6 +125,16 @@ def _poster_url(asset: MediaAsset, variants: list[MediaVariant]) -> str | None:
     return storage.presign_get(poster.storage_key, content_type="image/jpeg") if poster else None
 
 
+def _poster_480_url(variants: list[MediaVariant]) -> str | None:
+    """The thumb-sized poster (WP 4c.6-B3), bucketed and cacheable like every
+    display GET; None when the transcode made none (an older video, or a poster
+    whose short side is under 480)."""
+    small = next((v for v in variants if v.kind == MediaVariant.Kind.POSTER_480), None)
+    if small is None:
+        return None
+    return storage.presign_display(small.storage_key, content_type="image/jpeg")[0]
+
+
 def playback(viewer_id: str, media_id: str) -> dict:
     asset = watchable_asset(viewer_id, media_id)
     data = _payload(viewer_id, asset)
@@ -175,6 +185,7 @@ def _payload(viewer_id: str, asset: MediaAsset) -> dict | None:
         "hls_url": None,
         "mp4_url": None,
         "poster_url": None,
+        "poster_480_url": None,
         "expires_in": settings.MEDIA_PLAYBACK_TOKEN_TTL,
     }
     if not ready:
@@ -184,6 +195,7 @@ def _payload(viewer_id: str, asset: MediaAsset) -> dict | None:
     # Relative to the API root, so the client resolves it against its own API base.
     data["hls_url"] = f"media/{asset.id}/hls/master.m3u8?token={token}"
     data["poster_url"] = _poster_url(asset, variants)
+    data["poster_480_url"] = _poster_480_url(variants)
     mp4 = next((v for v in variants if v.kind == MediaVariant.Kind.MP4), None)
     if mp4:
         data["mp4_url"] = storage.presign_get(mp4.storage_key, content_type="video/mp4")

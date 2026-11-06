@@ -45,6 +45,8 @@ class SignalRow:
     variant: str | None = None
     pred: bytes | None = None
     flags: int = 0
+    # ``feed_impression`` only: the client's impression rule (WP 4c.9-B3).
+    impression_def: int | None = None
 
     def __post_init__(self) -> None:
         if self.id is None:

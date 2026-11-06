@@ -3,7 +3,7 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
-import { useMediaUrl } from "@/lib/useMediaUrl";
+import { useMediaCover } from "@/lib/useMediaList";
 import { backgroundStyle, type StoryGroup } from "@/services/stories";
 import { useDirectoryStore } from "@/stores/directory";
 
@@ -20,7 +20,8 @@ const cover = computed(() => {
   const list = props.group.stories;
   return list.find((s) => !s.seen) ?? list[list.length - 1];
 });
-const photo = useMediaUrl(() => (cover.value?.kind === "photo" ? cover.value.media_id : null));
+// A 128 × 208 tile: the smallest display copy that covers it sharply (08 §7.8).
+const photo = useMediaCover(() => (cover.value?.kind === "photo" ? cover.value.media_id : null), 128, 208);
 const name = computed(() => (props.mine ? t("stories.rail.yourStory") : directory.label(props.group.author_id)));
 const fullName = computed(() => directory.label(props.group.author_id));
 </script>
@@ -36,7 +37,9 @@ const fullName = computed(() => directory.label(props.group.author_id));
   >
     <img
       v-if="photo"
-      :src="photo"
+      :src="photo.src"
+      :srcset="photo.srcset"
+      :sizes="photo.sizes"
       alt=""
       class="absolute inset-0 h-full w-full object-cover transition duration-300 group-hover:scale-105"
       loading="lazy"

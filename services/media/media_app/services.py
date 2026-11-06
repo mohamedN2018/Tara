@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import unicodedata
 from datetime import timedelta
 from urllib.parse import quote
@@ -335,20 +336,41 @@ def attachment_disposition(filename: str) -> str:
     return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"
 
 
-def asset_url(asset: MediaAsset, *, filename: str = "") -> str | None:
-    """The presigned GET URL of the asset's original, with its verified type.
+def _signed_url(asset: MediaAsset, filename: str, now: float) -> tuple[str | None, int | None]:
+    """``(url, expires_at)`` of the asset's original, with its verified type.
 
-    None for a transcoded video: its original is never served (5.2); players
-    get the renditions through ``playback``."""
+    An image is shown in place: a bucketed, cacheable URL (WP 4c.5-B3). Chat video
+    keeps a per-request URL, and a file of any other kind is a download
+    (``Content-Disposition: attachment``). None for a transcoded video: its
+    original is never served (5.2); players get the renditions through ``playback``."""
     if is_transcoded(asset):
-        return None
+        return None, None
+    if asset.kind == MediaAsset.Kind.IMAGE:
+        return storage.presign_display(asset.storage_key, content_type=asset.mime, now=now)
+    expires_at = int(now) + settings.SIGNED_URL_TTL
     if asset.kind in INLINE_KINDS:
-        return storage.presign_get(asset.storage_key, content_type=asset.mime)
-    return storage.presign_get(
+        return storage.presign_get(asset.storage_key, content_type=asset.mime), expires_at
+    url = storage.presign_get(
         asset.storage_key,
         content_type=asset.mime or "application/octet-stream",
         disposition=attachment_disposition(download_filename(asset, filename)),
     )
+    return url, expires_at
+
+
+def asset_url(asset: MediaAsset, *, filename: str = "") -> str | None:
+    """The presigned GET URL of the asset's original (see ``_signed_url``)."""
+    return _signed_url(asset, filename, time.time())[0]
+
+
+def variant_url(v: MediaVariant, now: float) -> tuple[str, int]:
+    """``(url, expires_at)`` of a variant: bucketed for what is shown in place
+    (``DISPLAY_VARIANTS``), per request for the rest (the MP4 fallback)."""
+    content_type = _VARIANT_TYPES.get(v.kind, "")
+    if v.kind in DISPLAY_VARIANTS:
+        return storage.presign_display(v.storage_key, content_type=content_type, now=now)
+    url = storage.presign_get(v.storage_key, content_type=content_type)
+    return url, int(now) + settings.SIGNED_URL_TTL
 
 
 def asset_payload(asset: MediaAsset, *, with_urls: bool = True, filename: str = "") -> dict:
@@ -371,32 +393,72 @@ def asset_payload(asset: MediaAsset, *, with_urls: bool = True, filename: str = 
                 "height": asset.height,
             }
         )
+    elif asset.kind == MediaAsset.Kind.IMAGE and asset.width and asset.height:
+        # The real size as displayed (WP 4c.5-B3), so the client reserves the space.
+        data.update({"width": asset.width, "height": asset.height})
     if with_urls:
-        data["url"] = (
-            asset_url(asset, filename=filename) if asset.status == MediaAsset.Status.READY else None
+        now = time.time()
+        expiries = []
+        data["url"] = None
+        if asset.status == MediaAsset.Status.READY:
+            data["url"], expires_at = _signed_url(asset, filename, now)
+            if expires_at is not None:
+                expiries.append(expires_at)
+        # HLS rows are segment prefixes, played through the token-checked playlists.
+        variants = sorted(
+            (v for v in asset.variants.all() if v.kind != MediaVariant.Kind.HLS),
+            key=lambda v: _VARIANT_ORDER.get(v.kind, len(_VARIANT_ORDER)),
         )
-        for v in asset.variants.all():
-            if v.kind == MediaVariant.Kind.HLS:
-                continue  # a segment prefix, played through the token-checked playlists
+        for v in variants:
+            url, expires_at = variant_url(v, now)
+            expiries.append(expires_at)
             data["variants"].append(
                 {
                     "kind": v.kind,
-                    # Variants are made here: thumbnails and posters are JPEG.
-                    "url": storage.presign_get(
-                        v.storage_key, content_type=_VARIANT_TYPES.get(v.kind, "")
-                    ),
+                    "url": url,
                     "width": v.width,
                     "height": v.height,
                     "duration_ms": v.duration_ms,
                 }
             )
+        # Epoch seconds: the earliest expiry of the URLs above, so a client caches
+        # them exactly as long as they work (null when there are none).
+        data["urls_expire_at"] = min(expiries) if expiries else None
     return data
 
 
+# Variants are made here: thumbnails and posters are JPEG, display sizes WebP.
 _VARIANT_TYPES = {
     MediaVariant.Kind.THUMB: "image/jpeg",
+    MediaVariant.Kind.DISPLAY_640: "image/webp",
+    MediaVariant.Kind.DISPLAY_1280: "image/webp",
     MediaVariant.Kind.POSTER: "image/jpeg",
+    MediaVariant.Kind.POSTER_480: "image/jpeg",
     MediaVariant.Kind.MP4: "video/mp4",
+}
+# Shown in place: signed per bucket, cacheable (WP 4c.5-B3, 4c.6-B3).
+DISPLAY_VARIANTS = frozenset(
+    {
+        MediaVariant.Kind.THUMB,
+        MediaVariant.Kind.DISPLAY_640,
+        MediaVariant.Kind.DISPLAY_1280,
+        MediaVariant.Kind.POSTER,
+        MediaVariant.Kind.POSTER_480,
+    }
+)
+# The order variants are listed in (the smallest still first).
+_VARIANT_ORDER = {
+    kind: i
+    for i, kind in enumerate(
+        (
+            MediaVariant.Kind.THUMB,
+            MediaVariant.Kind.DISPLAY_640,
+            MediaVariant.Kind.DISPLAY_1280,
+            MediaVariant.Kind.POSTER,
+            MediaVariant.Kind.POSTER_480,
+            MediaVariant.Kind.MP4,
+        )
+    )
 }
 
 

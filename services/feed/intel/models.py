@@ -195,6 +195,9 @@ class SignalEvent(models.Model):  # noqa: DJ001 - NULL means "not attributed", n
     data_origin = models.CharField(max_length=10, choices=DataOrigin.choices)
     occurred_at = models.DateTimeField()
     received_at = models.DateTimeField()
+    # The impression rule a ``feed_impression`` row was measured with (1 or 2,
+    # ``delivery.impression.def_version``; WP 4c.9-B3); NULL on every other row.
+    impression_def = models.SmallIntegerField(null=True)
 
     class Meta:
         managed = False

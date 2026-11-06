@@ -1,9 +1,21 @@
 {
-  "schema_version": 1,
+  "schema_version": 3,
   "surface": "video",
   "version": 1,
   "window": {"video": 300},
   "pools": {"window_days": 7},
   "integrity": {"pending_report_min_reporters": 3, "exclude_pending_from_discovery": true},
-  "eligibility": {"minor_allowed_topics": []}
+  "eligibility": {"minor_allowed_topics": []},
+  "delivery": {"first_page_size": 20, "page_size": 20,
+               "prefetch_remaining_items": 5, "prefetch_root_margin_vp": 2.5,
+               "media_warm_items": 6, "media_resolve_window_ms": 20,
+               "virtualize_after_items": 40, "keep_mounted_vp": 3,
+               "next_page_retries": 3, "next_page_backoff_ms": 1000,
+               "defer_rails_until_first_post": true, "defer_rails_max_ms": 1500,
+               "reload_window_min": 30, "reload_max_pages": 3,
+               "video": {"autoplay": "muted_single", "min_visible": 0.6, "min_visible_ms": 300,
+                         "pause_below": 0.25, "load_margin_vp": 1.0, "unmount_beyond_vp": 3,
+                         "respect_save_data": true, "respect_reduced_motion": true},
+               "impression": {"min_card_visible": 0.5, "min_viewport_cover": 0.5, "min_ms": 1000,
+                              "def_version": 2}}
 }

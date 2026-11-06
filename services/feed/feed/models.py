@@ -40,7 +40,11 @@ class FeedItem(models.Model):
             models.UniqueConstraint(fields=["recipient_id", "post_id"], name="feed_item_uniq"),
         ]
         indexes = [
-            models.Index(fields=["recipient_id", "-post_created_at"], name="feed_recipient_idx"),
+            # The keyset of the chronological modes (WP 4c.8-B3; built concurrently
+            # by feed/0012, which replaced ``feed_recipient_idx``).
+            models.Index(
+                fields=["recipient_id", "-post_created_at", "-id"], name="feed_recipient_ts_idx"
+            ),
             # Every per-post write (score refresh, edit, delete) filters on post_id alone.
             models.Index(fields=["post_id"], name="feed_item_post_idx"),
         ]

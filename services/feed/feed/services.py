@@ -477,7 +477,8 @@ def home_feed(recipient_id: str, mode: str = DEFAULT_MODE):
         ).exclude(author_id=recipient_id)
     elif mode == "friends":
         items = items.filter(reason=Reason.FRIEND).exclude(author_id=recipient_id)
-    return items.order_by("-post_created_at")
+    # ``-id`` breaks ties in ``post_created_at`` (keyset pages, WP 4c.8-B3).
+    return items.order_by("-post_created_at", "-id")
 
 
 # Realtime "new posts" peek (D4, WP 4.7): the newest rows above ``since``,

@@ -53,8 +53,9 @@ export const REEL_ERRORS: Record<string, string> = {
 };
 
 export const reelsService = {
-  async feed(tab: ReelTab = "for_you", cursor?: string | null): Promise<CursorPage<Reel>> {
-    const { data } = await api.get<CursorPage<Reel>>("/reels/", { params: { tab, cursor: cursor || undefined } });
+  /** `limit`: the page size from `delivery.reels` (08 §7.2); the server's default without it. */
+  async feed(tab: ReelTab = "for_you", cursor?: string | null, limit?: number): Promise<CursorPage<Reel>> {
+    const { data } = await api.get<CursorPage<Reel>>("/reels/", { params: { tab, cursor: cursor || undefined, limit } });
     return data;
   },
 

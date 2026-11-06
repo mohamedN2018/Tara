@@ -1,17 +1,19 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, defineAsyncComponent } from "vue";
 import { useI18n } from "vue-i18n";
 
 import UserAvatar from "@/components/common/UserAvatar.vue";
 import LinkPreviewCard from "@/components/post/LinkPreviewCard.vue";
 import VideoPlayer from "@/components/media/VideoPlayer.vue";
 import MediaGrid from "@/components/post/MediaGrid.vue";
-import MediaTheater from "@/components/post/MediaTheater.vue";
 import RichText from "@/components/post/RichText.vue";
 import { relativeTime } from "@/lib/format";
 import { useMediaViewer } from "@/lib/useMediaViewer";
 import { useDirectoryStore } from "@/stores/directory";
 import type { SharedPost } from "@/types";
+
+// Opened on demand: loaded as its own chunk, off the first-post path (08 §7.13, WP 4c.10-B3).
+const MediaTheater = defineAsyncComponent(() => import("@/components/post/MediaTheater.vue"));
 
 // `post` is null when this reader may not see the original, or it is gone.
 // `viewKey` is the sharing post's id, so `?view=` opens this card's photos even

@@ -14,13 +14,13 @@ import uuid
 
 from rest_framework import serializers
 
-from ..models import CLIENT_EVENT_TYPES, SERVER_ONLY_EVENT_TYPES, ItemType
+from ..models import CLIENT_EVENT_TYPES, SERVER_ONLY_EVENT_TYPES, EventType, ItemType
 from . import validate
 
 IGNORED_CLIENT_FIELDS = frozenset({"cfg", "variant"})
 _BATCH_FIELDS = frozenset({"batch_id", "session_id", "events"})
 _EVENT_FIELDS = frozenset(
-    {"id", "t", "item", "ts", "st", "pos", "watch_ms", "pos_ms", "play_index", "surface"}
+    {"id", "t", "item", "ts", "st", "pos", "watch_ms", "pos_ms", "play_index", "surface", "idef"}
 )
 
 
@@ -63,6 +63,9 @@ class SignalEventSerializer(serializers.Serializer):
         min_value=1, max_value=validate.MAX_PLAY_INDEX, required=False
     )
     surface = serializers.CharField(max_length=16, required=False, allow_blank=True)
+    # ``feed_impression`` only: the impression rule the client measured with (WP
+    # 4c.9-B3). Its range comes from the config (``validate.check_shape``).
+    idef = serializers.IntegerField(required=False)
 
     def to_internal_value(self, data):
         if not isinstance(data, dict):
@@ -85,6 +88,9 @@ class SignalEventSerializer(serializers.Serializer):
         except ValueError as exc:
             raise serializers.ValidationError({"item": ["Not an id."]}, code="item") from exc
         attrs["item_type"], attrs["item_id"] = kind, item_id
+        if "idef" in attrs and attrs["t"] != EventType.FEED_IMPRESSION:
+            # Like any field an event type does not define.
+            raise serializers.ValidationError({"idef": ["Unknown field."]}, code="unknown_field")
         return attrs
 
 

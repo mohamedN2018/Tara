@@ -9,6 +9,7 @@ import { legalPath } from "@/lib/legal";
 import { useAuthStore } from "@/stores/auth";
 import { useChatUnreadStore } from "@/stores/chatUnread";
 import { useNotificationStore } from "@/stores/notifications";
+import { railsReady } from "@/lib/delivery";
 
 import {
   activeNavName,
@@ -44,7 +45,8 @@ async function loadShortcutList() {
   if (!owner) return;
   shortcuts.value = await cachedShortcuts(owner);
 }
-onMounted(loadShortcutList);
+// Home holds the rails until its first post is on screen (08 §7.4); elsewhere they start at once.
+onMounted(() => void railsReady().then(loadShortcutList));
 watch(() => auth.account?.id, loadShortcutList);
 
 const profileTo = computed(() =>

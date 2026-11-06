@@ -47,6 +47,8 @@ const hydrated = (posts: Post[], modeApplied = true): HydratedFeedPage => ({
 });
 
 const Blank = defineComponent({ render: () => null });
+// A first page (08 §7.4, §7.6): asked as a normal open, drawn from its snapshots first.
+const FIRST = { entry: "open", snapshots: true };
 let app: App | null = null;
 let host: HTMLElement | null = null;
 
@@ -207,8 +209,9 @@ describe("hiding a post from Home", () => {
     await flush();
     expect(unhide).toHaveBeenCalledWith("a");
     expect(unsnooze).toHaveBeenCalledTimes(1);
-    // The server still snoozes sam: the card (with its Undo) stays, sam's posts stay out.
-    expect(order(el)).toEqual(["hidden:a", "c"]);
+    // The server still snoozes sam: the card (with its Undo) stays, sam's posts stay out
+    // (unmounted, 08 §7.7).
+    expect(order(el)).toEqual(["hidden:a"]);
     expect(visible(el.querySelector('[data-feed-item="c"]'))).toBe(false);
     expect(useToastStore().items.map((i) => i.icon)).toEqual(["error"]);
     expect(button(first, "Undo")!.disabled).toBe(false);
@@ -317,7 +320,7 @@ describe("feed modes", () => {
     const page = vi.spyOn(feedService, "page").mockResolvedValue(hydrated([post("a")], false));
     const el = await mount(HomeView);
     // No `?mode=` and nothing stored: the server picks (its remembered mode, else Latest).
-    expect(page).toHaveBeenCalledWith(undefined, undefined, undefined);
+    expect(page).toHaveBeenCalledWith(undefined, undefined, undefined, FIRST);
     expect(el.querySelector('[data-testid="feed-modes"]')).toBeNull();
   });
 
@@ -340,7 +343,7 @@ describe("feed modes", () => {
 
     button(modes, "For you")!.click();
     await flush();
-    expect(page).toHaveBeenLastCalledWith(undefined, "for_you", undefined);
+    expect(page).toHaveBeenLastCalledWith(undefined, "for_you", undefined, FIRST);
     expect(order(el)).toEqual(["z"]);
     expect(button(modes, "For you")!.getAttribute("aria-pressed")).toBe("true");
     expect(button(modes, "Latest")!.getAttribute("aria-pressed")).toBe("false");
@@ -353,7 +356,7 @@ describe("feed modes", () => {
     localStorage.setItem("tara.feedMode", "favorites");
     const page = vi.spyOn(feedService, "page").mockResolvedValue({ ...hydrated([post("a")]), mode: "friends" });
     const el = await mount(HomeView);
-    expect(page).toHaveBeenCalledWith(undefined, undefined, "favorites");
+    expect(page).toHaveBeenCalledWith(undefined, undefined, "favorites", FIRST);
     const modes = el.querySelector<HTMLElement>('[data-testid="feed-modes"]')!;
     expect(button(modes, "Friends")!.getAttribute("aria-pressed")).toBe("true");
     expect(localStorage.getItem("tara.feedMode")).toBe("friends");
@@ -362,7 +365,7 @@ describe("feed modes", () => {
   it("a `?mode=` link wins over the remembered mode", async () => {
     const page = vi.spyOn(feedService, "page").mockResolvedValue({ ...hydrated([post("a")]), mode: "following" });
     await mount(HomeView, {}, "/home?mode=following");
-    expect(page).toHaveBeenCalledWith(undefined, "following", undefined);
+    expect(page).toHaveBeenCalledWith(undefined, "following", undefined, FIRST);
   });
 
   it("feedService remembers the mode and asks the server's choice with a hint", async () => {

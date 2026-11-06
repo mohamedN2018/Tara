@@ -115,6 +115,14 @@ jobs:
       - name: Type-check + build
         working-directory: frontend/web
         run: npm run build   # vue-tsc --noEmit && vite build
+      # Critical-JS budget (Tara Intelligence 08 §7.13): the JS before Home's first post,
+      # summed from the Vite manifest. Not met yet (docs/intelligence/results/phase-04c.md
+      # records the size and the revised scenario-14 target), so it reports without
+      # blocking; drop continue-on-error once the budget is met.
+      - name: Critical-JS budget
+        working-directory: frontend/web
+        continue-on-error: true
+        run: npm run perf:budget
 
   # Validate deployment artifacts (compose, K8s manifests, alert rules).
   manifests:
