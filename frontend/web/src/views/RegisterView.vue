@@ -12,6 +12,7 @@ import AuthLayout from "@/components/brand/AuthLayout.vue";
 import ResendVerification from "@/components/auth/ResendVerification.vue";
 import { apiError } from "@/lib/api";
 import { markProfileToComplete } from "@/lib/completeProfile";
+import { afterSignIn, markTopicsToPick } from "@/lib/onboarding";
 import { errorMessage } from "@/lib/errors";
 import { legalPath, PRIVACY_VERSION, TERMS_VERSION } from "@/lib/legal";
 import { MIN_PASSWORD_LENGTH } from "@/lib/passwordStrength";
@@ -228,8 +229,10 @@ async function googleSignUp(credential: string) {
   error.value = "";
   fieldErrors.value = {};
   try {
-    await auth.loginWithGoogle(credential, locale.value);
-    router.push("/home");
+    const created = await auth.loginWithGoogle(credential, locale.value);
+    // A new account gets the optional topic picker first (WP 6.6, decision 11).
+    if (created) markTopicsToPick(auth.account?.id);
+    router.push(afterSignIn(auth.account?.id, "/home"));
   } catch (e) {
     error.value = t(
       securityErrorKey(e, {
@@ -271,11 +274,13 @@ async function submit() {
     });
     // "Complete your profile" waits on /home for this account's first sign-in.
     markProfileToComplete(result.account_id);
+    // Then the optional topic picker (Tara Intelligence WP 6.6, owner decision 11).
+    markTopicsToPick(result.account_id);
     // A deployment without email verification answers "active": sign in now.
     if (result.status === "active") {
       try {
         await auth.login(form.email.trim(), form.password);
-        router.push("/home");
+        router.push(afterSignIn(result.account_id, "/home"));
         return;
       } catch {
         // Fall through to the "account created" panel; the login page works.

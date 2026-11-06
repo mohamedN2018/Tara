@@ -2,6 +2,7 @@
 // Feed and content preferences: the people you see more of (favorites) or less
 // of (muted, restricted, blocked, snoozed). Graph and feed own these lists and
 // enforce them; this only lists them and removes entries.
+import { SlidersHorizontal } from "lucide-vue-next";
 import { onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink, useRoute, useRouter } from "vue-router";
@@ -121,6 +122,18 @@ onMounted(() => void loadTab(tab.value));
 </script>
 
 <template>
+  <!-- R4 (04 WP 8.2): Settings > Content preferences > My Algorithm. -->
+  <RouterLink
+      to="/settings/my-algorithm"
+      class="card mb-4 flex items-center gap-3 p-4 transition hover:bg-gray-50 dark:hover:bg-gray-800/60"
+      data-testid="my-algorithm-link"
+    >
+      <SlidersHorizontal class="h-6 w-6 shrink-0 text-brand-600 dark:text-brand-300" aria-hidden="true" />
+      <span class="min-w-0">
+        <span class="block text-[15px] font-bold">{{ t("myAlgorithm.page.link") }}</span>
+        <span class="block text-sm text-gray-500 dark:text-gray-400">{{ t("myAlgorithm.page.linkHint") }}</span>
+      </span>
+    </RouterLink>
   <section class="card mb-4 p-4" data-testid="content-preferences">
     <p class="mb-3 text-sm text-gray-600 dark:text-gray-300">{{ t("settingsCenter.content.lead") }}</p>
 

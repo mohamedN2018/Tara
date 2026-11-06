@@ -78,8 +78,11 @@ class CandidateFeatures:
     author_dislikes: int
     shared_groups: int
     conversation: float
-    # viewer x content (phase 6)
+    # viewer x content (phase 6; R4: only under a version carrying ``interest_rank``)
     interest_rel: float = 0.0
+    session_rel: float = 0.0
+    # R4: the item's ``(topic_id, confidence)``, best first (``intel_content_topic``).
+    topics: tuple = ()
     # R3: the durable exposure (``intel_user_item_engagement``); only under a version
     # carrying ``rotation`` (``build(..., exposure=...)``), else the defaults.
     exp_state: int | None = None

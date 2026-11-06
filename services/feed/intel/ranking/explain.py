@@ -40,10 +40,17 @@ FACTORS = (
     "exposure",
     "new_since_visit",
     "rec_new_activity",
+    # R4 (06 sections 4.4, 10; 07 WP 6.5-B2, 7.5-B2, 8.3): the session-interest term,
+    # the viewer's format preference and a muted primary topic (multipliers).
+    "session",
+    "format_pref",
+    "muted_topic",
 )
 CODE = {name: i for i, name in enumerate(FACTORS)}
 # Never explained to a viewer (integrity detectors).
 HIDDEN = frozenset({"pending_reports", "duplicate", "bait", "spam_flags"})
+# Recorded but never turned into a reason sentence: the viewer's own settings.
+NOT_EXPLAINED = frozenset({"exposure", "format_pref", "muted_topic"})
 QUANTUM = 10  # contribution stored as round(value * 10) in a signed byte
 
 

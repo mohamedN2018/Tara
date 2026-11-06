@@ -1073,6 +1073,68 @@ it does not conflict.
   runs the repetition harness read-only (any stored version, never activated; ranking
   sessions in a throwaway redis-hot database; no account ids in the output).
 
+### Upgrading: Tara Intelligence R4, feed (interests, feedback, My Algorithm, experiments)
+
+- **New variable, optional:** on feed `INTEL_EMIT_R4_EVENTS` (default `true`, in the
+  `*feed-intel-env` alias). It gates feed's five new events: `intel.config.published`
+  (graph, profile and marketplace cache the active params and experiment variants),
+  `intel.integrity.flagged` (moderation opens a system-sourced case),
+  `feed.recommendations.reset` (post), `intel.creator.hidden` (graph) and
+  `intel.search_signal.changed` (search). Their consumers ship in the same release; on
+  an existing install either deploy the consumers first, or deploy once with `false`
+  and turn it on after. Feed's own consumers (`account.updated`,
+  `intel.experiment.exposed`, `search.queried`, `reel.hidden`) bind on boot.
+- **Migrations (additive, run at boot):** `intel.0011_r4_interests_feedback` (new
+  tables `intel_topic`, `intel_topic_alias`, `intel_content_topic`,
+  `intel_user_interest`, `intel_feedback_action`, `intel_preference_change`,
+  `intel_debug_consent`, `intel_experiment`, `intel_experiment_exposure`,
+  `intel_creator_quality`, `intel_integrity_flag`, `intel_account_language`,
+  `intel_aggregate_watermark`; new columns `intel_user_preference.reset_at`,
+  `search_signal`, `home_sections` and `intel_page_ref.category_norm`, all with
+  defaults on small tables) and `intel.0012_r4_config` (`discovery@1` active, the
+  constants graph and profile use today; `home@3`, `home@3-r15`, `home@3-r30` as
+  drafts, nothing activated).
+- **After the first boot (once):** `python manage.py intel_seed_topics` (topics and
+  aliases, additive), then `python manage.py intel_classify_topics` (post topics from
+  post's export), then `python manage.py intel_config publish --surface discovery` so
+  graph and profile get the discovery params. All three are idempotent.
+- **Beat:** two new nightly tasks, `intel.rebuild_creator_quality` and
+  `intel.purge_preference_logs`, run where beat already runs (`feed-worker -B`); the
+  reset task `intel.reset_recommendations` uses the default feed queue. No new
+  container.
+
+### Upgrading: Tara Intelligence R4, the other services (WP 5.5, 6.7, 7.4, 7.5-B2, 8.4-B2, 8.7-B2)
+
+- **New variables (all default `true`; each gates a new emission):**
+  - identity `IDENTITY_EMIT_ACCOUNT_UPDATED`: `account.updated` when an account
+    changes its language (feed consumes it).
+  - graph, profile, marketplace `INTEL_EMIT_EXPOSURE_EVENTS` (one alias,
+    `*intel-exposure`, in the compose file): `intel.experiment.exposed` once per
+    account and experiment when a suggestion surface serves an experiment variant.
+  - search `SEARCH_EMIT_QUERY_SIGNALS`: `search.queried` (sha256 term keys only,
+    never the query) for accounts that turned the search signal on in My Algorithm.
+    The opt-in itself is off for everyone.
+- **New container:** `search-worker` (Celery worker with embedded beat, 192 MB): the
+  outbox relay of search, which publishes events for the first time. Dev:
+  `search-relay`; k8s: the `worker` component in the search overlay.
+- **Order:** these producers' consumer (feed) must bind first. Upgrading: deploy once
+  with the three flags `false` and feed's R4 release in place, then set them `true`
+  and redeploy. The consumers in this release (graph `intel.config.published` and
+  `intel.creator.hidden`, profile and marketplace `intel.config.published`,
+  moderation `intel.integrity.flagged`, post `feed.recommendations.reset`, search
+  `intel.search_signal.changed`) bind on boot.
+- **Migrations (additive, run at boot):** graph `0004_intel_r4` (`intel_config`,
+  `intel_exposure_seen`, `intel_hidden_creator`, `account_ref.age_class` with a
+  database default of `unknown`), profile `groups.0002_intel_config`, marketplace
+  `0010_intel_config`, moderation `0004_system_report_source` (`report.source`,
+  `moderation_case.system_signal`), post `reels.0003_reels_reset`, search
+  `0009_search_signal_outbox` (`search_signal_optin`, `outbox_event`).
+- **Behaviour:** people suggestions now list only accounts whose own token said
+  adult (rule E9b, fail closed). The class fills in from each account's next graph
+  request, with no backfill, so "People you may know" can be short for a while
+  after the deploy. A minor viewer gets no people suggestions (owner decision 9a).
+  Without a published `discovery` config, graph and profile serve today's limits.
+
 ### Backups
 
 `scripts/backup.sh` saves all databases, media and the JWT keys. Run it daily from

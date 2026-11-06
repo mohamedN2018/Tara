@@ -193,3 +193,91 @@ def test_home_pool_members_of_the_account_are_removed(redis_hot):
     assert counts["pool_members"] == len(keys)
     for key in keys:
         assert client.zscore(key, post_id) is None
+
+
+def test_r4_tables_are_erased_with_the_account():
+    """R4: interests (and other viewers' creator rows naming the account), feedback,
+    the preference log, consents, exposures, the language row, creator aggregates and
+    integrity flags, and the topics of the account's posts."""
+    from intel.models import (
+        AccountLanguage,
+        ContentTopic,
+        CreatorQuality,
+        DebugConsent,
+        ExperimentExposure,
+        FeedbackAction,
+        IntegrityFlag,
+        PreferenceChange,
+        UserInterest,
+    )
+
+    from . import world as w
+
+    gone, kept = acct(), acct()
+    now = timezone.now()
+    post = w.post(gone)
+    ContentTopic.objects.create(
+        post_id=post, topic_id=1, confidence=0.9, source="hashtag", classified_at=now
+    )
+    for account in (gone, kept):
+        UserInterest.objects.create(
+            account_id=account, dim="topic", key="1", source="inferred", updated_at=now
+        )
+        FeedbackAction.objects.create(
+            id=uuid.uuid4(),
+            account_id=account,
+            item_type="post",
+            item_id=uuid.uuid4(),
+            action="interested",
+            created_at=now,
+        )
+        PreferenceChange.objects.create(
+            id=uuid.uuid4(), account_id=account, source="ui", created_at=now
+        )
+        DebugConsent.objects.create(
+            id=uuid.uuid4(), account_id=account, granted_at=now, expires_at=now
+        )
+        ExperimentExposure.objects.create(
+            experiment_key="e",
+            account_id=account,
+            variant="a",
+            surface="home",
+            first_exposed_at=now,
+            data_origin="real",
+        )
+        AccountLanguage.objects.create(account_id=account, language="ar", event_at=now)
+    # Another viewer hid the deleted account as a creator; and its aggregates.
+    UserInterest.objects.create(
+        account_id=kept,
+        dim="creator",
+        key=gone,
+        source="explicit",
+        polarity="hidden",
+        updated_at=now,
+    )
+    CreatorQuality.objects.create(author_id=gone, computed_at=now)
+    IntegrityFlag.objects.create(
+        post_id=post,
+        signal="spam_hides",
+        author_id=gone,
+        rate=1.0,
+        distinct_accounts=3,
+        flagged_at=now,
+    )
+
+    deliver(event("account.deleted", {"account_id": gone}))
+
+    assert not ContentTopic.objects.filter(post_id=post).exists()
+    for model in (
+        UserInterest,
+        FeedbackAction,
+        PreferenceChange,
+        DebugConsent,
+        ExperimentExposure,
+        AccountLanguage,
+    ):
+        assert not model.objects.filter(account_id=gone).exists(), model
+        assert model.objects.filter(account_id=kept).exists(), model
+    assert not UserInterest.objects.filter(dim="creator", key=gone).exists()
+    assert not CreatorQuality.objects.filter(author_id=gone).exists()
+    assert not IntegrityFlag.objects.filter(author_id=gone).exists()

@@ -15,6 +15,7 @@ resources:
   - ingress.yaml
 
 components:
+  - ../../components/worker   # outbox relay: search.queried (Tara Intelligence WP 8.7-B2)
   - ../../components/consumer
 
 images:

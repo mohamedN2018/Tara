@@ -1,0 +1,185 @@
+# English topic lexicon (04 WP 6.1/6.2). One term per line: term<TAB>topic slug[<TAB>strong].
+# Normalized at load time (case-folded). A topic needs 2 distinct hits, or 1 strong hit.
+# Curated by hand; no model generated these lists.
+programming	programming	strong
+programmer	programming	strong
+developer	programming
+code	programming
+coding	programming	strong
+python	programming	strong
+javascript	programming	strong
+backend	programming	strong
+frontend	programming	strong
+database	programming
+bug	programming
+api	programming
+ai	ai	strong
+artificial intelligence	ai	strong
+machine learning	ai	strong
+chatgpt	ai	strong
+llm	ai	strong
+model	ai
+technology	technology	strong
+tech	technology	strong
+laptop	technology
+computer	technology
+gadget	technology	strong
+drone	technology	strong
+fpv	technology	strong
+software	technology
+app	technology
+phone	mobiles
+iphone	mobiles	strong
+android	mobiles	strong
+samsung	mobiles	strong
+xiaomi	mobiles	strong
+smartphone	mobiles	strong
+battery	mobiles
+gaming	gaming	strong
+gamer	gaming	strong
+playstation	gaming	strong
+xbox	gaming	strong
+game	gaming
+fortnite	gaming	strong
+design	design	strong
+designer	design	strong
+photoshop	design	strong
+logo	design	strong
+typography	design	strong
+photography	photography	strong
+photographer	photography	strong
+photo	photography
+shot	photography
+lens	photography
+camera	photography
+business	business	strong
+company	business
+clients	business
+sales	business
+startup	entrepreneurship	strong
+entrepreneur	entrepreneurship	strong
+founder	entrepreneurship	strong
+project	entrepreneurship
+marketing	marketing	strong
+ads	marketing
+brand	marketing
+invest	finance	strong
+investing	finance	strong
+stocks	finance	strong
+money	finance
+savings	finance	strong
+education	education	strong
+study	education
+exam	education	strong
+university	education
+school	education
+course	education	strong
+lesson	education
+science	science	strong
+space	science
+physics	science	strong
+chemistry	science	strong
+planet	science
+experiment	science
+history	history	strong
+ancient	history
+pharaohs	history	strong
+museum	history
+book	books	strong
+books	books	strong
+novel	books	strong
+reading	books	strong
+author	books
+food	food	strong
+restaurant	food	strong
+delicious	food	strong
+dinner	food
+lunch	food
+breakfast	food
+dessert	food	strong
+cooking	cooking	strong
+recipe	cooking	strong
+recipes	cooking	strong
+ingredients	cooking	strong
+oven	cooking
+travel	travel	strong
+trip	travel	strong
+hotel	travel	strong
+beach	travel
+flight	travel	strong
+sports	sports	strong
+match	sports
+tournament	sports	strong
+football	football	strong
+soccer	football	strong
+goal	football
+league	football
+workout	fitness	strong
+gym	fitness	strong
+fitness	fitness	strong
+health	health	strong
+doctor	health
+hospital	health	strong
+medicine	health
+kids	parenting
+parenting	parenting	strong
+baby	parenting	strong
+painting	arts	strong
+drawing	arts	strong
+artist	arts
+art	arts
+song	music	strong
+music	music	strong
+album	music	strong
+singer	music	strong
+movie	movies	strong
+movies	movies	strong
+series	movies
+episode	movies
+cinema	movies	strong
+funny	entertainment
+comedy	entertainment	strong
+memes	entertainment	strong
+fashion	fashion	strong
+outfit	fashion	strong
+dress	fashion
+style	fashion
+makeup	beauty	strong
+skincare	beauty	strong
+hair	beauty
+car	cars	strong
+cars	cars	strong
+engine	cars
+driving	cars
+apartment	property	strong
+rent	property
+real estate	property	strong
+villa	property	strong
+garden	home_garden	strong
+plants	home_garden	strong
+decor	home_garden	strong
+furniture	home_garden	strong
+repair	services
+maintenance	services	strong
+delivery	services
+sale	shopping	strong
+discount	shopping	strong
+price	shopping
+offer	shopping
+bought	shopping
+hobby	hobbies	strong
+news	news	strong
+breaking	news	strong
+memories	stories	strong
+story	stories
+nostalgia	stories	strong
+politics	politics	strong
+election	politics	strong
+government	politics	strong
+parliament	politics	strong
+quran	quran	strong
+surah	quran	strong
+recitation	quran	strong
+prayer	religion	strong
+ramadan	religion	strong
+mosque	religion	strong

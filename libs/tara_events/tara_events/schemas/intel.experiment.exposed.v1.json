@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/intel.experiment.exposed.v1.json",
+  "title": "intel.experiment.exposed v1 payload",
+  "description": "An account was assigned to a variant of a running experiment and served it for the first time (Tara Intelligence WP 5.5). Emitted once per (experiment, account) by a service that serves an experiment surface outside feed (graph, profile, marketplace). Ids and names only. Consumer: feed (intel_experiment_exposure, idempotent on (experiment_key, account_id)).",
+  "type": "object",
+  "properties": {
+    "experiment_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60
+    },
+    "account_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "variant": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40
+    },
+    "surface": {
+      "type": "string",
+      "enum": [
+        "home",
+        "reels",
+        "video",
+        "groups",
+        "marketplace",
+        "discovery"
+      ]
+    },
+    "exposed_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "experiment_key",
+    "account_id",
+    "variant",
+    "surface",
+    "exposed_at"
+  ],
+  "additionalProperties": false
+}

@@ -1,6 +1,6 @@
 import { expect, request, test } from "@playwright/test";
 
-import { BASE_URL, fillRegisterForm, pageAs, PASSWORD, sharedAccounts, unique, verificationToken } from "./helpers";
+import { BASE_URL, fillRegisterForm, pageAs, PASSWORD, sharedAccounts, skipTopicPicker, unique, verificationToken } from "./helpers";
 
 test("register, verify through the mailed link, log in", async ({ page }) => {
   const tag = unique();
@@ -32,6 +32,7 @@ test("register, verify through the mailed link, log in", async ({ page }) => {
   await page.getByLabel("البريد الإلكتروني").fill(email);
   await page.getByLabel("كلمة المرور").fill(PASSWORD);
   await page.getByRole("button", { name: "دخول" }).click();
+  await skipTopicPicker(page); // R4: the optional topic picker comes first
   await expect(page).toHaveURL(/\/home$/);
   await expect(page.getByText(name).first()).toBeVisible();
 });

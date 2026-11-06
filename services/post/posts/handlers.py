@@ -346,3 +346,53 @@ def on_account_deleted(event: EventEnvelope) -> None:
         from stories.models import Story
 
         Story.objects.filter(author_id=account_id).delete()
+
+
+@on_event("feed.recommendations.reset")
+def on_recommendations_reset(event: EventEnvelope) -> None:
+    """Feed's "Reset recommendations" (Tara Intelligence WP 8.4-B2): keep the newest
+    ``reset_at``, so the reels seen order ignores the views before it. Idempotent;
+    an older redelivery never moves it back."""
+    from django.utils.dateparse import parse_datetime
+    from reels.models import ReelsReset
+
+    p = event.payload
+    account_id, reset_at = p.get("account_id"), parse_datetime(str(p.get("reset_at") or ""))
+    if not account_id or reset_at is None:
+        return
+    with transaction.atomic():
+        row, created = ReelsReset.objects.select_for_update().get_or_create(
+            account_id=account_id, defaults={"reset_at": reset_at}
+        )
+        if not created and reset_at > row.reset_at:
+            row.reset_at = reset_at
+            row.save(update_fields=["reset_at", "updated_at"])
+
+
+@on_event("intel.creator.hidden")
+def on_creator_hidden(event: EventEnvelope) -> None:
+    """ "Don't recommend this creator" and its undo for the reels for_you tab
+    (Tara Intelligence WP 7.5-B2); the newest choice wins, redelivery is harmless."""
+    import uuid
+
+    from django.utils.dateparse import parse_datetime
+    from reels.models import ReelsHiddenCreator
+
+    p = event.payload
+    try:
+        account_id = uuid.UUID(str(p.get("account_id")))
+        creator_id = uuid.UUID(str(p.get("creator_id")))
+    except (TypeError, ValueError):
+        return
+    hidden, at = p.get("hidden"), parse_datetime(str(p.get("at") or ""))
+    if not isinstance(hidden, bool) or at is None:
+        return
+    with transaction.atomic():
+        row, created = ReelsHiddenCreator.objects.select_for_update().get_or_create(
+            account_id=account_id,
+            creator_id=creator_id,
+            defaults={"hidden": hidden, "event_at": at},
+        )
+        if not created and at > row.event_at:
+            row.hidden, row.event_at = hidden, at
+            row.save(update_fields=["hidden", "event_at"])

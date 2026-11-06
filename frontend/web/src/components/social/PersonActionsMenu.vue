@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { Ban, BellOff, Bell, Flag, Link2, Lock, MessageCircle, MoreHorizontal, ShieldMinus, Star, UserMinus } from "lucide-vue-next";
+import { Ban, BellOff, Bell, Flag, Link2, Lock, MessageCircle, MoreHorizontal, ShieldMinus, Star, UserMinus, UserX } from "lucide-vue-next";
 import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 
 import ConfirmActionDialog from "@/components/social/ConfirmActionDialog.vue";
 import ReportDialog from "@/components/social/ReportDialog.vue";
+import { sendFeedback } from "@/lib/feedFeedback";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import { type PrefKind, useRelationshipPrefs } from "@/lib/useRelationshipPrefs";
 import { graphService } from "@/services/graph";
@@ -23,8 +24,10 @@ const props = withDefaults(
     privacyLink?: boolean;
     self?: boolean;
     buttonClass?: string;
+    /** On a profile (R4, 07 WP 7.5-B2): offer "Don't recommend this creator". */
+    hideCreator?: boolean;
   }>(),
-  { isFriend: false, copyLink: false, message: false, privacyLink: false, self: false, buttonClass: "btn-ghost px-2" },
+  { isFriend: false, copyLink: false, message: false, privacyLink: false, self: false, buttonClass: "btn-ghost px-2", hideCreator: false },
 );
 const emit = defineEmits<{ unfriended: []; blocked: [on: boolean]; message: [] }>();
 
@@ -102,6 +105,26 @@ async function unfriend() {
   }
 }
 
+// "Don't recommend this creator" (item_type=profile): out of every recommended source
+// and people suggestion; following stays. Undo from the toast or My Algorithm.
+async function dontRecommend() {
+  open.value = false;
+  busy.value = true;
+  try {
+    await sendFeedback({
+      action: "hide_creator",
+      itemType: "profile",
+      itemId: props.userId,
+      surface: "profile",
+      text: t("myAlgorithm.toast.hideCreator", { name: props.name }),
+      undoLabel: t("myAlgorithm.toast.undo"),
+      undoneText: t("myAlgorithm.toast.undone"),
+    });
+  } finally {
+    busy.value = false;
+  }
+}
+
 const item =
   "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-start text-sm transition hover:bg-gray-100 disabled:opacity-60 dark:hover:bg-gray-800";
 </script>
@@ -146,6 +169,13 @@ const item =
           </button>
           <button v-if="isFriend" role="menuitem" :class="item" @click="open = false; confirm = 'unfriend'">
             <UserMinus class="h-4 w-4" /> {{ t("people.actions.unfriend") }}
+          </button>
+          <button v-if="hideCreator" role="menuitem" :class="item" :disabled="busy" data-testid="person-hide-creator" @click="dontRecommend">
+            <UserX class="h-4 w-4" />
+            <span class="min-w-0">
+              <span class="block" dir="auto">{{ t("myAlgorithm.menu.hideCreator", { name }) }}</span>
+              <span class="block text-xs text-gray-500 dark:text-gray-400">{{ t("myAlgorithm.menu.hideCreatorHint") }}</span>
+            </span>
           </button>
           <div class="my-1 border-t border-gray-100 dark:border-gray-800" />
           <button v-if="prefs.loaded('blocks')" role="menuitem" :class="item" class="text-red-600 dark:text-red-400" @click="blockClicked">

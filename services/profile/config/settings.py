@@ -78,6 +78,8 @@ PROFILE_HANDLE_CHECK_RATE = os.getenv("PROFILE_HANDLE_CHECK_RATE") or "30/min"
 # group.* events (1.11). Two-release rollout (roadmap 3.3): deploy the consumers
 # with this off, then turn it on. Off, post answers group checks from profile.
 PROFILE_EMIT_GROUP_EVENTS = env_bool("PROFILE_EMIT_GROUP_EVENTS", True)
+# intel.experiment.exposed once per account and experiment (Tara Intelligence WP 5.5).
+INTEL_EMIT_EXPOSURE_EVENTS = env_bool("INTEL_EMIT_EXPOSURE_EVENTS", True)
 
 REST_FRAMEWORK = {
     **api_throttling(),

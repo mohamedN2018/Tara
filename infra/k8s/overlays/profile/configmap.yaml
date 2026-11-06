@@ -16,3 +16,5 @@ data:
   LOG_LEVEL: "INFO"
   LOG_FORMAT: "json"
   GRAPH_INTERNAL_URL: "http://graph.tara.svc.cluster.local:8000"
+  # Tara Intelligence R4 (track B)
+  INTEL_EMIT_EXPOSURE_EVENTS: "true"

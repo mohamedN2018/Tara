@@ -12,7 +12,13 @@ from . import store
 
 
 def record(account_id, event_type: str, item_type: str, item_id, author_id=None) -> bool:
-    """One ``source=server`` row. False when the account's rows are refused here."""
+    """One ``source=server`` row. False when the account's rows are refused here, or
+    when the account has ``personalization_off`` (R4: nothing behavioural is stored,
+    decision 24; the action itself, a hide or a snooze, still applies)."""
+    from .. import preferences
+
+    if preferences.personalization_off(account_id):
+        return False
     resolution = origin.resolve(account_id)
     if resolution.refused:
         return False

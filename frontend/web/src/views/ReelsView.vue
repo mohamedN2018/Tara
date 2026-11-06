@@ -4,7 +4,7 @@
 // opens that reel; ?author= keeps the pager on one profile's or Page's reels
 // (their Reels tab); ?sheet=comments|share|more opens a sheet over the reel;
 // ?create=1 opens "Create reel". Likes, comments and shares are the post's.
-import { Bookmark, BookmarkMinus, Clapperboard, Copy, EyeOff, Flag, Plus, Trash2 } from "lucide-vue-next";
+import { Bookmark, BookmarkMinus, Clapperboard, Copy, EyeOff, Flag, Plus, ThumbsUp, Trash2, UserX } from "lucide-vue-next";
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { type LocationQuery, useRoute, useRouter } from "vue-router";
@@ -18,9 +18,12 @@ import EmptyState from "@/components/states/EmptyState.vue";
 import ErrorState from "@/components/states/ErrorState.vue";
 import StoryDialog from "@/components/stories/StoryDialog.vue";
 import { delivery, loadDelivery } from "@/lib/delivery";
+import { sendFeedback } from "@/lib/feedFeedback";
+import { itemKey, servedToken } from "@/lib/signals";
 import { postService, REPORT_ERRORS } from "@/services/post";
 import { REEL_ERRORS, REEL_TABS, type Reel, type ReelTab, reelsService } from "@/services/reels";
 import { useAuthStore } from "@/stores/auth";
+import { useDirectoryStore } from "@/stores/directory";
 import { useToastStore } from "@/stores/toasts";
 import type { CursorPage, Post } from "@/types";
 
@@ -248,6 +251,50 @@ async function notInterested(reel: Reel) {
   }
 }
 
+// R4 feedback on a reel (04 WP 7.3, 07 WP 7.5-B2): Interested, and "Don't recommend this
+// creator", whose reels leave this list at once and come back on undo. "Not interested"
+// stays the reel's own hide (feed reads it as not_interested through `reel.hidden`).
+const directory = useDirectoryStore();
+const feedbackBusy = ref(false);
+async function reelFeedback(reel: Reel, action: "interested" | "hide_creator") {
+  if (feedbackBusy.value) return;
+  feedbackBusy.value = true;
+  closeSheet();
+  const name = directory.label(reel.author_id);
+  let removed: { reel: Reel; at: number }[] = [];
+  const list = `${tab.value}|${author.value}`;
+  try {
+    await sendFeedback({
+      action,
+      itemType: "reel",
+      itemId: reel.id,
+      surface: "reels",
+      st: servedToken(itemKey("reel", reel.id)),
+      text: t(action === "interested" ? "myAlgorithm.toast.interested" : "myAlgorithm.toast.hideCreator", { name }),
+      undoLabel: t("myAlgorithm.toast.undo"),
+      undoneText: t("myAlgorithm.toast.undone"),
+      onGone:
+        action === "hide_creator"
+          ? () => {
+              removed = reels.value.map((r, at) => ({ reel: r, at })).filter((x) => x.reel.author_id === reel.author_id);
+              for (const x of removed) removeFromList(x.reel.id);
+            }
+          : undefined,
+      onBack:
+        action === "hide_creator"
+          ? () => {
+              if (list !== `${tab.value}|${author.value}`) return;
+              const next = [...reels.value];
+              for (const x of removed) if (!next.some((r) => r.id === x.reel.id)) next.splice(Math.min(x.at, next.length), 0, x.reel);
+              reels.value = next;
+            }
+          : undefined,
+    });
+  } finally {
+    feedbackBusy.value = false;
+  }
+}
+
 /** "Undo" on the toast: the server forgets the mark and the reel comes back where it was. */
 async function undoNotInterested(reel: Reel, index: number, list: string) {
   try {
@@ -430,11 +477,39 @@ function onPostedVideo(post: Post) {
             <span v-if="!current.is_saved" class="block text-xs text-gray-600 dark:text-gray-300">{{ t("reels.saveHint") }}</span>
           </span>
         </button>
+        <button
+          v-if="!isOwn"
+          type="button"
+          class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-start hover:bg-gray-100 dark:hover:bg-gray-800"
+          :disabled="feedbackBusy"
+          data-testid="reel-interested"
+          @click="reelFeedback(current, 'interested')"
+        >
+          <ThumbsUp class="h-5 w-5 shrink-0" aria-hidden="true" />
+          <span>
+            <span class="block font-semibold">{{ t("myAlgorithm.menu.interested") }}</span>
+            <span class="block text-xs text-gray-600 dark:text-gray-300">{{ t("myAlgorithm.menu.interestedHint") }}</span>
+          </span>
+        </button>
         <button v-if="!isOwn" type="button" class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-start hover:bg-gray-100 dark:hover:bg-gray-800" data-testid="reel-not-interested" @click="notInterested(current)">
           <EyeOff class="h-5 w-5 shrink-0" aria-hidden="true" />
           <span>
             <span class="block font-semibold">{{ t("reels.notInterested") }}</span>
             <span class="block text-xs text-gray-600 dark:text-gray-300">{{ t("reels.notInterestedHint") }}</span>
+          </span>
+        </button>
+        <button
+          v-if="!isOwn && (current.author_type ?? 'user') === 'user'"
+          type="button"
+          class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-start hover:bg-gray-100 dark:hover:bg-gray-800"
+          :disabled="feedbackBusy"
+          data-testid="reel-hide-creator"
+          @click="reelFeedback(current, 'hide_creator')"
+        >
+          <UserX class="h-5 w-5 shrink-0" aria-hidden="true" />
+          <span>
+            <span class="block font-semibold" dir="auto">{{ t("myAlgorithm.menu.hideCreator", { name: directory.label(current.author_id) }) }}</span>
+            <span class="block text-xs text-gray-600 dark:text-gray-300">{{ t("myAlgorithm.menu.hideCreatorHint") }}</span>
           </span>
         </button>
         <button type="button" class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-start font-semibold hover:bg-gray-100 dark:hover:bg-gray-800" @click="copyLink(current)">

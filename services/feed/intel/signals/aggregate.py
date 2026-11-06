@@ -26,7 +26,8 @@ classified with the Home config's ``exposure`` thresholds, its consumed threshol
 the one ingest stored with the row (``duration_ms``: scaled by the excerpt length),
 else ``exposure.consumed_dwell_ms``. Likes, comments, shares and saves (bus rows) and
 video completions are consumption that is not dwell-only. WP 6.3 later extends this
-same job (interests, affinity, post stats) instead of writing a second one.
+same job (interests, affinity, post stats) instead of writing a second one: R4's
+interest tiers run here (``interests_agg``), after the engagement pass.
 """
 
 from __future__ import annotations
@@ -229,4 +230,9 @@ def run(now: datetime | None = None, *, cfg=None) -> dict:
         lo = partitions.oldest_kept(partitions.SIGNALS, hi)
     out = aggregate(lo, hi, cfg=cfg)
     cache.set(WATERMARK_KEY, hi.timestamp(), timeout=None)
+    # R4 WP 6.3: the interest tiers, in the same job (exactly once, own watermark).
+    from .. import config
+    from . import interests_agg
+
+    out.update(interests_agg.aggregate(hi, OVERLAP, cfg or config.for_surface("home")))
     return out

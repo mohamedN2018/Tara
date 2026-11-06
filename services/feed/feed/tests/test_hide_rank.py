@@ -237,14 +237,11 @@ def test_dislike_and_annoying_push_the_author_down_in_for_you(client_for, reason
     assert authors[recent[0]] == disliked
 
 
-def test_not_interested_does_not_downweight_the_author(client_for):
-    viewer, author = _acct(), _acct()
-    hidden = _item(viewer, author, minutes_ago=1)
-    _item(viewer, author, minutes_ago=2)
-    client_for(viewer).post(
-        reverse("feed:hide"), {"post_id": str(hidden.post_id), "reason": "not_interested"}
-    )
-    assert ranking.author_penalties(viewer, [author]) == {}
+# R4 WP 7.2 (owner-visible change): ``test_not_interested_does_not_downweight_the_author``
+# is replaced by ``intel/tests/test_feedback_effects.py::
+# test_not_interested_feedback_downweights_the_author_explicitly``. A not_interested
+# hide still adds no author penalty; the explicit Not interested action writes -2 on
+# the creator (feedback_effects.not_interested_author).
 
 
 # ---- snooze -------------------------------------------------------------------
@@ -344,7 +341,9 @@ def test_item_shape_is_unchanged_in_every_mode(client_for, world):
             # Tara Intelligence WP 2.3 (additive): the serve token that attributes
             # this item's telemetry (intel/ranking/serve_tokens.py).
             "st",
-        } | ({"source"} if mode == "for_you" else set())  # WP 4.3 (additive): src hint
+        } | ({"source"} if mode == "for_you" else set()) | {
+            "topics"  # R4 API contract (additive): the item's topics, at most 3
+        }  # WP 4.3 (additive): src hint
         assert {"next_cursor", "has_more"} <= set(body["page"])
 
 

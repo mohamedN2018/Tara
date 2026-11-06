@@ -47,7 +47,7 @@ migrate Job come from the base/overlay; worker/consumer come from components.
 | identity | ✓ | ✓ | — | emits only |
 | profile, graph, post, feed, chat, marketplace, notification, moderation | ✓ | ✓ | ✓ | emit + consume |
 | media, ads | ✓ | ✓ | — | emit only |
-| search | ✓ | — | ✓ | indexer (consume only) |
+| search | ✓ | ✓ | ✓ | indexer; the worker relays `search.queried` only (Tara Intelligence WP 8.7-B2) |
 | admin | ✓ | — | — | web only |
 | realtime | ✓ | — | bridge | DB-less; inline `bridge` Deployment (1 replica), ASGI |
 

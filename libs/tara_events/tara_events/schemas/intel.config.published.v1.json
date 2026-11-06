@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/intel.config.published.v1.json",
+  "title": "intel.config.published v1 payload",
+  "description": "The active ranking config of one surface, plus the running experiment of that surface if any (Tara Intelligence WP 5.5). Emitted by feed in the transaction that activates or rolls back a version, or starts or stops an experiment; `intel_config publish --surface X` re-emits the current state so a consumer can bootstrap. Consumers (graph, profile, marketplace) keep the latest by published_at and bucket viewers with tara_common.bucketing.assign_variant. Params are numbers, booleans and short strings only: no account data. subject_id is the surface. Behind INTEL_EMIT_R4_EVENTS (default on).",
+  "type": "object",
+  "properties": {
+    "surface": {
+      "type": "string",
+      "enum": [
+        "home",
+        "reels",
+        "video",
+        "groups",
+        "marketplace",
+        "discovery"
+      ]
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "params": {
+      "type": "object"
+    },
+    "published_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "experiment": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 60
+            },
+            "salt": {
+              "type": "string",
+              "maxLength": 40
+            },
+            "variants": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40
+                  },
+                  "pct": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "version": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "params": {
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "name",
+                  "pct",
+                  "version",
+                  "params"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "key",
+            "salt",
+            "variants"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "required": [
+    "surface",
+    "version",
+    "params",
+    "published_at",
+    "experiment"
+  ],
+  "additionalProperties": false
+}

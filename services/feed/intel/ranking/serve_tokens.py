@@ -330,6 +330,7 @@ def stamp_home_items(
     ranked: bool,
     cfg_version: str | None = None,
     visit_ord: int | None = None,
+    topics: dict | None = None,
 ):
     """Give each Home item its serve token ``st`` (in place).
 
@@ -366,6 +367,9 @@ def stamp_home_items(
             length_bucket=length_bucket(snap.get("excerpt"), buckets),
             author_id=item.get("author_id") or snap.get("author_id"),
             visit_ord=visit_ord,
+            # R4: the primary topic (``topics.attach.primary``), so ingest updates the
+            # session vector without a read (06 section 4.4).
+            topic_id=(topics or {}).get(str(item["post_id"]), 0),
         )
     return items
 

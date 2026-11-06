@@ -310,8 +310,16 @@ class MeView(APIView):
         serializer = AccountUpdateSerializer(account, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         was_shown = account.show_presence
+        was_language = account.language
         with transaction.atomic():
             serializer.save()
+            if account.language != was_language:
+                # Feed reads the language for cold start (Tara Intelligence WP 6.7).
+                from .account_center import emit_account_updated
+
+                emit_account_updated(
+                    account, correlation_id=_client_meta(request)["correlation_id"]
+                )
             if account.show_presence != was_shown:
                 # Realtime keeps the current choice from this event and trusts
                 # it over the show_presence claim of older access tokens (3C).

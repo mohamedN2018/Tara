@@ -7,6 +7,8 @@ from intel.config import store
 from intel.models import RankingConfig
 
 CONTROL, R15, R30 = "home@2b", "home@2b-r15", "home@2b-r30"
+# R4 (intel/0012): interest_rel, session_rel and the schema-5 blocks, drafts.
+H3, H3_R15, H3_R30 = "home@3", "home@3-r15", "home@3-r30"
 
 
 def version(label: str) -> int:

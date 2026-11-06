@@ -1,0 +1,19 @@
+{
+  "schema_version": 5,
+  "surface": "discovery",
+  "version": 1,
+  "people": {
+    "default_limit": 10,
+    "max_limit": 30,
+    "max_bridges": 500,
+    "max_candidates": 2000,
+    "follower_fill": true
+  },
+  "pages": {
+    "default_limit": 5
+  },
+  "groups": {
+    "max_suggestions": 20,
+    "friend_preview": 3
+  }
+}

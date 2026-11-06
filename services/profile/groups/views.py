@@ -89,14 +89,23 @@ class GroupSuggestionsView(APIView):
 
     @extend_schema(responses={200: None}, tags=["groups"])
     def get(self, request: Request) -> Response:
-        """Up to 20 public or private groups, ranked by friends who are members."""
+        """Up to 20 public or private groups, ranked by friends who are members.
+
+        The counts come from the ``discovery`` config (Tara Intelligence WP 5.5); under
+        a running experiment the response carries ``meta.variant``."""
+        from . import intel_config
+
+        cfg = intel_config.served(_me(request))
         out = []
-        for group, friend_count, friend_ids in services.suggestions(_me(request)):
+        for group, friend_count, friend_ids in services.suggestions(_me(request), cfg):
             item = group_data(group, _me(request), None)
             item["friend_member_count"] = friend_count
             item["friend_ids"] = friend_ids
             out.append(item)
-        return data_response(out)
+        response = data_response(out)
+        if cfg.variant:
+            response.data["meta"] = cfg.meta()
+        return response
 
 
 class GroupSuggestionDismissView(APIView):

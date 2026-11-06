@@ -122,6 +122,53 @@ def pool_rebuilt(outcome: str) -> None:
         POOL_REBUILDS.labels(outcome=outcome).inc()
 
 
+# ---- R4 (topics, feedback, My Algorithm) ----------------------------------------------
+try:
+    TOPICS_CLASSIFIED = Counter(
+        "intel_topic_classified_total",
+        "Posts classified (WP 6.2), by whether any topic was found (coverage).",
+        ["found"],
+    )
+    FEEDBACK = Counter(
+        "intel_feedback_total",
+        "Explicit feedback actions (WP 7.1), by action and op.",
+        ["action", "op"],
+    )
+    HOT_PURGE_FAILED = Counter(
+        "intel_hot_purge_failed_total",
+        "Account key purges in redis-hot that failed (personalization off, reset); "
+        "fail-soft, the keys expire on their TTL.",
+        ["reason"],
+    )
+    INTEGRITY_FLAGGED = Counter(
+        "intel_integrity_flagged_total",
+        "intel.integrity.flagged emissions (WP 7.4).",
+        ["signal"],
+    )
+except (ImportError, NameError):  # pragma: no cover
+    TOPICS_CLASSIFIED = FEEDBACK = HOT_PURGE_FAILED = INTEGRITY_FLAGGED = None
+
+
+def topics_classified(found: bool) -> None:
+    if TOPICS_CLASSIFIED is not None:
+        TOPICS_CLASSIFIED.labels(found="yes" if found else "no").inc()
+
+
+def feedback(action: str, op: str) -> None:
+    if FEEDBACK is not None:
+        FEEDBACK.labels(action=action, op=op).inc()
+
+
+def hot_purge_failed(reason: str) -> None:
+    if HOT_PURGE_FAILED is not None:
+        HOT_PURGE_FAILED.labels(reason=reason).inc()
+
+
+def integrity_flagged(signal: str) -> None:
+    if INTEGRITY_FLAGGED is not None:
+        INTEGRITY_FLAGGED.labels(signal=signal).inc()
+
+
 class HotMemoryCollector:
     """``intel_redis_hot_used_ratio``: redis-hot ``used_memory / maxmemory``, read at
     scrape time (one ``INFO memory``; no sample while redis-hot is unreachable)."""

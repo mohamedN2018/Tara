@@ -46,3 +46,9 @@ def on_group_reported(e: EventEnvelope) -> None:
 @on_event("story.reported")
 def on_story_reported(e: EventEnvelope) -> None:
     services.ingest_report_event("story.reported", e.payload)
+
+
+@on_event("intel.integrity.flagged")
+def on_integrity_flagged(e: EventEnvelope) -> None:
+    """Feed's spam / sexual hide signal (WP 7.4): a system-sourced report."""
+    services.ingest_system_flag(e.payload)

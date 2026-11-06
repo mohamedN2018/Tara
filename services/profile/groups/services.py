@@ -930,13 +930,21 @@ def memberships_of(viewer_id: str, groups) -> dict:
     }
 
 
-def suggestions(viewer_id: str) -> list[tuple[Group, int, list[str]]]:
+def suggestions(viewer_id: str, cfg=None) -> list[tuple[Group, int, list[str]]]:
     """Public and private groups (never hidden) that the viewer's friends belong
     to, ranked by how many friends are members, then by the categories of the
     viewer's own groups, then by size. Dismissed groups are left out.
 
     Returns ``(group, friend_member_count, up to 3 friend ids)``. Graph down: no
-    friend signal, so the ranking falls back to categories and size."""
+    friend signal, so the ranking falls back to categories and size.
+
+    ``cfg`` (``intel_config.Served``, Tara Intelligence WP 5.5) sets how many groups
+    and friend ids; none (or no config row) is ``discovery@1``: 20 and 3, as before."""
+    from . import intel_config
+
+    params = (cfg or intel_config.Served(intel_config.resolve())).params
+    max_suggestions = params["groups.max_suggestions"]
+    preview = params["groups.friend_preview"]
     viewer = str(viewer_id)
     friends = sorted((graph.friend_ids(viewer) or set()) - blocked_ids(viewer))
     mine = GroupMember.objects.filter(account_id=viewer)
@@ -962,13 +970,13 @@ def suggestions(viewer_id: str) -> list[tuple[Group, int, list[str]]]:
     )
     rows = list(
         candidates.order_by("-friend_members", "-member_count", "-created_at")[
-            : MAX_SUGGESTIONS * 3
+            : max_suggestions * 3
         ]
     )
     rows.sort(key=lambda g: (-g.friend_members, g.category not in my_categories, -g.member_count))
-    rows = rows[:MAX_SUGGESTIONS]
+    rows = rows[:max_suggestions]
     sample: dict = {}
-    if friends and rows:
+    if friends and rows and preview:
         for group_id, account in (
             GroupMember.objects.filter(
                 group_id__in=[g.id for g in rows if g.friend_members],
@@ -979,7 +987,7 @@ def suggestions(viewer_id: str) -> list[tuple[Group, int, list[str]]]:
             .values_list("group_id", "account_id")
         ):
             bucket = sample.setdefault(group_id, [])
-            if len(bucket) < 3:
+            if len(bucket) < preview:
                 bucket.append(str(account))
     return [(g, g.friend_members, sample.get(g.id, [])) for g in rows]
 

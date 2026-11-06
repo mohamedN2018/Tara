@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/intel.creator.hidden.v1.json",
+  "title": "intel.creator.hidden v1 payload",
+  "description": "An account chose (hidden=true) or undid (hidden=false) \"Don't recommend this creator\" (Tara Intelligence WP 7.5-B2). Ids only; at is when the choice was made. Emitted by feed in the feedback transaction, behind INTEL_EMIT_R4_EVENTS (default on). Consumer: graph (drops the creator from the account's people suggestions).",
+  "type": "object",
+  "properties": {
+    "account_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "creator_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "hidden": {
+      "type": "boolean"
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "account_id",
+    "creator_id",
+    "hidden",
+    "at"
+  ],
+  "additionalProperties": false
+}

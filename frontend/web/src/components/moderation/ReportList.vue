@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { MessageSquareWarning } from "lucide-vue-next";
+import { MessageSquareWarning, ShieldAlert } from "lucide-vue-next";
 import { computed, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -20,7 +20,13 @@ import { useDirectoryStore } from "@/stores/directory";
  */
 const props = withDefaults(defineProps<{ caseId?: string | null; showTarget?: boolean }>(), { caseId: null, showTarget: false });
 
-const { t } = useI18n();
+const { t, te } = useI18n();
+// A system-sourced report (Tara Intelligence WP 7.4) names no person, only the signal.
+const isSystem = (r: ModerationReport) => r.source === "system" || !r.reporter_id;
+const signalText = (r: ModerationReport) => {
+  const key = `myAlgorithm.moderation.signals.${r.evidence?.signal ?? r.reason}`;
+  return te(key) ? t(key) : null;
+};
 const auth = useAuthStore();
 const directory = useDirectoryStore();
 const { reasonLabel, targetLabel, reasonDetail } = useSafetyLabels();
@@ -73,7 +79,10 @@ watch(() => props.caseId, load);
     <ul v-else class="divide-y divide-gray-100 dark:divide-gray-800">
       <li v-for="r in rows" :key="r.id" class="py-3" data-testid="report-row">
         <div class="flex flex-wrap items-center gap-2 text-sm">
-          <span class="chip">{{ reasonLabel(r.reason) }}</span>
+          <span v-if="isSystem(r)" class="chip border-accent-300 text-accent-800 dark:border-accent-700 dark:text-accent-200" data-testid="report-system">
+            <ShieldAlert class="h-4 w-4" aria-hidden="true" /> {{ t("myAlgorithm.moderation.systemSignal") }}
+          </span>
+          <span v-else class="chip">{{ reasonLabel(r.reason) }}</span>
           <template v-if="showTarget">
             <RouterLink v-if="targetLink(r.target_type, r.target_id)" :to="targetLink(r.target_type, r.target_id)!" class="font-medium text-brand-700 hover:underline dark:text-brand-300">
               {{ targetLabel(r.target_type) }}<template v-if="r.target_type === 'user'"> · <bdi>{{ directory.label(r.target_id) }}</bdi></template>
@@ -82,7 +91,13 @@ watch(() => props.caseId, load);
           </template>
           <time class="ms-auto text-xs text-gray-500 dark:text-gray-400" :datetime="r.created_at">{{ relativeTime(r.created_at) }}</time>
         </div>
-        <p v-if="reasonDetail(r.reason)" class="mt-1.5 whitespace-pre-wrap break-words text-sm text-gray-700 dark:text-gray-200" dir="auto">“{{ reasonDetail(r.reason) }}”</p>
+        <template v-if="isSystem(r)">
+          <p v-if="signalText(r)" class="mt-1.5 text-sm text-gray-700 dark:text-gray-200" data-testid="report-system-signal">{{ signalText(r) }}</p>
+          <p v-if="Number.isInteger(r.evidence?.distinct_accounts)" class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+            {{ t("myAlgorithm.moderation.distinct", { count: r.evidence!.distinct_accounts }) }}
+          </p>
+        </template>
+        <p v-else-if="reasonDetail(r.reason)" class="mt-1.5 whitespace-pre-wrap break-words text-sm text-gray-700 dark:text-gray-200" dir="auto">“{{ reasonDetail(r.reason) }}”</p>
         <blockquote
           v-if="r.evidence && r.evidence.body !== undefined"
           class="mt-2 rounded-xl border-s-4 border-accent-400 bg-gray-50 p-3 text-sm dark:bg-gray-950/60"
@@ -96,10 +111,11 @@ watch(() => props.caseId, load);
             {{ t("safety.mod.reports.attachments", { count: r.evidence.attachment_count }, r.evidence.attachment_count) }}
           </p>
         </blockquote>
-        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+        <p v-if="!isSystem(r)" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
           {{ t("safety.mod.reports.by") }}
           <!-- The reporter's name (ids share a time prefix, so a fragment tells nobody apart). -->
           <RouterLink
+            v-if="r.reporter_id"
             :to="canOpenUsers ? `/admin/users/${r.reporter_id}` : `/u/id/${r.reporter_id}`"
             class="font-medium text-brand-700 hover:underline dark:text-brand-300"
             data-testid="report-reporter"

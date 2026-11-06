@@ -221,6 +221,9 @@ IDENTITY_EMIT_AUDIT_EVENTS = env_bool("IDENTITY_EMIT_AUDIT_EVENTS", True)
 # account.verification.resent (8.4, 8.6). Same deploy order: their consumers
 # (admin-consumer now, the 8.5 propagation consumers later) ship first.
 IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS = env_bool("IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS", True)
+# Emit account.updated when the language changes (Tara Intelligence WP 6.7);
+# feed consumes it. Same deploy order: feed's consumer ships first.
+IDENTITY_EMIT_ACCOUNT_UPDATED = env_bool("IDENTITY_EMIT_ACCOUNT_UPDATED", True)
 
 # ---- Settings centre (plan 08 wave 3C) --------------------------------------
 # Key for the TOTP secrets at rest. Empty: derived from IDENTITY_SECRET_KEY

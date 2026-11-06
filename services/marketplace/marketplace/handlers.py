@@ -30,3 +30,11 @@ def on_user_blocked(event: EventEnvelope) -> None:
 def on_user_unblocked(event: EventEnvelope) -> None:
     p = event.payload
     BlockedPair.objects.filter(blocker_id=p["blocker_id"], blocked_id=p["blocked_id"]).delete()
+
+
+@on_event("intel.config.published")
+def on_intel_config_published(e: EventEnvelope) -> None:
+    """Keep the newest published config of each surface (Tara Intelligence WP 5.5)."""
+    from . import intel_config
+
+    intel_config.apply_published(e.payload)

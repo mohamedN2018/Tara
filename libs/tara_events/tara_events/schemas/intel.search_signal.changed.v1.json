@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/intel.search_signal.changed.v1.json",
+  "title": "intel.search_signal.changed v1 payload",
+  "description": "Whether search may send hashed query terms for an account (Tara Intelligence WP 8.7-B2, owner decision 7). enabled = search_signal AND NOT personalization_off. Emitted by feed in the preference transaction, behind INTEL_EMIT_R4_EVENTS (default on). Consumer: search (emits search.queried only while enabled).",
+  "type": "object",
+  "properties": {
+    "account_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "account_id",
+    "enabled",
+    "at"
+  ],
+  "additionalProperties": false
+}

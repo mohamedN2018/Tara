@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Clock, Star } from "lucide-vue-next";
+import { Clock, SlidersHorizontal, Star } from "lucide-vue-next";
 import { onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 
@@ -74,6 +74,18 @@ onMounted(() => load(true));
 
 <template>
   <div class="space-y-4" data-testid="feed-preferences">
+    <!-- R4 (04 WP 8.2): the full controls live in My Algorithm. -->
+    <RouterLink
+      to="/settings/my-algorithm"
+      class="card flex items-center gap-3 p-4 transition hover:bg-gray-50 dark:hover:bg-gray-800/60"
+      data-testid="my-algorithm-link"
+    >
+      <SlidersHorizontal class="h-6 w-6 shrink-0 text-brand-600 dark:text-brand-300" aria-hidden="true" />
+      <span class="min-w-0">
+        <span class="block text-[15px] font-bold">{{ t("myAlgorithm.page.link") }}</span>
+        <span class="block text-sm text-gray-500 dark:text-gray-400">{{ t("myAlgorithm.page.linkHint") }}</span>
+      </span>
+    </RouterLink>
     <section v-if="showSort" class="card p-4 sm:p-5" aria-labelledby="feed-sort-title">
       <h2 id="feed-sort-title" class="text-[15px] font-bold">{{ t("postsFeed.manage.sortTitle") }}</h2>
       <ul class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">

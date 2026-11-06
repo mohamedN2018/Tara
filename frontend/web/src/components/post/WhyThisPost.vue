@@ -6,13 +6,16 @@ import { useI18n } from "vue-i18n";
 import { itemKey, servedToken } from "@/lib/signals";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import { useFocusTrap } from "@/lib/useFocusTrap";
-import { type FeedReason, feedService, isFeedMode, type WhyFactor } from "@/services/feed";
+import { type FeedReason, feedService, isFeedMode, isSuggestedReason, type WhyFactor } from "@/services/feed";
 import { useDirectoryStore } from "@/stores/directory";
 
 // "Why am I seeing this post?" (WP 4.8). The feed's own reason for the item shows
 // at once; the server's explanation (`/feed/why/post/<id>/`, which answers only
 // for an item it served to this viewer) then replaces it with the factors that
 // applied. Nothing is guessed: if the server does not answer, the reason stays.
+// R4 (07 WP 7.6-B2): the new codes have their own sentence; a recommendation code this
+// client does not know reads as the generic "Suggested for you" (`rec_generic`), and
+// a sensitive topic is still only "a topic you follow" (the server masks it).
 const props = withDefaults(
   defineProps<{
     reason: FeedReason;
@@ -35,11 +38,25 @@ useEscapeKey(ref(true), () => emit("close"));
 const factors = ref<WhyFactor[] | null>(null);
 const servedMode = ref<string | null>(null);
 
+/** The R4 codes (06 §10) and the generic one; each says nothing a bystander should not see. */
+const R4_CODES = new Set([
+  "rec_community_popular",
+  "rec_similar_watched",
+  "new_since_visit",
+  "continue_watching",
+  "rec_new_activity",
+  "rec_adjacent_topic",
+  "rec_generic",
+]);
+
 const fallback = computed(() => {
   if (props.reason === "self") return t("postsFeed.why.self");
   if (props.reason === "friend") return t("postsFeed.why.friend", { name: props.name });
   if (props.reason === "rec_popular") return t("suggested.why.popular");
   if (props.reason === "rec_fresh") return t("suggested.why.fresh");
+  if (R4_CODES.has(props.reason)) return t(`myAlgorithm.why.${props.reason}`);
+  // Any other suggestion reads as generic, never as "you follow".
+  if (isSuggestedReason(props.reason)) return t("myAlgorithm.why.rec_generic");
   return t(props.page ? "postsFeed.why.page" : "postsFeed.why.follow", { name: props.name });
 });
 
@@ -82,13 +99,17 @@ function sentence(f: WhyFactor): string | null {
     case "rec_fresh":
       return t("suggested.why.fresh");
     default:
+      if (R4_CODES.has(f.code)) return t(`myAlgorithm.why.${f.code}`);
+      // An unknown recommendation code (or any unknown code on a suggestion): generic.
+      if (f.code.startsWith("rec_") || isSuggestedReason(props.reason)) return t("myAlgorithm.why.rec_generic");
       return null;
   }
 }
 
 const lines = computed(() => {
   const fromServer = (factors.value ?? []).map(sentence).filter((s): s is string => !!s);
-  return fromServer.length ? fromServer : [fallback.value];
+  const unique = [...new Set(fromServer)];
+  return unique.length ? unique : [fallback.value];
 });
 const shownMode = computed(() => {
   const m = servedMode.value ?? props.mode;

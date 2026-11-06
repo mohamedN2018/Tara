@@ -286,7 +286,7 @@ _INSERT_SQL = """
 INSERT INTO intel_feed_session (id, account_id, client_sid, kind, entry_surface, started_at,
     last_activity_at, ended_at, first_pages, refreshes, displayed, consumed, new_since_count,
     intent, head_overlap, data_origin)
-VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, 1, 0, 0, 0, %s, NULL, %s, %s)
+VALUES (%s, %s, %s, %s, %s, %s, %s, NULL, 1, 0, 0, 0, %s, %s, %s, %s)
 """
 _CLOSE_SQL = """
 UPDATE intel_feed_session SET ended_at = %s, last_activity_at = %s,
@@ -311,6 +311,7 @@ def finish(
     anchor_index: int | None = None,
     head_overlap: float | None = None,
     client=None,
+    intent: str | None = None,
 ) -> int:
     """Store this first page: the hash update (Redis, fail-soft) and, on a new visit,
     the new row plus the close of the previous one. Returns the SQL writes made."""
@@ -319,10 +320,12 @@ def finish(
         _write_hash(viewer_id, visit, client, new_count, anchor_index)
     if not visit.is_new:
         return 0
-    return _write_rows(viewer_id, visit, new_count, head_overlap)
+    return _write_rows(viewer_id, visit, new_count, head_overlap, intent)
 
 
-def _write_rows(viewer_id, visit: Visit, new_count: int, head_overlap: float | None) -> int:
+def _write_rows(
+    viewer_id, visit: Visit, new_count: int, head_overlap: float | None, intent=None
+) -> int:
     """The new visit's row and the close of the previous one (2 statements)."""
     from . import origin
 
@@ -340,6 +343,7 @@ def _write_rows(viewer_id, visit: Visit, new_count: int, head_overlap: float | N
                 _when(visit.started_at),
                 _when(visit.now),
                 min(max(int(new_count), 0), _SMALLINT),
+                (intent or None) and str(intent)[:16],
                 head_overlap,
                 origin.resolve(account).origin,
             ],
@@ -412,3 +416,185 @@ def purge(cfg, now: datetime | None = None) -> int:
     with connection.cursor() as cur:
         cur.execute("DELETE FROM intel_feed_session WHERE started_at < %s", [cutoff])
         return cur.rowcount
+
+
+# ---- R4: the session interest vector ``feed:si`` (06 section 4.4, 07 WP 6.5-B2) ------
+#
+# A raw hash, TTL ``session_interest.ttl_s`` (6,600 s), written only for an account
+# without ``personalization_off``. Fields: ``t:{topic_id}``, ``f:{format}``,
+# ``c:{author prefix hex}`` hold ``"{value}:{epoch minute}"`` (lazy decay with
+# ``half_life_min``); ``n`` counts the consumption-grade events; ``q`` the topic ids
+# of the last ``search_queries`` opted-in searches (``1,2;5``: no text, no digest);
+# ``intent`` the shadow intent (06 section 4.5). At most ``max_keys`` keys per dim
+# (the smallest go). Sensitive topics are never counted without the opt-in.
+
+_SI_LUA = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local hl = tonumber(ARGV[2])
+local ttl = tonumber(ARGV[3])
+local maxk = tonumber(ARGV[4])
+local events = tonumber(ARGV[5])
+local function val(raw)
+  if not raw then return 0 end
+  local sep = string.find(raw, ':')
+  if not sep then return 0 end
+  local v = tonumber(string.sub(raw, 1, sep - 1)) or 0
+  local at = tonumber(string.sub(raw, sep + 1)) or now
+  return v * math.pow(2, -(now - at) / hl)
+end
+for i = 6, #ARGV, 2 do
+  local f = ARGV[i]
+  local v = val(redis.call('HGET', key, f)) + (tonumber(ARGV[i + 1]) or 0)
+  redis.call('HSET', key, f, string.format('%.4f', v) .. ':' .. now)
+end
+if events > 0 then redis.call('HINCRBY', key, 'n', events) end
+local all = redis.call('HGETALL', key)
+local dims = {}
+for i = 1, #all, 2 do
+  local f = all[i]
+  local p = string.sub(f, 1, 2)
+  if p == 't:' or p == 'f:' or p == 'c:' then
+    dims[p] = dims[p] or {}
+    table.insert(dims[p], {f, math.abs(val(all[i + 1]))})
+  end
+end
+for _, items in pairs(dims) do
+  if #items > maxk then
+    table.sort(items, function(a, b) return a[2] > b[2] end)
+    for j = maxk + 1, #items do redis.call('HDEL', key, items[j][1]) end
+  end
+end
+redis.call('EXPIRE', key, ttl)
+return 1
+"""
+SI_METRIC_KEY = "si"
+
+
+def si_minute(now: datetime) -> int:
+    return int(now.timestamp() // 60)
+
+
+def si_deltas(*, topic_id, fmt, author_prefix, weight: float, sensitive: bool) -> list:
+    """``[(field, delta)]`` of one consumption-grade event (topic skipped when it is
+    sensitive and the account has not opted in)."""
+    out = []
+    if topic_id and not sensitive:
+        out.append((f"t:{int(topic_id)}", weight))
+    if fmt and fmt != "unknown":
+        out.append((f"f:{fmt}", weight))
+    if author_prefix and any(author_prefix):
+        out.append((f"c:{bytes(author_prefix).hex()}", weight))
+    return out
+
+
+def si_update(
+    viewer_id, deltas: list, events: int, now: datetime, block: dict, client=None
+) -> bool:
+    """Apply ``deltas`` to ``feed:si`` in one ``EVAL`` (decay, add, evict, TTL).
+    Fail-soft: a refused write is counted and dropped."""
+    if not deltas and not events:
+        return False
+    client = client if client is not None else hot.raw_client()
+    if client is None:
+        return False
+    args = [
+        si_minute(now),
+        float(block["half_life_min"]),
+        int(block["ttl_s"]),
+        int(block["max_keys"]),
+        int(events),
+    ]
+    for name, delta in deltas:
+        args += [name, round(float(delta), 4)]
+    try:
+        client.eval(_SI_LUA, 1, hot.hot().make_key(hot.session_interest_key(viewer_id)), *args)
+        return True
+    except Exception:  # noqa: BLE001
+        metrics.hot_write_failed(SI_METRIC_KEY)
+        logger.warning("redis-hot refused a session-interest write", exc_info=True)
+        return False
+
+
+def si_decode(raw: dict | None, now: datetime, block: dict) -> dict:
+    """``{"topic": {id: v}, "format": {..}, "creator": {prefix hex: v}, "n": int,
+    "q": [[topic ids]], "intent": str|None}`` decayed to ``now``."""
+    out = {"topic": {}, "format": {}, "creator": {}, "n": 0, "q": [], "intent": None}
+    if not raw:
+        return out
+    minute = si_minute(now)
+    hl = float(block["half_life_min"])
+    for k, v in raw.items():
+        key = k.decode() if isinstance(k, bytes) else str(k)
+        value = v.decode() if isinstance(v, bytes) else str(v)
+        if key == "n":
+            out["n"] = _int(value) or 0
+        elif key == "intent":
+            out["intent"] = value or None
+        elif key == "q":
+            out["q"] = [
+                [int(x) for x in part.split(",") if x.isdigit()] for part in value.split(";")
+            ]
+        elif key[:2] in ("t:", "f:", "c:") and ":" in value:
+            raw_v, _, at = value.partition(":")
+            try:
+                amount = float(raw_v) * (2 ** (-(minute - int(at)) / hl))
+            except ValueError:
+                continue
+            dim = {"t:": "topic", "f:": "format", "c:": "creator"}[key[:2]]
+            name = key[2:]
+            out[dim][int(name) if dim == "topic" and name.isdigit() else name] = amount
+    return out
+
+
+def session_rel(topics, si: dict, block: dict) -> float:
+    """``session_rel(item)`` (06 section 4.4): ``tanh(mass / tanh_k)``, where mass is the
+    item's topics (weighted by confidence) in the decayed vector plus
+    ``search_weight`` for a topic of an opted-in recent search; 0 below
+    ``min_events`` consumption-grade events, so one click does not flip the feed."""
+    import math
+
+    if si.get("n", 0) < block["min_events"]:
+        return 0.0
+    search = {t for q in si.get("q") or [] for t in q}
+    mass = den = 0.0
+    for topic_id, conf in topics:
+        den += conf
+        mass += conf * si["topic"].get(int(topic_id), 0.0)
+        if int(topic_id) in search:
+            mass += conf * block["search_weight"]
+    if den <= 0:
+        return 0.0
+    return max(-1.0, min(1.0, math.tanh((mass / den) / block["tanh_k"])))
+
+
+_SI_SET_LUA = """
+if redis.call('EXISTS', KEYS[1]) == 1 or ARGV[3] == '1' then
+  redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[4]))
+  return 1
+end
+return 0
+"""
+
+
+def si_set_field(viewer_id, name: str, value: str, ttl_s: int, *, create: bool) -> bool:
+    """One field of ``feed:si`` (``intent``, ``q``); ``create`` False writes only into an
+    existing hash. Fail-soft."""
+    client = hot.raw_client()
+    if client is None:
+        return False
+    try:
+        client.eval(
+            _SI_SET_LUA,
+            1,
+            hot.hot().make_key(hot.session_interest_key(viewer_id)),
+            name,
+            value,
+            "1" if create else "0",
+            int(ttl_s),
+        )
+        return True
+    except Exception:  # noqa: BLE001
+        metrics.hot_write_failed(SI_METRIC_KEY)
+        return False

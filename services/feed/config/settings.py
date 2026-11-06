@@ -85,6 +85,8 @@ FEED_HOT_CACHE = "hot"
 _THROTTLING = api_throttling()
 # Telemetry batches (Tara Intelligence, 02 section 12.2): 60 per minute per account.
 _THROTTLING["DEFAULT_THROTTLE_RATES"]["intel_signals"] = "60/min"
+# R4: explicit feedback writes per account (WP 7.1); generous, an abuse guard only.
+_THROTTLING["DEFAULT_THROTTLE_RATES"]["intel_feedback"] = "120/min"
 
 REST_FRAMEWORK = {
     **_THROTTLING,
@@ -149,6 +151,10 @@ CELERY_BEAT_SCHEDULE = {
     "intel-aggregate-engagement": {"task": "intel.aggregate_engagement", "schedule": 60.0},
     # R3 WP 4b.4: intel_feed_session retention (session.feed_session_retention_d), nightly.
     "intel-purge-feed-sessions": {"task": "intel.purge_feed_sessions", "schedule": 86400.0},
+    # R4 WP 6.3: the nightly creator-quality rebuild, and the nightly retention of the
+    # My Algorithm logs (preference changes 180 d, feedback 365 d, debug consent 90 d).
+    "intel-creator-quality": {"task": "intel.rebuild_creator_quality", "schedule": 86400.0},
+    "intel-purge-preference-logs": {"task": "intel.purge_preference_logs", "schedule": 86400.0},
 }
 
 # ---- Tara Intelligence (docs/intelligence) ---------------------------------------
@@ -170,6 +176,11 @@ INTEL_ENGAGEMENT_RETENTION_DAYS = min(
 # Emit intel.config.changed (admin's audit log) on every ranking config change
 # (WP 4.1). Default on; off only while admin's consumer is not deployed yet.
 INTEL_EMIT_CONFIG_CHANGED = env_bool("INTEL_EMIT_CONFIG_CHANGED", True)
+# R4: feed's new emissions (intel.config.published, intel.integrity.flagged,
+# feed.recommendations.reset, intel.creator.hidden, intel.search_signal.changed).
+# Default on (two-release rule: their consumers ship first); off only while a
+# consumer is not deployed yet.
+INTEL_EMIT_R4_EVENTS = env_bool("INTEL_EMIT_R4_EVENTS", True)
 # Dev only (WP 4b.15): honour X-Tara-Test-Now for seed and test accounts. The deploy
 # check intel.E005 and /readyz/ refuse it outside development.
 INTEL_TEST_CLOCK_ENABLED = env_bool("INTEL_TEST_CLOCK_ENABLED", False)

@@ -214,3 +214,41 @@ def on_account_deleted(event: EventEnvelope) -> None:
         RelationshipSettings.objects.filter(account_id=account_id).delete()
         AccountRef.objects.filter(account_id=account_id).delete()
     logger.info("graph erased", extra={"account_id": account_id})
+
+
+# ---- Tara Intelligence R4 (WP 5.5, 7.5-B2) ----
+
+
+@on_event("intel.config.published")
+def on_intel_config_published(event: EventEnvelope) -> None:
+    """Keep the newest published config of each surface (WP 5.5)."""
+    from . import intel_config
+
+    intel_config.apply_published(event.payload)
+
+
+@on_event("intel.creator.hidden")
+def on_creator_hidden(event: EventEnvelope) -> None:
+    """ "Don't recommend this creator" and its undo (WP 7.5-B2); newest choice wins."""
+    from .models import HiddenCreator
+
+    p = event.payload
+    try:
+        account_id = uuid.UUID(str(p.get("account_id")))
+        creator_id = uuid.UUID(str(p.get("creator_id")))
+    except (TypeError, ValueError):
+        logger.warning("creator hidden event without ids skipped")
+        return
+    hidden, at = p.get("hidden"), parse_datetime(str(p.get("at") or ""))
+    if not isinstance(hidden, bool) or at is None:
+        logger.warning("creator hidden event without state or time skipped")
+        return
+    with transaction.atomic():
+        row, created = HiddenCreator.objects.select_for_update().get_or_create(
+            account_id=account_id,
+            creator_id=creator_id,
+            defaults={"hidden": hidden, "event_at": at},
+        )
+        if not created and at > row.event_at:
+            row.hidden, row.event_at = hidden, at
+            row.save(update_fields=["hidden", "event_at", "updated_at"])

@@ -46,6 +46,16 @@ class AccountRef(models.Model):
     restriction = models.CharField(max_length=8, blank=True, default="", db_default="")
     restriction_case_id = models.UUIDField(null=True, blank=True)
     restriction_event_at = models.DateTimeField(null=True, blank=True)
+    # The author age class (Tara Intelligence WP 4b.14 graph part, rule E9b, owner
+    # decisions 9b and 37): taken only from the account's own access-token claims
+    # when it calls graph (``graph/age.py``). Never a date of birth. ``unknown`` is
+    # the fail-closed default: only ``adult`` accounts reach people suggestions.
+    age_class = models.CharField(
+        max_length=8,
+        choices=[("adult", "adult"), ("minor", "minor"), ("unknown", "unknown")],
+        default="unknown",
+        db_default="unknown",
+    )
 
     class Meta:
         db_table = "account_ref"
@@ -246,6 +256,62 @@ class CloseFriendRelation(models.Model):
         db_table = "close_friend_relation"
         constraints = [
             models.UniqueConstraint(fields=["account_id", "friend_id"], name="close_friend_uniq"),
+        ]
+
+
+# ---- Tara Intelligence read models (R4) ----
+class HiddenCreator(models.Model):
+    """ "Don't recommend this creator" (WP 7.5-B2), from feed's ``intel.creator.hidden``.
+
+    One row per (account, creator); ``hidden`` false is an undo. ``event_at`` keeps the
+    newest choice, so a late redelivery cannot undo a later change. The creator may be
+    a person or a page; either leaves the account's suggestions while hidden."""
+
+    id = models.BigAutoField(primary_key=True)
+    account_id = models.UUIDField()
+    creator_id = models.UUIDField()
+    hidden = models.BooleanField(default=True)
+    event_at = models.DateTimeField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "intel_hidden_creator"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["account_id", "creator_id"], name="intel_hidden_creator_uniq"
+            ),
+        ]
+
+
+class IntelConfig(models.Model):
+    """The last published config of a surface (WP 5.5, ``intel.config.published``)."""
+
+    surface = models.CharField(max_length=20, primary_key=True)
+    version = models.PositiveIntegerField()
+    params = models.JSONField(default=dict)
+    experiment = models.JSONField(null=True, blank=True)
+    published_at = models.DateTimeField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "intel_config"
+
+
+class IntelExposureSeen(models.Model):
+    """One row per (account, experiment) once its exposure was emitted (WP 5.5)."""
+
+    id = models.BigAutoField(primary_key=True)
+    account_id = models.UUIDField()
+    experiment_key = models.CharField(max_length=60)
+    variant = models.CharField(max_length=40)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "intel_exposure_seen"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["account_id", "experiment_key"], name="intel_exposure_seen_uniq"
+            ),
         ]
 
 

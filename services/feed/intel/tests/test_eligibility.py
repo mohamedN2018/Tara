@@ -485,6 +485,7 @@ def test_every_rule_has_a_function_and_the_rule_set_is_complete():
         "E9b",
         "E10",
         "E11",
+        "E12",
     )
 
 

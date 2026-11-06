@@ -7,10 +7,24 @@ from django.db import models
 from tara_events.envelope import uuid7
 from tara_events.models import AbstractOutboxEvent, AbstractProcessedEvent
 
+#: The reserved reporter id of a system-sourced report (Tara Intelligence WP 7.4).
+#: ``reporter_id`` stays NOT NULL (additive migration only), so a system row carries
+#: this nil UUID; ``source`` says what it is, and the API never shows it as a person.
+SYSTEM_REPORTER_ID = "00000000-0000-0000-0000-000000000000"
+
 
 class Report(models.Model):
+    class Source(models.TextChoices):
+        USER = "user", "User"
+        SYSTEM = "system", "System"
+
     id = models.UUIDField(primary_key=True, default=uuid7, editable=False)
     reporter_id = models.UUIDField()
+    # ``system``: an automatic signal (feed's ``intel.integrity.flagged``), not a
+    # person. It never counts in ``report_count`` and is in no one's "My reports".
+    source = models.CharField(
+        max_length=8, choices=Source.choices, default=Source.USER, db_default=Source.USER
+    )
     target_type = models.CharField(
         max_length=20
     )  # post | comment | message | listing | page | user
@@ -42,6 +56,9 @@ class ModerationCase(models.Model):
     # Who the reported content belongs to: the only account that may appeal.
     # Null for cases opened by events that predate it, which nobody can appeal.
     owner_id = models.UUIDField(null=True, blank=True)
+    # The automatic signal that opened or joined the case (``spam_hides`` or
+    # ``sexual_hides``, WP 7.4); blank when only people reported it.
+    system_signal = models.CharField(max_length=20, blank=True, default="", db_default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

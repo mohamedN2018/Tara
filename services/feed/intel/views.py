@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema
-from rest_framework import serializers, status
+from rest_framework import status
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -13,7 +13,7 @@ from rest_framework.views import APIView
 
 from tara_common.exceptions import TaraAPIError
 
-from . import clock, preferences, why
+from . import clock, why
 from .signals import ingest, validate
 from .signals.serializers import SignalBatchSerializer
 
@@ -56,48 +56,6 @@ class SignalIngestView(APIView):
         now = clock.request_now(request, account)
         result = ingest.ingest(account, body.validated_data, now=now)
         return Response({"data": result.as_dict()}, status=status.HTTP_202_ACCEPTED)
-
-
-class PreferencesSerializer(serializers.Serializer):
-    default_mode = serializers.ChoiceField(choices=preferences.MODES)
-    version = serializers.IntegerField(required=False, min_value=0)
-
-
-def _preferences_body(row) -> dict:
-    return {"default_mode": row.default_mode or None, "version": row.version}
-
-
-class PreferencesView(APIView):
-    """``GET/PATCH /api/v1/feed/preferences/``: the viewer's own My Algorithm settings.
-
-    WP 4.6 serves the remembered Home mode only. ``default_mode`` is null until the
-    viewer picks one (the server default applies). ``version`` guards concurrent
-    edits: a PATCH naming an older version gets 409 with the current one.
-    """
-
-    permission_classes = [IsAuthenticated]
-
-    @extend_schema(responses={200: OpenApiTypes.OBJECT}, tags=["intel"])
-    def get(self, request):
-        return Response({"data": _preferences_body(preferences.get(request.user.account_id))})
-
-    @extend_schema(
-        request=PreferencesSerializer, responses={200: OpenApiTypes.OBJECT}, tags=["intel"]
-    )
-    def patch(self, request):
-        body = PreferencesSerializer(data=request.data)
-        body.is_valid(raise_exception=True)
-        try:
-            row = preferences.set_default_mode(
-                request.user.account_id,
-                body.validated_data["default_mode"],
-                expected_version=body.validated_data.get("version"),
-            )
-        except preferences.StaleVersion as exc:
-            raise TaraAPIError(
-                "Preferences changed elsewhere.", code="conflict", http_status_code=409
-            ) from exc
-        return Response({"data": _preferences_body(row)})
 
 
 class WhyView(APIView):

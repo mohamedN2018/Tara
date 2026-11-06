@@ -55,6 +55,8 @@ from .models import (
     PublishState,
     Reel,
     ReelHide,
+    ReelsHiddenCreator,
+    ReelsReset,
     ReelView,
 )
 
@@ -393,6 +395,13 @@ def feed_queryset(ctx: FeedContext, tab: str):
             | Q(author_id__in=friends, post__audience__in=(Audience.FRIENDS, Audience.FOLLOWERS))
             | Q(author_id__in=followed, post__audience=Audience.FOLLOWERS)
         )
+        # "Don't recommend this creator" (WP 7.5-B2): out of for_you, unless connected.
+        hidden_ids = ReelsHiddenCreator.objects.filter(
+            account_id=ctx.viewer, hidden=True
+        ).values_list("creator_id", flat=True)
+        hidden = {str(x) for x in hidden_ids} - set(friends) - set(followed)
+        if hidden:
+            qs = qs.exclude(author_id__in=list(hidden))
     return qs.order_by("-created_at", "-post_id")
 
 
@@ -401,6 +410,12 @@ def _seen_reel_ids(viewer: str, snapshot: datetime):
     ``reel_view_viewer_idx``). Fixing the snapshot for the whole scroll keeps the
     two phases stable: a view recorded between pages moves nothing."""
     since = snapshot - timedelta(hours=settings.REELS_SEEN_WINDOW_H)
+    # After "Reset recommendations" (8.4-B2) the views before the reset do not count.
+    reset_at = (
+        ReelsReset.objects.filter(account_id=viewer).values_list("reset_at", flat=True).first()
+    )
+    if reset_at is not None and reset_at > since:
+        since = reset_at
     return ReelView.objects.filter(
         viewer_id=viewer, viewed_at__gte=since, viewed_at__lt=snapshot
     ).values("reel_id")

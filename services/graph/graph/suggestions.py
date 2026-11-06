@@ -15,6 +15,14 @@ anything the viewer dismissed.
 
 Pages: published, live pages the viewer neither follows, owns nor dismissed,
 whose owner has no block with the viewer, most followed first.
+
+Tara Intelligence R4: the limits come from the ``discovery`` surface config
+(``intel_config.py``; no row = the constants below, ``discovery@1``). A creator the
+viewer chose "Don't recommend" for (``intel.creator.hidden``, WP 7.5-B2) is left out
+of both lists until the undo. Only accounts whose own token said adult reach people
+suggestions (rule E9b, WP 4b.14 graph part; ``unknown`` fails closed), and a minor
+viewer gets none (owner decision 9a). Friends and followers still see minors: this
+only governs suggestions.
 """
 
 from __future__ import annotations
@@ -25,25 +33,37 @@ from django.db import IntegrityError, transaction
 from django.db.models import Count, IntegerField, OuterRef, Q, Subquery
 from django.db.models.functions import Coalesce
 
+from . import intel_config
 from .models import (
     AccountRef,
     BlockRelation,
     DismissedSuggestion,
     FollowRelation,
     Friendship,
+    HiddenCreator,
     ListVisibility,
     PageRef,
     RelationshipSettings,
 )
 
+# discovery@1 (the defaults of ``intel_config.DEFAULTS``).
 MAX_LIMIT = 30
 #: Upper bound on the bridges and candidates looked at per request.
 MAX_BRIDGES = 500
 MAX_CANDIDATES = 2000
 
 
-def _limit(raw: str | None, default: int) -> int:
-    return min(max(int(raw), 1), MAX_LIMIT) if raw and raw.isdecimal() else default
+def _limit(raw: str | None, default: int, maximum: int = MAX_LIMIT) -> int:
+    return min(max(int(raw), 1), maximum) if raw and raw.isdecimal() else min(default, maximum)
+
+
+def _hidden_creators(viewer: str) -> set[str]:
+    return {
+        str(x)
+        for x in HiddenCreator.objects.filter(account_id=viewer, hidden=True).values_list(
+            "creator_id", flat=True
+        )
+    }
 
 
 def _dismissed(viewer: str, target_type: str) -> set[str]:
@@ -62,9 +82,20 @@ def _blocked_any(viewer: str) -> set[str]:
     return {str(x) for pair in rows for x in pair} - {viewer}
 
 
-def people(viewer_id: str, limit: int = 10) -> list[dict]:
+def people(
+    viewer_id: str,
+    limit: int = 10,
+    *,
+    cfg: intel_config.Served | None = None,
+    minor_viewer: bool = False,
+) -> list[dict]:
     from .services import list_friend_ids
 
+    if minor_viewer:
+        return []
+    params = (cfg or intel_config.Served(intel_config.resolve())).params
+    max_bridges = params["people.max_bridges"]
+    max_candidates = params["people.max_candidates"]
     viewer = str(uuid.UUID(str(viewer_id)))
     blocked = _blocked_any(viewer)
     friends = set(list_friend_ids(viewer))
@@ -73,7 +104,14 @@ def people(viewer_id: str, limit: int = 10) -> list[dict]:
         Q(account_low_id=viewer) | Q(account_high_id=viewer), status=Friendship.Status.PENDING
     ).values_list("account_low_id", "account_high_id"):
         pending.update({str(low), str(high)})
-    excluded = {viewer} | friends | pending | blocked | _dismissed(viewer, "user")
+    excluded = (
+        {viewer}
+        | friends
+        | pending
+        | blocked
+        | _dismissed(viewer, "user")
+        | _hidden_creators(viewer)
+    )
 
     # Bridges: friends whose friend list the viewer may see (public or friends;
     # the viewer is their friend, so only ``only_me`` hides it).
@@ -83,14 +121,14 @@ def people(viewer_id: str, limit: int = 10) -> list[dict]:
             account_id__in=list(friends), friends_list_visibility=ListVisibility.ONLY_ME
         ).values_list("account_id", flat=True)
     }
-    bridges = sorted(friends - hidden)[:MAX_BRIDGES]
+    bridges = sorted(friends - hidden)[:max_bridges]
 
     mutual: dict[str, set[str]] = {}
     if bridges:
         rows = Friendship.objects.filter(
             Q(account_low_id__in=bridges) | Q(account_high_id__in=bridges),
             status=Friendship.Status.ACCEPTED,
-        ).values_list("account_low_id", "account_high_id")[: MAX_CANDIDATES * 4]
+        ).values_list("account_low_id", "account_high_id")[: max_candidates * 4]
         bridge_set = set(bridges)
         for low, high in rows:
             low, high = str(low), str(high)
@@ -109,14 +147,18 @@ def people(viewer_id: str, limit: int = 10) -> list[dict]:
                 mutual.get(b, set()).discard(a)
             mutual = {k: v for k, v in mutual.items() if v}
 
-    followers = [
-        str(x)
-        for x in FollowRelation.objects.filter(
-            target_id=viewer, target_type=FollowRelation.TargetType.USER
-        )
-        .order_by("-created_at")
-        .values_list("follower_id", flat=True)[:MAX_CANDIDATES]
-    ]
+    followers = (
+        [
+            str(x)
+            for x in FollowRelation.objects.filter(
+                target_id=viewer, target_type=FollowRelation.TargetType.USER
+            )
+            .order_by("-created_at")
+            .values_list("follower_id", flat=True)[:max_candidates]
+        ]
+        if params["people.follower_fill"]
+        else []
+    )
     fans = [f for f in followers if f not in excluded and f not in mutual]
     if fans:
         closed = {
@@ -130,12 +172,19 @@ def people(viewer_id: str, limit: int = 10) -> list[dict]:
 
     candidates = set(mutual) | set(fans)
     if candidates:
-        undiscoverable = {
+        # Fail closed (E9b): a candidate is suggested only when graph knows it, it is
+        # discoverable and its own token said adult.
+        discoverable = {
             str(x)
-            for x in AccountRef.objects.filter(account_id__in=list(candidates))
-            .filter(Q(searchable=False) | Q(active=False) | ~Q(restriction=""))
-            .values_list("account_id", flat=True)
+            for x in AccountRef.objects.filter(
+                account_id__in=list(candidates),
+                searchable=True,
+                active=True,
+                restriction="",
+                age_class="adult",
+            ).values_list("account_id", flat=True)
         }
+        undiscoverable = candidates - discoverable
     else:
         undiscoverable = set()
 
@@ -157,6 +206,7 @@ def people(viewer_id: str, limit: int = 10) -> list[dict]:
 
 def pages(viewer_id: str, limit: int = 5) -> list[dict]:
     viewer = str(uuid.UUID(str(viewer_id)))
+    hidden_creators = _hidden_creators(viewer)
     followed = FollowRelation.objects.filter(
         follower_id=viewer, target_type=FollowRelation.TargetType.PAGE
     ).values_list("target_id", flat=True)
@@ -169,6 +219,8 @@ def pages(viewer_id: str, limit: int = 5) -> list[dict]:
     )
     if blocked:
         qs = qs.exclude(owner_id__in=list(blocked))
+    if hidden_creators:
+        qs = qs.exclude(page_id__in=list(hidden_creators))
     followers = (
         FollowRelation.objects.filter(
             target_id=OuterRef("page_id"), target_type=FollowRelation.TargetType.PAGE

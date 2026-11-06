@@ -191,3 +191,36 @@ def test_personalization_off_reads_no_visit_and_writes_nothing(client_for, redis
     assert not hot.raw_client().exists(hot.hot().make_key(hot.visit_key(viewer)))
     assert not hot.raw_client().exists(hot.hot().make_key(exposure.ledger_key(viewer)))
     assert not hot.raw_client().exists(hot.hot().make_key(hot.head_key("home", viewer)))
+
+
+def test_first_page_budget_under_home_3_r15_with_a_profile_miss(client_for, redis_hot, monkeypatch):
+    """R4 (09 R4, 04 WP 6.5): home@3-r15 adds interest_rel, session_rel, the topics on
+    every item and the viewer's controls at **0 extra queries**: the running experiment
+    rides in the config read, topic labels in the topic rows, and an ``intel:prof``
+    miss is filled from the eligibility statement (then cached)."""
+    from intel import hot as hot_keys
+
+    from . import r4
+
+    ids = r4.seed()
+    _activate("home@3-r15")
+    discovery.rebuild()
+    viewer = _world()
+    r4.inferred(viewer, "topic", ids["cooking"], 3.0)
+    r4.explicit(viewer, "topic", ids["politics"], "muted")
+    _warm(viewer)
+    client = client_with_claims(viewer, **ADULT_CLAIMS)
+    clock = Clock(monkeypatch, datetime.now(UTC).replace(microsecond=0))
+    from intel import config
+    from intel.topics import classify
+
+    config.store.clear_cache()
+    classify.clear_cache()  # nothing warm in process but the config pointer below
+    config.for_surface("home")
+    body, (reads, writes) = _get(client, entry="load")
+    assert len(reads) <= FIRST_PAGE_READS, _show("home@3 first visit", reads, writes)
+    assert hot_keys.raw_get(hot_keys.profile_key(viewer)) is not None  # cached from the rows
+    assert all("topics" in i for i in body["data"])
+    clock.now += timedelta(minutes=50)
+    body, (reads, writes) = _get(client, entry="return")
+    assert len(reads) <= FIRST_PAGE_READS, _show("home@3 new visit", reads, writes)

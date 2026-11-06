@@ -56,3 +56,30 @@ def aggregate_engagement() -> dict:
     from .signals import aggregate
 
     return aggregate.run()
+
+
+@shared_task(name="intel.reset_recommendations", ignore_result=True)
+def reset_recommendations(account_id: str, reset_at: str) -> dict:
+    """R4 WP 8.4-B2: the deletions of "Reset recommendations", off the request path."""
+    from datetime import datetime
+
+    from . import preferences
+
+    return preferences.run_reset(account_id, datetime.fromisoformat(reset_at))
+
+
+@shared_task(name="intel.rebuild_creator_quality", ignore_result=True)
+def rebuild_creator_quality() -> dict:
+    """R4 WP 6.3: ``intel_creator_quality``, nightly."""
+    from . import creator_quality
+
+    return creator_quality.rebuild()
+
+
+@shared_task(name="intel.purge_preference_logs", ignore_result=True)
+def purge_preference_logs() -> dict:
+    """R4: preference changes after 180 d, feedback after 365 d, debug consent after
+    90 d (``retention`` block of the Home config), nightly."""
+    from . import config, retention
+
+    return retention.purge(config.for_surface("home"))

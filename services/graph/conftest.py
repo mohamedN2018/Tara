@@ -32,7 +32,8 @@ def _isolated_settings(settings):
     return settings
 
 
-def make_access_token(account_id: str) -> str:
+def make_access_token(account_id: str, **claims) -> str:
+    """``claims`` adds token claims, e.g. ``is_minor`` and ``age_band`` (E9b tests)."""
     now = int(time.time())
     return jwt.encode(
         {
@@ -44,6 +45,7 @@ def make_access_token(account_id: str) -> str:
             "aud": "tara",
             "iat": now,
             "exp": now + 900,
+            **claims,
         },
         _PRIVATE_PEM,
         algorithm="RS256",
@@ -55,9 +57,9 @@ def make_access_token(account_id: str) -> str:
 def client_for():
     from rest_framework.test import APIClient
 
-    def _make(account_id: str):
+    def _make(account_id: str, **claims):
         c = APIClient()
-        c.credentials(HTTP_AUTHORIZATION=f"Bearer {make_access_token(account_id)}")
+        c.credentials(HTTP_AUTHORIZATION=f"Bearer {make_access_token(account_id, **claims)}")
         return c
 
     return _make

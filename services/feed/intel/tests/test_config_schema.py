@@ -258,9 +258,10 @@ def _v2c():
 
 
 def test_home_v2c_and_the_package_defaults_are_valid_v4():
-    assert schema.SCHEMA_VERSION == 4
+    assert schema.SCHEMA_VERSION == 5  # R4 (interests, feedback, My Algorithm)
     assert schema.validate("home", _v2c()) == []
-    assert _home()["schema_version"] == 4 and "rotation" not in _home()
+    assert _home()["schema_version"] == 5 and "rotation" not in _home()
+    assert "interest_rank" not in _home()  # R4 ranking effects only in home@3*
 
 
 @pytest.mark.parametrize("block", ["exposure", "rotation", "revisit"])

@@ -63,20 +63,22 @@ class IngestResult:
 
 
 _CLAIM_SQL = (
-    "WITH off AS (SELECT EXISTS (SELECT 1 FROM intel_user_preference "
-    "WHERE account_id = %s AND personalization_off) AS v), "
+    "WITH pref AS (SELECT COALESCE(bool_or(personalization_off), false) AS v, "
+    "COALESCE(bool_or(sensitive_inference), false) AS s FROM intel_user_preference "
+    "WHERE account_id = %s), "
     "ins AS (INSERT INTO intel_signal_batch (account_id, batch_id, received_at) "
-    "SELECT %s, %s, %s FROM off WHERE NOT off.v ON CONFLICT DO NOTHING RETURNING 1) "
-    "SELECT (SELECT v FROM off), (SELECT count(*) FROM ins)"
+    "SELECT %s, %s, %s FROM pref WHERE NOT pref.v ON CONFLICT DO NOTHING RETURNING 1) "
+    "SELECT (SELECT v FROM pref), (SELECT count(*) FROM ins), (SELECT s FROM pref)"
 )
 
 
-def _claim_batch(account_id, batch_id, now: datetime) -> tuple[bool, bool]:
-    """``(claimed, personalization_off)`` in one statement (no extra query)."""
+def _claim_batch(account_id, batch_id, now: datetime) -> tuple[bool, bool, bool]:
+    """``(claimed, personalization_off, sensitive_inference)`` in one statement (no
+    extra query); the opt-in feeds the session vector (R4 WP 6.5-B2, decision 12)."""
     with connection.cursor() as cur:
         cur.execute(_CLAIM_SQL, [account_id, account_id, batch_id, now])
-        off, inserted = cur.fetchone()
-    return inserted == 1, bool(off)
+        off, inserted, sensitive = cur.fetchone()
+    return inserted == 1, bool(off), bool(sensitive)
 
 
 @dataclass
@@ -245,6 +247,58 @@ def _append_ledger(account_id, marks: list, th, now: datetime) -> None:
     exposure.append_batch(account_id, records, th, now=now, displayed=displayed)
 
 
+# R4 WP 6.5-B2: the session-vector weight of an accepted event's exposure mark.
+def _si_weight(row, state: int, dwell_only: bool, block: dict) -> float | None:
+    if state == exposure.STATE_CONSUMED:
+        return block["dwell_only_weight"] if dwell_only else block["explicit_weight"]
+    if row.event_type == EventType.POST_OPEN:
+        return block["explicit_weight"]
+    if state == exposure.STATE_SKIPPED:
+        return block["skip_weight"]
+    return None  # an impression or a short view adds nothing (02 section 6.2)
+
+
+def _session_vector(account_id, marks: list, sensitive_ok: bool, now: datetime) -> None:
+    """Fold the batch's consumption-grade marks into ``feed:si`` from the serve-token v2
+    attributes (topic, format, author prefix): no read. Fail-soft."""
+    from .. import config, session_ctx
+    from ..topics import classify
+
+    try:
+        block = config.for_surface("home").section("session_interest")
+    except Exception:  # noqa: BLE001 - the vector is best-effort
+        return
+    weighted = []
+    for row, state, dwell_only, claims in marks:
+        if claims is None:
+            continue
+        weight = _si_weight(row, state, dwell_only, block)
+        if weight is not None:
+            weighted.append((weight, claims))
+    if not weighted:
+        return  # impressions and short views only: nothing to fold, nothing read
+    try:
+        topics = classify.load_aliases().topics  # in-process cache (300 s)
+    except Exception:  # noqa: BLE001
+        return
+    deltas, events = [], 0
+    for weight, claims in weighted:
+        topic_id = claims.topic_id or 0
+        sensitive = (
+            bool(topic_id and topics.get(topic_id, {}).get("sensitive")) and not sensitive_ok
+        )
+        deltas += session_ctx.si_deltas(
+            topic_id=topic_id,
+            fmt=claims.fmt,
+            author_prefix=claims.author_prefix,
+            weight=weight,
+            sensitive=sensitive,
+        )
+        events += 1
+    if deltas or events:
+        session_ctx.si_update(account_id, deltas, events, now, block)
+
+
 def ingest(account_id, batch: dict, *, now: datetime | None = None) -> IngestResult:
     """Validate and store one batch for ``account_id`` (the authenticated account)."""
     now = now or timezone.now()
@@ -254,7 +308,7 @@ def ingest(account_id, batch: dict, *, now: datetime | None = None) -> IngestRes
         result.rejected["synthetic_not_accepted"] = len(batch["events"])
         metrics.rejected("synthetic_not_accepted", len(batch["events"]))
         return result
-    claimed, off = _claim_batch(account_id, batch["batch_id"], now)
+    claimed, off, sensitive_ok = _claim_batch(account_id, batch["batch_id"], now)
     if off:
         # Decision 24: personalization off stores nothing behavioural, anywhere.
         result.rejected["personalization_off"] = len(batch["events"])
@@ -278,6 +332,7 @@ def ingest(account_id, batch: dict, *, now: datetime | None = None) -> IngestRes
 
     rows = []
     ledger = []  # (row, state, dwell_only)
+    si_marks = []  # (row, state, dwell_only, claims): the session vector (R4)
     th = None
     dwell_seen: set = set()
     idef_max = (
@@ -332,10 +387,12 @@ def ingest(account_id, batch: dict, *, now: datetime | None = None) -> IngestRes
         rows.append(row)
         if mark is not None:
             ledger.append((row, *mark))
+            si_marks.append((row, *mark, claims))
 
     result.accepted = store.copy_rows(rows)
     if ledger and th is not None and th is not _NO_LEDGER:
         _append_ledger(account_id, ledger, th, now)
+        _session_vector(account_id, si_marks, sensitive_ok, now)
     metrics.accepted(resolution.origin, result.accepted)
     for reason, n in result.rejected.items():
         metrics.rejected(reason, n)

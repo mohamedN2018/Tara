@@ -10,6 +10,8 @@ from graph import handlers, services
 from graph.models import AccountRef, BlockRelation, PageRef
 from tara_events.envelope import EventEnvelope
 
+from .ages import adult
+
 pytestmark = pytest.mark.django_db
 
 
@@ -20,6 +22,7 @@ def _acct() -> str:
 def _befriend(a: str, b: str) -> None:
     request = services.send_friend_request(a, b)
     services.accept_friend_request(b, str(request.id))
+    adult(a, b)  # E9b (R4): only adults are suggested; these people are adults
 
 
 def _people(client) -> list[dict]:
@@ -151,6 +154,7 @@ def test_followers_fill_in_after_friends_of_friends(client_for):
     _befriend(fof, bridge)
     for f in (fan, closed_fan, hidden_fan):
         services.follow(f, me)
+    adult(fan, closed_fan, hidden_fan)
     services.update_relationship_settings(
         closed_fan, {"friend_requests_from": "friends_of_friends"}
     )

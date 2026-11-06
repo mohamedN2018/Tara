@@ -93,6 +93,11 @@ class EventType(models.TextChoices):
     NOT_INTERESTED = "not_interested", "Not interested"
     MORE_LIKE_THIS = "more_like_this", "Show more like this"
     LESS_LIKE_THIS = "less_like_this", "Show less like this"
+    # R4 (07 WP 7.5-B2; 06 section 7): explicit feedback and group membership changes.
+    MUTE_TOPIC = "mute_topic", "Topic muted"
+    HIDE_CREATOR = "hide_creator", "Creator hidden"
+    GROUP_JOIN = "group_join", "Joined a group"
+    GROUP_LEAVE = "group_leave", "Left a group"
 
 
 CLIENT_EVENT_TYPES = frozenset(
@@ -431,6 +436,9 @@ class PageRef(models.Model):
     status = models.CharField(max_length=10, default="draft")
     deleted = models.BooleanField(default=False)
     event_at = models.DateTimeField()
+    # R4 WP 6.2: ``normalize_key(Page.category)`` from ``page.created`` / ``page.updated``
+    # (the page-category topic source of the classifier); blank until an event says.
+    category_norm = models.CharField(max_length=80, blank=True, default="")
 
     class Meta:
         db_table = "intel_page_ref"
@@ -516,6 +524,12 @@ class UserPreference(models.Model):
     personalization_off = models.BooleanField(default=False)
     version = models.IntegerField(default=1)  # optimistic concurrency
     updated_at = models.DateTimeField(auto_now=True)
+    # R4 (06 section 13): the reset epoch (WP 8.4-B2), the decision-7 search-signal
+    # opt-in (WP 8.7-B2, off), and the Home sections customization (WP 8.6-B2: the
+    # column only; nothing reads it before the sections composer of R6).
+    reset_at = models.DateTimeField(null=True, blank=True)
+    search_signal = models.BooleanField(default=False)
+    home_sections = models.JSONField(default=dict, blank=True)
 
     class Meta:
         db_table = "intel_user_preference"
@@ -630,3 +644,334 @@ class RankingConfigChange(models.Model):
     class Meta:
         db_table = "intel_ranking_config_change"
         indexes = [models.Index(fields=["surface", "-created_at"], name="intel_rcfg_change_idx")]
+
+
+# ---- R4: topics, interests, feedback, My Algorithm, experiments (03 sections 2.3-2.7) --
+
+
+class Topic(models.Model):
+    """A curated bilingual topic (03 section 2.3). Never auto-created. ``sensitive``
+    topics (politics, religion, Quran) get no inferred interest row without the
+    viewer's opt-in (decision 12) and are only "a topic" in reasons."""
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        HIDDEN = "hidden", "Hidden"
+
+    id = models.SmallAutoField(primary_key=True)
+    slug = models.CharField(max_length=40, unique=True)
+    label_ar = models.CharField(max_length=60)
+    label_en = models.CharField(max_length=60)
+    parent_id = models.SmallIntegerField(null=True, blank=True)
+    status = models.CharField(max_length=8, choices=Status.choices, default=Status.ACTIVE)
+    allow_minors = models.BooleanField(default=True)
+    sensitive = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "intel_topic"
+
+
+class TopicAlias(models.Model):
+    """``(kind, value_norm) -> topic`` (03 section 2.3). ``value_norm`` is
+    ``normalize_key(normalize_ar(value))``; a ``strong`` keyword is enough alone."""
+
+    class Kind(models.TextChoices):
+        HASHTAG = "hashtag", "Hashtag"
+        PAGE_CATEGORY = "page_category", "Page category"
+        GROUP_CATEGORY = "group_category", "Group category"
+        MARKET_CATEGORY = "market_category", "Market category"
+        KEYWORD = "keyword", "Keyword"
+
+    id = models.BigAutoField(primary_key=True)
+    topic_id = models.SmallIntegerField()
+    kind = models.CharField(max_length=16, choices=Kind.choices)
+    value_norm = models.CharField(max_length=80)
+    lang = models.CharField(max_length=3, default="any")  # ar | en | any
+    weight = models.FloatField(default=1.0)
+    strong = models.BooleanField(default=False)
+    source = models.CharField(max_length=14, default="curated")  # curated | llm_suggested
+    status = models.CharField(max_length=8, default="active")  # active | pending | rejected
+    approved_by = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "intel_topic_alias"
+        constraints = [
+            models.UniqueConstraint(fields=["kind", "value_norm"], name="intel_talias_uniq"),
+        ]
+        indexes = [models.Index(fields=["topic_id"], name="intel_talias_topic_idx")]
+
+
+class ContentTopic(models.Model):
+    """A post's topics (at most 3, confidence >= 0.4; 02 section 14), with the rule
+    that found each one (``hashtag``, ``page``, ``group``, ``inherited``, ``lexicon``)."""
+
+    pk = models.CompositePrimaryKey("post_id", "topic_id")
+    post_id = models.UUIDField()
+    topic_id = models.SmallIntegerField()
+    confidence = models.FloatField()
+    source = models.CharField(max_length=10)
+    classified_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "intel_content_topic"
+        indexes = [models.Index(fields=["topic_id"], name="intel_ctopic_topic_idx")]
+
+
+class InterestDim(models.TextChoices):
+    TOPIC = "topic", "Topic"
+    FORMAT = "format", "Format"
+    CREATOR = "creator", "Creator"
+    LANG = "lang", "Language"
+    MARKET_CAT = "market_cat", "Market category"
+    GROUP_CAT = "group_cat", "Group category"
+
+
+class InterestPolarity(models.TextChoices):
+    LIKE = "like", "Like"
+    DISLIKE = "dislike", "Dislike"
+    MORE = "more", "More"
+    LESS = "less", "Less"
+    SUPPRESSED = "suppressed", "Suppressed"
+    MUTED = "muted", "Muted topic"
+    HIDDEN = "hidden", "Hidden creator"
+
+
+class UserInterest(models.Model):
+    """The private interest profile (03 section 2.4, 06 section 7). Explicit rows carry
+    a ``polarity`` and never decay; inferred rows carry three lazily decayed
+    accumulators (short 3 d, mid 14 d, long 45 d; half-lives in the config). Only the
+    owner reads them (``/feed/preferences/profile/``); ``counts`` never holds ids."""
+
+    class Source(models.TextChoices):
+        EXPLICIT = "explicit", "Explicit"
+        INFERRED = "inferred", "Inferred"
+
+    pk = models.CompositePrimaryKey("account_id", "dim", "key", "source")
+    account_id = models.UUIDField()
+    dim = models.CharField(max_length=10, choices=InterestDim.choices)
+    key = models.CharField(max_length=64)
+    source = models.CharField(max_length=8, choices=Source.choices)
+    polarity = models.CharField(  # noqa: DJ001 - NULL on inferred rows
+        max_length=10, choices=InterestPolarity.choices, null=True, blank=True
+    )
+    short_v = models.FloatField(default=0.0)
+    short_at = models.DateTimeField(null=True, blank=True)
+    mid_v = models.FloatField(default=0.0)
+    mid_at = models.DateTimeField(null=True, blank=True)
+    long_v = models.FloatField(default=0.0)
+    long_at = models.DateTimeField(null=True, blank=True)
+    events_n = models.IntegerField(default=0)
+    counts = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "intel_user_interest"
+        indexes = [
+            models.Index(fields=["account_id", "dim", "source"], name="intel_uint_account_idx")
+        ]
+
+
+class FeedbackAction(models.Model):
+    """One explicit feedback action from the post menu, a reel or a profile (03 section
+    2.4; 07 WP 7.1, 7.5-B2). ``before`` is the exact prior state of every interest row
+    the action changed, so an undo restores it (never recomputes it)."""
+
+    class Action(models.TextChoices):
+        INTERESTED = "interested", "Interested"
+        NOT_INTERESTED = "not_interested", "Not interested"
+        MORE_LIKE_THIS = "more_like_this", "Show more like this"
+        LESS_LIKE_THIS = "less_like_this", "Show less like this"
+        MUTE_TOPIC = "mute_topic", "Mute topic"
+        HIDE_CREATOR = "hide_creator", "Do not recommend this creator"
+
+    id = models.UUIDField(primary_key=True)
+    account_id = models.UUIDField()
+    item_type = models.CharField(max_length=8, choices=ItemType.choices)
+    item_id = models.UUIDField()
+    author_id = models.UUIDField(null=True, blank=True)
+    action = models.CharField(max_length=16, choices=Action.choices)
+    topic_ids = ArrayField(models.SmallIntegerField(), default=list, blank=True)
+    topic_id = models.SmallIntegerField(null=True, blank=True)  # mute_topic's topic
+    surface = models.CharField(max_length=12, blank=True, default="")
+    before = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField()
+    undone_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "intel_feedback_action"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["account_id", "item_type", "item_id", "action"],
+                condition=models.Q(undone_at__isnull=True),
+                name="intel_fbk_live_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["account_id", "-created_at"], name="intel_fbk_account_idx"),
+            models.Index(fields=["created_at"], name="intel_fbk_created_idx"),
+        ]
+
+
+class PreferenceChange(models.Model):
+    """The undo log of My Algorithm (03 section 2.4). Retention 180 days."""
+
+    class Source(models.TextChoices):
+        UI = "ui", "Settings"
+        NL_LLM = "nl_llm", "Natural language (LLM)"
+        NL_RULES = "nl_rules", "Natural language (rules)"
+        FEEDBACK = "feedback", "Feedback"
+        ONBOARDING = "onboarding", "Onboarding"
+        UNDO = "undo", "Undo"
+        RESET = "reset", "Reset recommendations"
+
+    id = models.UUIDField(primary_key=True)
+    account_id = models.UUIDField()
+    source = models.CharField(max_length=10, choices=Source.choices)
+    ops = models.JSONField(default=list, blank=True)
+    before = models.JSONField(default=dict, blank=True)
+    after = models.JSONField(default=dict, blank=True)
+    text_sha256 = models.CharField(max_length=64, null=True, blank=True)  # noqa: DJ001
+    llm_model = models.CharField(max_length=80, null=True, blank=True)  # noqa: DJ001
+    undone_by = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "intel_preference_change"
+        indexes = [
+            models.Index(fields=["account_id", "-created_at"], name="intel_pchg_account_idx"),
+            models.Index(fields=["created_at"], name="intel_pchg_created_idx"),
+        ]
+
+
+class DebugConsent(models.Model):
+    """The user's 24 h permission for support to explain their ranking (decision 17)."""
+
+    id = models.UUIDField(primary_key=True)
+    account_id = models.UUIDField()
+    granted_at = models.DateTimeField()
+    expires_at = models.DateTimeField()
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "intel_debug_consent"
+        indexes = [
+            models.Index(fields=["account_id", "-expires_at"], name="intel_dcons_account_idx"),
+            models.Index(fields=["granted_at"], name="intel_dcons_granted_idx"),
+        ]
+
+
+class Experiment(models.Model):
+    """An A/B experiment on one surface (03 section 2.7; WP 5.4). Each variant names a
+    config version of the surface; at most one ``running`` experiment per surface."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        RUNNING = "running", "Running"
+        PAUSED = "paused", "Paused"
+        STOPPED = "stopped", "Stopped"
+
+    key = models.CharField(max_length=60, primary_key=True)
+    surface = models.CharField(max_length=12, choices=Surface.choices)
+    status = models.CharField(max_length=8, choices=Status.choices, default=Status.DRAFT)
+    salt = models.CharField(max_length=16)
+    variants = models.JSONField(default=list)
+    audience = models.JSONField(default=dict, blank=True)
+    primary_metric = models.CharField(max_length=40, blank=True, default="")
+    guardrails = models.JSONField(default=dict, blank=True)
+    mde = models.FloatField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    ends_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.UUIDField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "intel_experiment"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["surface"],
+                condition=models.Q(status="running"),
+                name="intel_exp_one_running",
+            ),
+        ]
+
+
+class ExperimentExposure(models.Model):
+    """First serve of an account under an experiment (02 section 10.2): written at
+    assignment, never from telemetry, once per (experiment, account)."""
+
+    pk = models.CompositePrimaryKey("experiment_key", "account_id")
+    experiment_key = models.CharField(max_length=60)
+    account_id = models.UUIDField()
+    variant = models.CharField(max_length=40)
+    surface = models.CharField(max_length=12)
+    first_exposed_at = models.DateTimeField()
+    data_origin = models.CharField(max_length=10, choices=DataOrigin.choices)
+
+    class Meta:
+        db_table = "intel_experiment_exposure"
+        indexes = [models.Index(fields=["account_id"], name="intel_expx_account_idx")]
+
+
+class CreatorQuality(models.Model):
+    """Public-facing creator aggregates, rebuilt nightly (03 section 2.5). Rates are
+    smoothed with priors from the config; reporter ids never reach this table."""
+
+    author_id = models.UUIDField(primary_key=True)
+    followers = models.IntegerField(default=0)
+    account_age_days = models.IntegerField(null=True, blank=True)
+    posts_30d = models.IntegerField(default=0)
+    reach_30d = models.IntegerField(default=0)
+    hide_rate = models.FloatField(default=0.0)
+    report_rate_90d = models.FloatField(default=0.0)
+    removal_rate_90d = models.FloatField(default=0.0)
+    completion = models.FloatField(null=True, blank=True)
+    comment_depth = models.FloatField(default=0.0)
+    originality = models.FloatField(default=0.0)
+    quality = models.FloatField(default=0.0)
+    is_new = models.BooleanField(default=False)
+    computed_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "intel_creator_quality"
+
+
+class IntegrityFlag(models.Model):
+    """When ``intel.integrity.flagged`` last went out for a post and signal (WP 7.4:
+    at most once per post per ``integrity.flag_cooldown_h``). Ids and rates only."""
+
+    pk = models.CompositePrimaryKey("post_id", "signal")
+    post_id = models.UUIDField()
+    signal = models.CharField(max_length=14)
+    author_id = models.UUIDField()
+    rate = models.FloatField()
+    distinct_accounts = models.IntegerField()
+    flagged_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "intel_integrity_flag"
+        indexes = [models.Index(fields=["author_id"], name="intel_iflag_author_idx")]
+
+
+class AccountLanguage(models.Model):
+    """The account's app language (``account.updated``; WP 6.6/6.7): the cold-start
+    language of recommended items. Newest wins."""
+
+    account_id = models.UUIDField(primary_key=True)
+    language = models.CharField(max_length=5)
+    event_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "intel_account_language"
+
+
+class AggregateWatermark(models.Model):
+    """Exactly-once progress of an accumulating aggregator (the interest tiers):
+    advanced in the transaction that applies the deltas."""
+
+    name = models.CharField(max_length=40, primary_key=True)
+    hi = models.DateTimeField()
+
+    class Meta:
+        db_table = "intel_aggregate_watermark"

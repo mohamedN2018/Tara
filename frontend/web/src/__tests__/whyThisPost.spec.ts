@@ -113,4 +113,54 @@ describe("Why am I seeing this post? (WP 4.8)", () => {
     expect(dialog.querySelector("h2")?.textContent).toBe("لماذا ترى هذا المنشور");
     for (const span of dialog.querySelectorAll('[data-testid="why-factors"] span')) expect(span.getAttribute("dir")).toBe("auto");
   });
+
+  it("renders every R4 reason code in en and ar (07 WP 7.6-B2)", async () => {
+    const codes = ["rec_community_popular", "rec_similar_watched", "new_since_visit", "continue_watching", "rec_new_activity", "rec_adjacent_topic", "rec_generic"];
+    vi.spyOn(api, "get").mockResolvedValue(explanation(codes.map((code) => ({ code }))));
+    let dialog = await open({ reason: "rec_generic", name: "Mona", postId: "p1" });
+    expect(lines(dialog)).toEqual([
+      "Popular in groups you're in",
+      "Similar to videos you watched",
+      "New since your last visit",
+      "Continue watching",
+      "New comments on a post you saw",
+      "Close to topics you like",
+      "Suggested for you",
+    ]);
+    app?.unmount();
+    host?.remove();
+    setLocale("ar");
+    dialog = await open({ reason: "rec_generic", name: "منى", postId: "p1" });
+    expect(document.documentElement.dir).toBe("rtl");
+    expect(lines(dialog)).toEqual([
+      "منتشر في جروبات انت فيها",
+      "شبه فيديوهات اتفرجت عليها",
+      "جديد من آخر زيارة",
+      "كمّل المشاهدة",
+      "فيه كلام جديد على بوست شفته",
+      "قريب من مواضيع بتحبها",
+      "مقترح لك",
+    ]);
+  });
+
+  it("reads an unknown recommendation code as the generic one, once, and never names a group", async () => {
+    vi.spyOn(api, "get").mockResolvedValue(
+      explanation([{ code: "rec_future_source" }, { code: "rec_other_new" }, { code: "rec_community_popular" }]),
+    );
+    const dialog = await open({ reason: "rec_future_source" as never, name: "Mona", postId: "p1" });
+    expect(lines(dialog)).toEqual(["Suggested for you", "Popular in groups you're in"]);
+    expect(dialog.textContent).not.toContain("Mona");
+  });
+
+  it("falls back to the generic sentence for an unknown suggestion when the server is silent", async () => {
+    vi.spyOn(api, "get").mockRejectedValue({ response: { status: 404 } });
+    const dialog = await open({ reason: "rec_brand_new" as never, name: "Mona", postId: "p1" });
+    expect(lines(dialog)).toEqual(["Suggested for you"]);
+  });
+
+  it("keeps a sensitive topic masked next to the new codes (R1 behaviour)", async () => {
+    vi.spyOn(api, "get").mockResolvedValue(explanation([{ code: "rec_topic_sensitive" }, { code: "rec_adjacent_topic" }]));
+    const dialog = await open({ reason: "rec_adjacent_topic", name: "G", postId: "p1" });
+    expect(lines(dialog)).toEqual(["It's about a topic you follow.", "Close to topics you like"]);
+  });
 });

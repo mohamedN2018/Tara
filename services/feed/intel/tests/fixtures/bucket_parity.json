@@ -1,0 +1,1206 @@
+{
+ "generator": "frontend/web/src/stores/flags.ts::bucket under node v24.19.0",
+ "fold": 100,
+ "cases": [
+  {
+   "account_id": "6f03e73e-ca0f-4bec-a65d-9c4aad56871b",
+   "key": "ui.marketplace",
+   "expected": 98
+  },
+  {
+   "account_id": "0a4d6342-9255-4ac8-a7bd-58cfe6fe33f8",
+   "key": "home.for_you",
+   "expected": 76
+  },
+  {
+   "account_id": "a7df4ed5-aecf-46ad-ac53-965f02945712",
+   "key": "exp_home_discovery:s1",
+   "expected": 91
+  },
+  {
+   "account_id": "d90b9d67-b10c-455d-ac6d-ff36f3166cb1",
+   "key": "discovery_people:v2",
+   "expected": 65
+  },
+  {
+   "account_id": "3dbbe3f4-5904-436d-a376-64db7f712e03",
+   "key": "مفتاح.عربي",
+   "expected": 81
+  },
+  {
+   "account_id": "74ebf97d-9cf3-4402-ae4a-73e8eeec9139",
+   "key": "reels:🎬",
+   "expected": 79
+  },
+  {
+   "account_id": "53545cfc-34ee-49d8-abac-df4c9ef50b2f",
+   "key": "x",
+   "expected": 22
+  },
+  {
+   "account_id": "22359f97-f700-4b98-aaf7-24fbfc244127",
+   "key": "",
+   "expected": 50
+  },
+  {
+   "account_id": "1c241c7b-3712-4f25-a3b5-40ffdae7d00c",
+   "key": "a:b:c",
+   "expected": 37
+  },
+  {
+   "account_id": "59dfc4ec-399a-441c-a622-71dbc16ea57f",
+   "key": "intel.home@3-r15",
+   "expected": 76
+  },
+  {
+   "account_id": "34d9df37-9080-470a-a352-e39f3ff7997a",
+   "key": "ui.marketplace",
+   "expected": 83
+  },
+  {
+   "account_id": "b1f24cb3-7d82-4249-aefd-d3792adf3115",
+   "key": "home.for_you",
+   "expected": 84
+  },
+  {
+   "account_id": "6fcba2b7-26e0-4131-abf7-b2f5335a40f9",
+   "key": "exp_home_discovery:s1",
+   "expected": 86
+  },
+  {
+   "account_id": "34205e48-b6ed-4c85-a0b4-524f7cf3d5c2",
+   "key": "discovery_people:v2",
+   "expected": 56
+  },
+  {
+   "account_id": "79e02130-b05c-4db1-a4ce-d9cb7a05ae6e",
+   "key": "مفتاح.عربي",
+   "expected": 48
+  },
+  {
+   "account_id": "87019f09-5380-40be-ac42-1f43600b7153",
+   "key": "reels:🎬",
+   "expected": 13
+  },
+  {
+   "account_id": "ad410f90-05cd-445f-a26a-fa69981e170e",
+   "key": "x",
+   "expected": 35
+  },
+  {
+   "account_id": "305d23ca-4e75-4a3a-a3e7-a57b02f49005",
+   "key": "",
+   "expected": 91
+  },
+  {
+   "account_id": "2ff2d40c-d19f-4587-a227-0c15b0d9a6c7",
+   "key": "a:b:c",
+   "expected": 83
+  },
+  {
+   "account_id": "b452f6d9-60df-4e5d-ace8-1a5f937ae9af",
+   "key": "intel.home@3-r15",
+   "expected": 93
+  },
+  {
+   "account_id": "d168b3ba-df16-4f12-a7ea-4f8ea25479b1",
+   "key": "ui.marketplace",
+   "expected": 29
+  },
+  {
+   "account_id": "9bb0d08a-00e1-45bf-a104-166daa791440",
+   "key": "home.for_you",
+   "expected": 74
+  },
+  {
+   "account_id": "31dda15e-63b2-45e4-adbf-b31534f26e9e",
+   "key": "exp_home_discovery:s1",
+   "expected": 14
+  },
+  {
+   "account_id": "92f354d0-9958-4f4e-ad54-fa76d9443b66",
+   "key": "discovery_people:v2",
+   "expected": 26
+  },
+  {
+   "account_id": "8382f9a9-03bf-47f2-a2ce-4a4730da386d",
+   "key": "مفتاح.عربي",
+   "expected": 55
+  },
+  {
+   "account_id": "057b3b2f-5480-42e0-ae98-7108045aa9a6",
+   "key": "reels:🎬",
+   "expected": 91
+  },
+  {
+   "account_id": "cae6b186-b960-4ef2-a44d-1487625bc8ca",
+   "key": "x",
+   "expected": 70
+  },
+  {
+   "account_id": "06f2300e-e8d3-4462-abf1-9c90ae3e77ef",
+   "key": "",
+   "expected": 15
+  },
+  {
+   "account_id": "7c92f700-fb9f-46ec-a5b6-17c243736d1b",
+   "key": "a:b:c",
+   "expected": 91
+  },
+  {
+   "account_id": "4c7bfc66-4499-4248-aaad-27c8b3409f86",
+   "key": "intel.home@3-r15",
+   "expected": 88
+  },
+  {
+   "account_id": "cad8a115-a772-4e2b-adf2-abafbb53a041",
+   "key": "ui.marketplace",
+   "expected": 97
+  },
+  {
+   "account_id": "41c3f5b2-dcec-4bd1-ad6a-a06d01651206",
+   "key": "home.for_you",
+   "expected": 73
+  },
+  {
+   "account_id": "ef96cead-965f-40a2-ab85-a71acd46ab62",
+   "key": "exp_home_discovery:s1",
+   "expected": 69
+  },
+  {
+   "account_id": "547c280a-06dd-48c0-aae1-4884d0ce3c21",
+   "key": "discovery_people:v2",
+   "expected": 73
+  },
+  {
+   "account_id": "237a4f5d-f8a9-4712-ace9-6de3c9902e80",
+   "key": "مفتاح.عربي",
+   "expected": 77
+  },
+  {
+   "account_id": "91566b9f-98e7-4d26-a870-a63f434ed2d0",
+   "key": "reels:🎬",
+   "expected": 27
+  },
+  {
+   "account_id": "dfd05d72-c3fa-4fd7-ab1c-ce77a18294d0",
+   "key": "x",
+   "expected": 97
+  },
+  {
+   "account_id": "47348596-29d1-4bf5-a1d1-5f003fb37a47",
+   "key": "",
+   "expected": 77
+  },
+  {
+   "account_id": "a02e8b26-47b9-4ea8-a880-c1a3fe00b467",
+   "key": "a:b:c",
+   "expected": 60
+  },
+  {
+   "account_id": "not-a-uuid-39",
+   "key": "intel.home@3-r15",
+   "expected": 30
+  },
+  {
+   "account_id": "037c2e7d-c21b-4696-adf7-861e99a89056",
+   "key": "ui.marketplace",
+   "expected": 33
+  },
+  {
+   "account_id": "710a648f-9656-414b-ab2d-8d95b56d71e5",
+   "key": "home.for_you",
+   "expected": 25
+  },
+  {
+   "account_id": "ec0e5fc2-25e9-4222-a3e9-3199f8087efa",
+   "key": "exp_home_discovery:s1",
+   "expected": 30
+  },
+  {
+   "account_id": "0d8fbc93-907b-4a28-a328-8bd9a9fca264",
+   "key": "discovery_people:v2",
+   "expected": 34
+  },
+  {
+   "account_id": "b0e634f0-498c-4100-a8ff-a88fc11d5a2b",
+   "key": "مفتاح.عربي",
+   "expected": 89
+  },
+  {
+   "account_id": "5b646209-8efd-476a-aab0-71e686229480",
+   "key": "reels:🎬",
+   "expected": 3
+  },
+  {
+   "account_id": "611d25ff-61f4-4478-aea8-f25ebf423994",
+   "key": "x",
+   "expected": 88
+  },
+  {
+   "account_id": "8a110f97-7566-4410-a451-b21c1a7153bc",
+   "key": "",
+   "expected": 43
+  },
+  {
+   "account_id": "289c7cc5-9b6a-4beb-a2e5-52cebf930779",
+   "key": "a:b:c",
+   "expected": 21
+  },
+  {
+   "account_id": "3e8479b1-9452-4ccd-a28b-1e3c4adb96d7",
+   "key": "intel.home@3-r15",
+   "expected": 19
+  },
+  {
+   "account_id": "d7ba6f73-253b-46b7-a21b-0d8e9589f89a",
+   "key": "ui.marketplace",
+   "expected": 49
+  },
+  {
+   "account_id": "cfa412fa-4985-473d-a904-3c89d029abc9",
+   "key": "home.for_you",
+   "expected": 32
+  },
+  {
+   "account_id": "ff817e4d-9d04-4c6f-a862-80542fbb78f9",
+   "key": "exp_home_discovery:s1",
+   "expected": 18
+  },
+  {
+   "account_id": "a7f7d23f-0dd7-4ed4-ac45-a2f2d3ea700a",
+   "key": "discovery_people:v2",
+   "expected": 44
+  },
+  {
+   "account_id": "2f21762c-c750-43bd-a216-4dca6c0910ff",
+   "key": "مفتاح.عربي",
+   "expected": 47
+  },
+  {
+   "account_id": "6ad0d0da-f915-4354-aba7-70b1cc4f3f8f",
+   "key": "reels:🎬",
+   "expected": 1
+  },
+  {
+   "account_id": "fc41469d-f698-495d-aaa9-20a6e06d998c",
+   "key": "x",
+   "expected": 56
+  },
+  {
+   "account_id": "f9c84781-90e6-49a7-a3da-266387463b5a",
+   "key": "",
+   "expected": 0
+  },
+  {
+   "account_id": "c109eade-c92c-4956-ad7e-de9aa98bd155",
+   "key": "a:b:c",
+   "expected": 75
+  },
+  {
+   "account_id": "f8b858be-6168-4587-a933-cdebf111ff7b",
+   "key": "intel.home@3-r15",
+   "expected": 71
+  },
+  {
+   "account_id": "8f34d2b1-f2d6-4ea7-a563-951f8d952cf6",
+   "key": "ui.marketplace",
+   "expected": 82
+  },
+  {
+   "account_id": "f87fe123-24c1-4b15-acea-09ada49c7c03",
+   "key": "home.for_you",
+   "expected": 89
+  },
+  {
+   "account_id": "bfc0b814-35a2-4185-a438-4e91a7e3603a",
+   "key": "exp_home_discovery:s1",
+   "expected": 63
+  },
+  {
+   "account_id": "25e304ac-4ec6-4225-aaa6-9630248c699b",
+   "key": "discovery_people:v2",
+   "expected": 99
+  },
+  {
+   "account_id": "a9706574-ad27-4b9e-ab47-9ff1a027cc2b",
+   "key": "مفتاح.عربي",
+   "expected": 76
+  },
+  {
+   "account_id": "d7078cb2-6339-4faf-acf7-a02acdf542a3",
+   "key": "reels:🎬",
+   "expected": 8
+  },
+  {
+   "account_id": "de01f63f-c920-4bcf-a506-73fa410f1bd3",
+   "key": "x",
+   "expected": 15
+  },
+  {
+   "account_id": "d8437b86-ec60-4e6f-a951-c7ade65d8ae5",
+   "key": "",
+   "expected": 16
+  },
+  {
+   "account_id": "61220187-01d6-4eab-ab93-e1c74a9d0a08",
+   "key": "a:b:c",
+   "expected": 47
+  },
+  {
+   "account_id": "7899fc8c-2843-4587-aa2c-83ce875f82a3",
+   "key": "intel.home@3-r15",
+   "expected": 6
+  },
+  {
+   "account_id": "d92d2678-ba21-4edf-a6f4-51a082b8928a",
+   "key": "ui.marketplace",
+   "expected": 67
+  },
+  {
+   "account_id": "1adca2b1-da88-4768-a1b8-8ae488b2d67a",
+   "key": "home.for_you",
+   "expected": 74
+  },
+  {
+   "account_id": "6eb746d6-e3ce-4646-a90d-2ca912428d40",
+   "key": "exp_home_discovery:s1",
+   "expected": 47
+  },
+  {
+   "account_id": "7646121f-2c90-47f9-aec7-705a5cb04ea5",
+   "key": "discovery_people:v2",
+   "expected": 50
+  },
+  {
+   "account_id": "9a0d6c15-89be-44dd-a5e8-49785f3c6789",
+   "key": "مفتاح.عربي",
+   "expected": 40
+  },
+  {
+   "account_id": "263e1d03-6dcb-42b6-a06d-3de600bc81fc",
+   "key": "reels:🎬",
+   "expected": 43
+  },
+  {
+   "account_id": "5800f840-a968-46c8-ac6c-1963eeb548ed",
+   "key": "x",
+   "expected": 27
+  },
+  {
+   "account_id": "83c34c18-bef1-4cf4-aa93-865f9bf84b39",
+   "key": "",
+   "expected": 81
+  },
+  {
+   "account_id": "562c999c-f0a8-4ed4-ae81-5829b170a31f",
+   "key": "a:b:c",
+   "expected": 57
+  },
+  {
+   "account_id": "not-a-uuid-79",
+   "key": "intel.home@3-r15",
+   "expected": 94
+  },
+  {
+   "account_id": "9e6ad40f-ff9d-42bd-a9cb-5245ed4eeebe",
+   "key": "ui.marketplace",
+   "expected": 96
+  },
+  {
+   "account_id": "5029d619-d023-4c58-a773-a128ee08ee9a",
+   "key": "home.for_you",
+   "expected": 84
+  },
+  {
+   "account_id": "0238a709-c235-45be-adf8-50d452c6ca34",
+   "key": "exp_home_discovery:s1",
+   "expected": 57
+  },
+  {
+   "account_id": "75603fd1-198a-478a-aa17-d9d2619c5c71",
+   "key": "discovery_people:v2",
+   "expected": 70
+  },
+  {
+   "account_id": "e83e89ea-57fa-41dd-ae8b-cba7347c932b",
+   "key": "مفتاح.عربي",
+   "expected": 95
+  },
+  {
+   "account_id": "dffa173c-933c-4217-a303-787ccde2acd4",
+   "key": "reels:🎬",
+   "expected": 53
+  },
+  {
+   "account_id": "aeb8d145-b4df-47bb-a4bc-44d7400bedaa",
+   "key": "x",
+   "expected": 12
+  },
+  {
+   "account_id": "ec261a22-ad57-4b19-ae6a-222419dc86b0",
+   "key": "",
+   "expected": 22
+  },
+  {
+   "account_id": "46aa73f7-ef58-414b-adc0-8742d7e24ae0",
+   "key": "a:b:c",
+   "expected": 24
+  },
+  {
+   "account_id": "dcda1ed1-07f4-476c-a4c4-dade0c064d57",
+   "key": "intel.home@3-r15",
+   "expected": 43
+  },
+  {
+   "account_id": "9acdade1-8cc2-4350-a34b-ce0bd644e640",
+   "key": "ui.marketplace",
+   "expected": 39
+  },
+  {
+   "account_id": "5e08f075-cfc8-429e-a6b3-a5710454b0b5",
+   "key": "home.for_you",
+   "expected": 69
+  },
+  {
+   "account_id": "ca230443-1b3d-48f1-ad9e-9087b954717c",
+   "key": "exp_home_discovery:s1",
+   "expected": 7
+  },
+  {
+   "account_id": "cd15d2fd-53f6-49ba-ad10-d26ebcf6fae1",
+   "key": "discovery_people:v2",
+   "expected": 37
+  },
+  {
+   "account_id": "729a784b-9899-460d-addd-0e8e57053c5d",
+   "key": "مفتاح.عربي",
+   "expected": 93
+  },
+  {
+   "account_id": "10deee48-076a-427c-a1dd-bece2c4c67e3",
+   "key": "reels:🎬",
+   "expected": 34
+  },
+  {
+   "account_id": "9038c357-0d75-41fb-a3ce-eb6f78ff212b",
+   "key": "x",
+   "expected": 97
+  },
+  {
+   "account_id": "20bab348-0d6d-48aa-ac02-4cf1ecfc9c27",
+   "key": "",
+   "expected": 27
+  },
+  {
+   "account_id": "8a94e87d-c577-4d06-a173-f502131275fc",
+   "key": "a:b:c",
+   "expected": 24
+  },
+  {
+   "account_id": "a59f910d-369c-4042-a210-df96face55ee",
+   "key": "intel.home@3-r15",
+   "expected": 40
+  },
+  {
+   "account_id": "d4415ac8-8331-45d5-aeb3-fb605e659f96",
+   "key": "ui.marketplace",
+   "expected": 7
+  },
+  {
+   "account_id": "838f262e-c31f-4273-ac13-6f9e34003fd9",
+   "key": "home.for_you",
+   "expected": 45
+  },
+  {
+   "account_id": "24feb885-dd1f-4b9d-aff9-8c91d125ac74",
+   "key": "exp_home_discovery:s1",
+   "expected": 75
+  },
+  {
+   "account_id": "d4b16a8d-e361-4f60-a2f5-a645bbbcc130",
+   "key": "discovery_people:v2",
+   "expected": 8
+  },
+  {
+   "account_id": "ee364f8a-e4be-432a-a963-cd6b3aa812b3",
+   "key": "مفتاح.عربي",
+   "expected": 78
+  },
+  {
+   "account_id": "3867248e-08ff-4d3c-aa8a-b42faa2bd4f2",
+   "key": "reels:🎬",
+   "expected": 8
+  },
+  {
+   "account_id": "4d47c887-fd1c-4e6b-a734-afd91f6c4400",
+   "key": "x",
+   "expected": 40
+  },
+  {
+   "account_id": "4552eeb4-27d0-4f73-ad6f-a8004b3139af",
+   "key": "",
+   "expected": 99
+  },
+  {
+   "account_id": "d2a5795e-a9e4-4ef5-a0e9-5f38c56ecbec",
+   "key": "a:b:c",
+   "expected": 95
+  },
+  {
+   "account_id": "6a634f75-18a7-4ab0-aa0b-e8596a57eeab",
+   "key": "intel.home@3-r15",
+   "expected": 51
+  },
+  {
+   "account_id": "db05d44c-2e0e-46fd-ab0d-a46375d43929",
+   "key": "ui.marketplace",
+   "expected": 34
+  },
+  {
+   "account_id": "25e09407-49d4-4444-a296-28b5e6cffafb",
+   "key": "home.for_you",
+   "expected": 44
+  },
+  {
+   "account_id": "dc517092-e95c-4357-a234-e17b9b773527",
+   "key": "exp_home_discovery:s1",
+   "expected": 46
+  },
+  {
+   "account_id": "cb886be1-d948-4b71-a50e-13c4383a3e7a",
+   "key": "discovery_people:v2",
+   "expected": 14
+  },
+  {
+   "account_id": "5b846382-422c-4bde-a4e1-eac2c79211ef",
+   "key": "مفتاح.عربي",
+   "expected": 73
+  },
+  {
+   "account_id": "4d4deeca-9f69-440f-a045-32567dfe164c",
+   "key": "reels:🎬",
+   "expected": 14
+  },
+  {
+   "account_id": "68e52e2d-887b-4412-ad95-3307e1a29bfb",
+   "key": "x",
+   "expected": 24
+  },
+  {
+   "account_id": "e56ff562-9313-4ce0-a987-379731f8f57b",
+   "key": "",
+   "expected": 63
+  },
+  {
+   "account_id": "55911896-72eb-4756-ae14-ca927a77e0f1",
+   "key": "a:b:c",
+   "expected": 69
+  },
+  {
+   "account_id": "not-a-uuid-119",
+   "key": "intel.home@3-r15",
+   "expected": 67
+  },
+  {
+   "account_id": "3b81523d-a83f-4857-ae67-f818cad57f9d",
+   "key": "ui.marketplace",
+   "expected": 25
+  },
+  {
+   "account_id": "a52e9dbf-ae04-4a2a-a2bd-ca5dca7cb249",
+   "key": "home.for_you",
+   "expected": 80
+  },
+  {
+   "account_id": "e24c89fc-99b7-44fc-a1a3-859fa5c2eedf",
+   "key": "exp_home_discovery:s1",
+   "expected": 96
+  },
+  {
+   "account_id": "9d83dd17-fc11-4cb7-a57c-5e03aa79e6ec",
+   "key": "discovery_people:v2",
+   "expected": 86
+  },
+  {
+   "account_id": "ce9ff371-ded2-422c-a0cd-6c4229d5ebae",
+   "key": "مفتاح.عربي",
+   "expected": 45
+  },
+  {
+   "account_id": "b9482d0c-5eb8-44ac-acdd-1f85cd4c7599",
+   "key": "reels:🎬",
+   "expected": 94
+  },
+  {
+   "account_id": "c11a392b-3a4b-4a0b-aa6f-7e323d237cf1",
+   "key": "x",
+   "expected": 38
+  },
+  {
+   "account_id": "ffe3c006-16ae-4d07-aeb9-35d300df8e55",
+   "key": "",
+   "expected": 53
+  },
+  {
+   "account_id": "02df7d05-348e-4086-ad51-53b94af320e5",
+   "key": "a:b:c",
+   "expected": 65
+  },
+  {
+   "account_id": "73d04715-283c-41af-abde-2fb27a0b69db",
+   "key": "intel.home@3-r15",
+   "expected": 36
+  },
+  {
+   "account_id": "0f8f0b66-4f4d-4ac6-aba6-2264109f6b8a",
+   "key": "ui.marketplace",
+   "expected": 49
+  },
+  {
+   "account_id": "9321f557-c2bd-469d-a735-ff287b962e5e",
+   "key": "home.for_you",
+   "expected": 28
+  },
+  {
+   "account_id": "32d6b7fe-a00e-4893-a4e6-642986613cb8",
+   "key": "exp_home_discovery:s1",
+   "expected": 66
+  },
+  {
+   "account_id": "4b510f83-7b15-40f8-a49b-4837d0ea0bbb",
+   "key": "discovery_people:v2",
+   "expected": 77
+  },
+  {
+   "account_id": "3cc6b45f-0525-45c3-a150-28ae1c6540ae",
+   "key": "مفتاح.عربي",
+   "expected": 14
+  },
+  {
+   "account_id": "64fd1c3f-879c-412f-ac4d-e2febd8dadf3",
+   "key": "reels:🎬",
+   "expected": 73
+  },
+  {
+   "account_id": "2308ae64-a888-4c5b-a615-b14714eac1b1",
+   "key": "x",
+   "expected": 92
+  },
+  {
+   "account_id": "d6278e65-1c6f-45a2-ac1d-8c89d7288a76",
+   "key": "",
+   "expected": 48
+  },
+  {
+   "account_id": "ee5e7735-842a-4b3c-a41d-866ecf933e27",
+   "key": "a:b:c",
+   "expected": 51
+  },
+  {
+   "account_id": "44729b94-ecd5-4fd5-a3e0-e5036a2a3686",
+   "key": "intel.home@3-r15",
+   "expected": 4
+  },
+  {
+   "account_id": "2eeb50d8-81f1-4d5a-ab58-06a8671aa01d",
+   "key": "ui.marketplace",
+   "expected": 7
+  },
+  {
+   "account_id": "611f6b76-0307-424a-aaf0-3a88421ee13a",
+   "key": "home.for_you",
+   "expected": 23
+  },
+  {
+   "account_id": "be7a6216-daf8-45ec-a399-22d3177341b8",
+   "key": "exp_home_discovery:s1",
+   "expected": 69
+  },
+  {
+   "account_id": "6c01a2c9-aaa4-40ec-a4d9-de4b6a417505",
+   "key": "discovery_people:v2",
+   "expected": 49
+  },
+  {
+   "account_id": "3f96cf0b-4887-458d-a6b8-940425234984",
+   "key": "مفتاح.عربي",
+   "expected": 53
+  },
+  {
+   "account_id": "9ab71b40-5e81-4842-a717-3ed85d0b95c2",
+   "key": "reels:🎬",
+   "expected": 13
+  },
+  {
+   "account_id": "4091aac0-b3c9-44b4-a029-a4e95cef6361",
+   "key": "x",
+   "expected": 73
+  },
+  {
+   "account_id": "6c6d46b8-92a6-4cae-a128-b345b59cfe5c",
+   "key": "",
+   "expected": 7
+  },
+  {
+   "account_id": "fd82edf8-db0d-461c-a634-9f78db6686c9",
+   "key": "a:b:c",
+   "expected": 52
+  },
+  {
+   "account_id": "598d6833-7dee-4c5b-af01-7947ccf0180e",
+   "key": "intel.home@3-r15",
+   "expected": 48
+  },
+  {
+   "account_id": "a2fbf544-92d2-45ad-adc3-7763cdd3e834",
+   "key": "ui.marketplace",
+   "expected": 23
+  },
+  {
+   "account_id": "704ae31a-8ff7-468f-a97a-dd259c51d502",
+   "key": "home.for_you",
+   "expected": 44
+  },
+  {
+   "account_id": "7a2aff3b-932a-4c30-a73e-5af710db3572",
+   "key": "exp_home_discovery:s1",
+   "expected": 25
+  },
+  {
+   "account_id": "f73862aa-2d49-4b9a-af1d-f3a672f1ec39",
+   "key": "discovery_people:v2",
+   "expected": 18
+  },
+  {
+   "account_id": "e9766ae1-5cfc-4dfa-a986-4263c52300e2",
+   "key": "مفتاح.عربي",
+   "expected": 8
+  },
+  {
+   "account_id": "b40db1f8-d435-4597-a47c-6fbffbf8cd09",
+   "key": "reels:🎬",
+   "expected": 55
+  },
+  {
+   "account_id": "d54cad31-55a9-41bf-a97f-343f59208a60",
+   "key": "x",
+   "expected": 77
+  },
+  {
+   "account_id": "97324213-8702-4d5f-aba7-e2875b8a331a",
+   "key": "",
+   "expected": 59
+  },
+  {
+   "account_id": "bf349cdf-cf95-4aa4-a353-f20261495be4",
+   "key": "a:b:c",
+   "expected": 63
+  },
+  {
+   "account_id": "not-a-uuid-159",
+   "key": "intel.home@3-r15",
+   "expected": 59
+  },
+  {
+   "account_id": "4ce2592f-4127-4441-a18e-38f1b4f23fc5",
+   "key": "ui.marketplace",
+   "expected": 5
+  },
+  {
+   "account_id": "60cc4d42-f392-4c2c-ac0c-fe3e7d2cc2be",
+   "key": "home.for_you",
+   "expected": 73
+  },
+  {
+   "account_id": "5c8fe6f8-a575-4a01-a8d2-94005f72ce19",
+   "key": "exp_home_discovery:s1",
+   "expected": 90
+  },
+  {
+   "account_id": "5bbe2400-adc0-47d2-a2c0-8cc08480fad4",
+   "key": "discovery_people:v2",
+   "expected": 27
+  },
+  {
+   "account_id": "feefea16-1e3b-496a-a937-fb9f28af2441",
+   "key": "مفتاح.عربي",
+   "expected": 98
+  },
+  {
+   "account_id": "037eb92b-30fb-4762-a1ca-d430117264a1",
+   "key": "reels:🎬",
+   "expected": 10
+  },
+  {
+   "account_id": "a0c23054-c1ee-401e-ad0a-aa9d50a7972c",
+   "key": "x",
+   "expected": 30
+  },
+  {
+   "account_id": "61b668dd-7180-4a20-a9dd-92675ee60fc1",
+   "key": "",
+   "expected": 40
+  },
+  {
+   "account_id": "23d0700d-5eaf-43ff-aeaa-2ca5ff2caef1",
+   "key": "a:b:c",
+   "expected": 44
+  },
+  {
+   "account_id": "9b74be01-6393-4e11-a72d-f4870dfa93d1",
+   "key": "intel.home@3-r15",
+   "expected": 39
+  },
+  {
+   "account_id": "36d3a066-0f93-4a8c-a568-df4e2ba5663c",
+   "key": "ui.marketplace",
+   "expected": 74
+  },
+  {
+   "account_id": "574268f6-9ec3-487f-a047-81a63e43f894",
+   "key": "home.for_you",
+   "expected": 66
+  },
+  {
+   "account_id": "7c1799c2-1ef5-46fd-a11f-ef123a97cfe9",
+   "key": "exp_home_discovery:s1",
+   "expected": 87
+  },
+  {
+   "account_id": "0014b770-f61a-42b5-a4e8-9f99b4e84373",
+   "key": "discovery_people:v2",
+   "expected": 64
+  },
+  {
+   "account_id": "7671a085-2950-4338-a65f-0efceaa8b20f",
+   "key": "مفتاح.عربي",
+   "expected": 71
+  },
+  {
+   "account_id": "2ca3c655-0975-44f4-a876-713ba0f57b20",
+   "key": "reels:🎬",
+   "expected": 63
+  },
+  {
+   "account_id": "df6212cc-0835-46e9-a06a-131025c5aed5",
+   "key": "x",
+   "expected": 65
+  },
+  {
+   "account_id": "a7d1482e-d12b-43ce-a53b-082820e85bb3",
+   "key": "",
+   "expected": 47
+  },
+  {
+   "account_id": "d3f21b48-2300-4b8a-a04e-305847c1d32e",
+   "key": "a:b:c",
+   "expected": 84
+  },
+  {
+   "account_id": "c6401a24-5118-407b-a573-bee37e354f81",
+   "key": "intel.home@3-r15",
+   "expected": 47
+  },
+  {
+   "account_id": "cf3cd553-ef8c-43d5-a550-237f954adc63",
+   "key": "ui.marketplace",
+   "expected": 38
+  },
+  {
+   "account_id": "0ce23d86-69ab-4121-acb6-a24fcbd597b5",
+   "key": "home.for_you",
+   "expected": 36
+  },
+  {
+   "account_id": "a14f13ed-e6ee-47db-a516-21a697074681",
+   "key": "exp_home_discovery:s1",
+   "expected": 79
+  },
+  {
+   "account_id": "29a76a14-355b-4c57-a87e-4a327aba9bfa",
+   "key": "discovery_people:v2",
+   "expected": 82
+  },
+  {
+   "account_id": "a1e964a6-0f55-4ed9-a4cd-37c8f7d8a953",
+   "key": "مفتاح.عربي",
+   "expected": 30
+  },
+  {
+   "account_id": "96544f57-4315-4408-a132-4c2e6ecd4e84",
+   "key": "reels:🎬",
+   "expected": 59
+  },
+  {
+   "account_id": "ccc84392-e29c-4405-a471-20d7b5fdc87d",
+   "key": "x",
+   "expected": 21
+  },
+  {
+   "account_id": "996c1199-4062-4993-a3ad-2097dbbdde78",
+   "key": "",
+   "expected": 60
+  },
+  {
+   "account_id": "6776af71-7fa8-4fce-a247-2605dc36a111",
+   "key": "a:b:c",
+   "expected": 89
+  },
+  {
+   "account_id": "2e91cc3d-8ac0-43ee-a85e-8854b28376cb",
+   "key": "intel.home@3-r15",
+   "expected": 12
+  },
+  {
+   "account_id": "23d2107a-a9f8-4130-a01d-4e4b4bee5904",
+   "key": "ui.marketplace",
+   "expected": 67
+  },
+  {
+   "account_id": "08c49ff8-ece2-4da5-a731-3b2518ccc716",
+   "key": "home.for_you",
+   "expected": 50
+  },
+  {
+   "account_id": "e0b42946-6745-4b97-a860-9f417d6fb743",
+   "key": "exp_home_discovery:s1",
+   "expected": 65
+  },
+  {
+   "account_id": "65784e10-db8a-452d-aa1c-c59319758b48",
+   "key": "discovery_people:v2",
+   "expected": 89
+  },
+  {
+   "account_id": "3d4e394d-1292-4340-aac6-d4acf943150f",
+   "key": "مفتاح.عربي",
+   "expected": 83
+  },
+  {
+   "account_id": "e80e5cf2-778d-400b-aa90-026856b913fe",
+   "key": "reels:🎬",
+   "expected": 64
+  },
+  {
+   "account_id": "7e2b0a20-182a-4036-ae62-050d88012b73",
+   "key": "x",
+   "expected": 27
+  },
+  {
+   "account_id": "3101d8e2-703e-47e6-ab92-c81aa0c1959a",
+   "key": "",
+   "expected": 36
+  },
+  {
+   "account_id": "474ca340-73e3-445b-a38f-64d306838e45",
+   "key": "a:b:c",
+   "expected": 88
+  },
+  {
+   "account_id": "not-a-uuid-199",
+   "key": "intel.home@3-r15",
+   "expected": 11
+  },
+  {
+   "account_id": "4b0931b5-94eb-4efb-a2ab-3addf335bd3b",
+   "key": "ui.marketplace",
+   "expected": 85
+  },
+  {
+   "account_id": "17d72833-56a6-411d-a829-dd8fa0fdb1df",
+   "key": "home.for_you",
+   "expected": 24
+  },
+  {
+   "account_id": "292d3ba4-d6f9-4c5c-a00b-1da736d5d7da",
+   "key": "exp_home_discovery:s1",
+   "expected": 56
+  },
+  {
+   "account_id": "b07762b6-4e6d-4df4-a11e-bc11a3176387",
+   "key": "discovery_people:v2",
+   "expected": 47
+  },
+  {
+   "account_id": "496f8395-933b-4abd-a03c-afc0bf9443a1",
+   "key": "مفتاح.عربي",
+   "expected": 72
+  },
+  {
+   "account_id": "9c43a28c-76bd-4a38-a8e7-25de0284aaa7",
+   "key": "reels:🎬",
+   "expected": 49
+  },
+  {
+   "account_id": "0b5422d2-df5b-49d8-ac3f-957cd5ae48a0",
+   "key": "x",
+   "expected": 89
+  },
+  {
+   "account_id": "7bbb8ce8-2c34-4568-a05e-3147de0c403f",
+   "key": "",
+   "expected": 12
+  },
+  {
+   "account_id": "848e5c7e-e88c-422f-a08c-4b8bebc826e3",
+   "key": "a:b:c",
+   "expected": 38
+  },
+  {
+   "account_id": "c2e6d1c9-5967-4aca-a5be-5742503a9c76",
+   "key": "intel.home@3-r15",
+   "expected": 10
+  },
+  {
+   "account_id": "f446353e-79a2-455f-a6c3-a3c4756fa5c0",
+   "key": "ui.marketplace",
+   "expected": 78
+  },
+  {
+   "account_id": "35c342e6-dac2-4a54-a75c-2c4fab5dd5dc",
+   "key": "home.for_you",
+   "expected": 41
+  },
+  {
+   "account_id": "7eedded2-29ad-482c-a0e6-0b09143d5677",
+   "key": "exp_home_discovery:s1",
+   "expected": 16
+  },
+  {
+   "account_id": "300d8dff-8712-4427-a4f2-928ea3eba8e5",
+   "key": "discovery_people:v2",
+   "expected": 12
+  },
+  {
+   "account_id": "6380d28b-f6f6-48ef-a344-b9722f19bb53",
+   "key": "مفتاح.عربي",
+   "expected": 57
+  },
+  {
+   "account_id": "778a72cf-18eb-45c1-ab0c-b9d87d12be8c",
+   "key": "reels:🎬",
+   "expected": 29
+  },
+  {
+   "account_id": "8af156a7-718e-4210-a1d5-39401a994a6b",
+   "key": "x",
+   "expected": 72
+  },
+  {
+   "account_id": "9427e247-012d-456f-a24f-c8c3287bb4f4",
+   "key": "",
+   "expected": 46
+  },
+  {
+   "account_id": "38528804-0d72-43fe-ab0f-f7aeeee5248b",
+   "key": "a:b:c",
+   "expected": 38
+  },
+  {
+   "account_id": "83f98140-0c6d-42ac-a9cd-951a570d0570",
+   "key": "intel.home@3-r15",
+   "expected": 37
+  },
+  {
+   "account_id": "966945c0-51be-4319-ac16-b1d4c75ef535",
+   "key": "ui.marketplace",
+   "expected": 1
+  },
+  {
+   "account_id": "6577814f-9b8a-4de9-ae98-11a741af1aef",
+   "key": "home.for_you",
+   "expected": 69
+  },
+  {
+   "account_id": "fe90ab07-24c4-4592-a016-19d3bc4aec05",
+   "key": "exp_home_discovery:s1",
+   "expected": 56
+  },
+  {
+   "account_id": "b73fa8af-b945-4512-a937-d551d0b81e2e",
+   "key": "discovery_people:v2",
+   "expected": 23
+  },
+  {
+   "account_id": "551d200e-6aa0-4e8d-a4bf-2d4e98804cbf",
+   "key": "مفتاح.عربي",
+   "expected": 26
+  },
+  {
+   "account_id": "83a90951-7a71-41f4-ad88-ac800e045e65",
+   "key": "reels:🎬",
+   "expected": 88
+  },
+  {
+   "account_id": "21ccb29e-b449-41cc-a628-69fb538b1d65",
+   "key": "x",
+   "expected": 32
+  },
+  {
+   "account_id": "1636890e-7118-459d-ad98-5cd168395dac",
+   "key": "",
+   "expected": 36
+  },
+  {
+   "account_id": "dc11f4ef-1672-417b-af84-6a59166a18e3",
+   "key": "a:b:c",
+   "expected": 4
+  },
+  {
+   "account_id": "6aeadb82-4109-4013-aa62-93bc5fa54441",
+   "key": "intel.home@3-r15",
+   "expected": 64
+  },
+  {
+   "account_id": "9d7fda89-a947-4207-a356-a87ae4644fd0",
+   "key": "ui.marketplace",
+   "expected": 59
+  },
+  {
+   "account_id": "b99787fa-a6e3-4849-a906-f323387f12fe",
+   "key": "home.for_you",
+   "expected": 14
+  },
+  {
+   "account_id": "d5ff14b3-4153-4ff0-a862-f2b44c5670ad",
+   "key": "exp_home_discovery:s1",
+   "expected": 6
+  },
+  {
+   "account_id": "982cfe76-936a-46cb-af3d-7e84965ca937",
+   "key": "discovery_people:v2",
+   "expected": 52
+  },
+  {
+   "account_id": "1e9b7e27-d0e2-43fc-af2d-42440f228dce",
+   "key": "مفتاح.عربي",
+   "expected": 33
+  },
+  {
+   "account_id": "87042db4-060e-4b05-a6ee-1084892bb4ea",
+   "key": "reels:🎬",
+   "expected": 34
+  },
+  {
+   "account_id": "accd159d-3dfd-4bbd-a54f-fdd6b5a19d9c",
+   "key": "x",
+   "expected": 42
+  },
+  {
+   "account_id": "6b9d7f1f-26d3-4fd6-a4ca-6954beffefb4",
+   "key": "",
+   "expected": 92
+  },
+  {
+   "account_id": "e2e30b27-84d1-46c7-aa4f-8f9630488a0e",
+   "key": "a:b:c",
+   "expected": 30
+  },
+  {
+   "account_id": "not-a-uuid-239",
+   "key": "intel.home@3-r15",
+   "expected": 30
+  }
+ ]
+}

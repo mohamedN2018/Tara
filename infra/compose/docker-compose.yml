@@ -25,6 +25,8 @@ x-feed-intel-env: &feed-intel-env
   INTEL_SIGNAL_RETENTION_DAYS: ${INTEL_SIGNAL_RETENTION_DAYS:-90}
   INTEL_ENGAGEMENT_RETENTION_DAYS: ${INTEL_ENGAGEMENT_RETENTION_DAYS:-30}
   INTEL_EMIT_CONFIG_CHANGED: ${INTEL_EMIT_CONFIG_CHANGED:-true}
+  # R4: feed's new events (config published, integrity flags, reset, ...).
+  INTEL_EMIT_R4_EVENTS: ${INTEL_EMIT_R4_EVENTS:-true}
   # X-Tara-Test-Now for seed/test accounts (WP 4b.15); development only, default off.
   INTEL_TEST_CLOCK_ENABLED: ${INTEL_TEST_CLOCK_ENABLED:-false}
 
@@ -954,6 +956,15 @@ services:
     image: tara/search:dev
     profiles: ["core"]
     command: ["python", "manage.py", "consume_events"]
+    env_file: [../../.env]
+    environment: {POSTGRES_HOST: postgres, REDIS_URL: "redis://redis:6379/10", RABBITMQ_URL: "${RABBITMQ_URL}", RUN_MIGRATIONS: "false"}
+    depends_on: {search: {condition: service_healthy}}
+
+  # Search's outbox relay: search.queried only (Tara Intelligence WP 8.7-B2).
+  search-relay:
+    image: tara/search:dev
+    profiles: ["core"]
+    command: ["celery", "-A", "config", "worker", "-B", "-l", "info", "--concurrency", "1"]
     env_file: [../../.env]
     environment: {POSTGRES_HOST: postgres, REDIS_URL: "redis://redis:6379/10", RABBITMQ_URL: "${RABBITMQ_URL}", RUN_MIGRATIONS: "false"}
     depends_on: {search: {condition: service_healthy}}

@@ -14,12 +14,14 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
-from intel import age, clock, config, discovery, exposure, session_ctx
+from intel import age, clock, config, discovery, experiments, exposure, intent, session_ctx
 from intel import head as first_page_head
 from intel import metrics as intel_metrics
-from intel.models import EventType, ItemType, UserPreference
+from intel.models import EventType, ItemType
 from intel.ranking import exposure_rank, serve_tokens
+from intel.ranking.personal import Personal
 from intel.signals.server import record as menu_signal
+from intel.topics import attach as topic_attach
 from rest_framework import generics, status
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -207,21 +209,29 @@ class HomeFeedView(generics.ListAPIView):
         if request.query_params.get("peek") in ("1", "true"):
             return self._peek(request, mode)
         viewer = request.user.account_id
-        first = request.query_params.get("cursor") is None
+        token = request.query_params.get("cursor")
+        first = token is None
         cfg = config.for_surface("home")
         visit, hot_state = None, None
+        off = False
         if first:
             # WP 4b.15: the test clock (dev, flag on, seed or test account only).
             request._feed_now = clock.request_now(request, viewer)
             off = _personalization_off(request)
-            ranked = mode == "for_you"
+            ranked = mode == "for_you" and not off
+            if ranked:
+                # WP 5.4: a running experiment's variant (exposure written at this serve).
+                cfg = experiments.config_for(viewer, ranking.SURFACE)
+            use_interest, _use_session = config.schema.interest_ranking(cfg.params)
             hot_state = exposure_rank.prefetch(
                 viewer,
                 cfg,
                 visit=not off,
-                ledger=ranked and not off and exposure_rank.applies(cfg),
-                head=ranked and not off and "head" in cfg.params,
+                ledger=ranked and exposure_rank.applies(cfg),
+                head=ranked and "head" in cfg.params,
                 pools=ranked and discovery.retrieves(cfg),
+                prof=ranked and use_interest,
+                si=ranked,
             )
             if not off:
                 visit = session_ctx.classify(
@@ -235,13 +245,25 @@ class HomeFeedView(generics.ListAPIView):
                 )
                 intel_metrics.visit(visit.kind)
         else:
+            # A visit hash exists only for an account that is not personalization_off
+            # (turning it on purges the hash), so the touch writes nothing for them.
             session_ctx.touch(viewer, timezone.now())
-        if mode == "for_you":
+        # 02 section 13 / 04 WP 8.3: personalization off serves "for you" in the
+        # chronological order with no inferred interests; its later pages carry the
+        # chronological cursor (not a ranked one).
+        chronological_for_you = mode == "for_you" and (
+            off if first else not ranking.is_ranked_cursor(token)
+        )
+        if mode == "for_you" and not chronological_for_you:
             response = self._ranked(request, cfg, visit, hot_state)
         else:
+            if chronological_for_you:
+                request._feed_rows_mode = "recent"
             response = super().get(request, *args, **kwargs)
         if response.status_code == 200:
-            if mode != "for_you":  # ranked pages are stamped in _ranked (they know positions)
+            if mode != "for_you" or chronological_for_you:
+                # Ranked pages are stamped in _ranked (they know positions).
+                found = topic_attach.attach(response.data["data"])
                 serve_tokens.stamp_home_items(
                     viewer,
                     response.data["data"],
@@ -249,6 +271,7 @@ class HomeFeedView(generics.ListAPIView):
                     offset=None,
                     ranked=False,
                     visit_ord=visit.visit_ord if visit else None,
+                    topics=topic_attach.primary(found),
                 )
             response.data["mode"] = mode
             # WP 4c.2-B3: every page carries the Home delivery block, so the web holds
@@ -260,7 +283,7 @@ class HomeFeedView(generics.ListAPIView):
             # Ads go in after the organic page is complete (02 section 18), at the
             # config's slots, on the first page only; they never block organic content.
             if first:
-                if mode != "for_you":
+                if mode != "for_you" or chronological_for_you:
                     self._chronological_visit(request, response, mode, cfg, visit)
                 slots = ad_slots()
                 ads = sponsored_for_slots(viewer, slots)
@@ -273,6 +296,8 @@ class HomeFeedView(generics.ListAPIView):
                     # 06 section 6.1: the client's refresh timers come from the config.
                     "refresh_after_s": int(cfg.get("session.refresh_after_s")),
                     "auto_refetch_after_s": int(cfg.get("session.auto_refetch_after_s")),
+                    # R4 API contract: the web shows the "personalization is off" note.
+                    "personalization_off": bool(off),
                 }
         return response
 
@@ -312,7 +337,10 @@ class HomeFeedView(generics.ListAPIView):
             now=clock.request_now(request, viewer),
         )
         data = FeedItemSerializer(found.rows, many=True).data
-        serve_tokens.stamp_home_items(viewer, data, mode, offset=None, ranked=False)
+        topics = topic_attach.attach(data)
+        serve_tokens.stamp_home_items(
+            viewer, data, mode, offset=None, ranked=False, topics=topic_attach.primary(topics)
+        )
         return Response(
             {
                 "data": data,
@@ -342,6 +370,7 @@ class HomeFeedView(generics.ListAPIView):
                     # again, same sid, no re-rank (08 scenario 5).
                     page = ranking.reuse_page(viewer, size, claims)
                 if page is None:
+                    personal = _personal(request, cfg, hot_state, visit)
                     page = ranking.first_page(
                         viewer,
                         size,
@@ -350,7 +379,10 @@ class HomeFeedView(generics.ListAPIView):
                         ctx=_exposure_context(request._feed_now, visit, hot_state),
                         pools=hot_state.pools if hot_state is not None else None,
                         since=visit.since if visit is not None else None,
+                        cfg=cfg,
+                        personal=personal,
                     )
+                    request._feed_intent = personal.intent
                 offset = 0
             else:
                 cursor = ranking.decode_cursor(token)
@@ -362,6 +394,10 @@ class HomeFeedView(generics.ListAPIView):
         # page is ranked only while it reads the session (not the chronological fallback).
         ranked = offset is not None and (token is None or not page.fallback)
         data = FeedItemSerializer(page.items, many=True).data
+        # R4: topics from the eligibility read (no extra query on a ranked page).
+        found = topic_attach.attach(
+            data, page.topics if page.items else {}, page.topic_labels if page.items else {}
+        )
         if ranked and page.sources:
             # Additive (WP 4.3): the candidate source, which the web passes to post's
             # /posts/batch/ as the ``src`` hint.
@@ -375,6 +411,7 @@ class HomeFeedView(generics.ListAPIView):
             ranked=ranked,
             cfg_version=page.cfg_version if ranked else None,
             visit_ord=visit.visit_ord if visit is not None else None,
+            topics=topic_attach.primary(found),
         )
         if page.caught_up and ranked:
             intel_metrics.caught_up()
@@ -394,13 +431,19 @@ class HomeFeedView(generics.ListAPIView):
             new_count, anchor = _visit_counts(page, visit)
             meta["visit"] = session_ctx.meta(visit, cfg, new_count=new_count, anchor_index=anchor)
             if visit is not None:
+                # 06 section 4.5 (WP 6.8-B2): the shadow intent, stored, never used.
+                chosen = intent.finalize(
+                    getattr(request, "_feed_intent", None), visit, new_count, cfg
+                )
                 session_ctx.finish(
                     viewer,
                     visit,
                     new_count=new_count,
                     anchor_index=anchor,
                     head_overlap=overlap,
+                    intent=chosen,
                 )
+                intent.store(viewer, chosen, cfg)
         return Response(
             {
                 "data": data,
@@ -416,7 +459,8 @@ class HomeFeedView(generics.ListAPIView):
         )
 
     def get_queryset(self):
-        return services.home_feed(self.request.user.account_id, _mode(self.request))
+        rows_mode = getattr(self.request, "_feed_rows_mode", None) or _mode(self.request)
+        return services.home_feed(self.request.user.account_id, rows_mode)
 
 
 # The first-page hints that reuse a live ranking session during a visit (refresh or
@@ -469,20 +513,81 @@ def _personalization_off(request) -> bool:
     return request._feed_pref[1]
 
 
+_PREF_SQL = """
+SELECT p.default_mode, p.personalization_off, p.discovery_level, p.languages, p.formats,
+       p.discovery_prefs, l.language
+FROM (SELECT %s::uuid AS a) x
+LEFT JOIN intel_user_preference p ON p.account_id = x.a
+LEFT JOIN intel_account_language l ON l.account_id = x.a
+"""
+
+
 def _preference_row(request) -> tuple[str | None, bool]:
+    """The remembered mode and ``personalization_off`` (R3 A8), plus (R4) the My
+    Algorithm controls and the account language, in the same single statement
+    (``request._feed_pref_full``)."""
     cached = getattr(request, "_feed_pref", None)
     if cached is None:
+        from django.db import connection
+
         try:
-            row = (
-                UserPreference.objects.filter(account_id=request.user.account_id)
-                .values_list("default_mode", "personalization_off")
-                .first()
-            )
+            with connection.cursor() as cur:
+                cur.execute(_PREF_SQL, [str(request.user.account_id)])
+                row = cur.fetchone()
         except Exception:  # noqa: BLE001 - fail closed: unreadable counts as off
-            row = (None, True)
-        mode, off = row if row else (None, False)
+            row = (None, True, None, None, None, None, None)
+        mode, off, level, languages, formats, prefs, account_lang = row
         cached = request._feed_pref = (mode if mode in services.MODES else None, bool(off))
+        request._feed_pref_full = {
+            "discovery_level": 2 if level is None else int(level),
+            "languages": list(languages or []),
+            "formats": formats if isinstance(formats, dict) else {},
+            "discovery_prefs": prefs if isinstance(prefs, dict) else {},
+            "account_language": account_lang,
+        }
     return cached
+
+
+def _personal(request, cfg, hot_state, visit) -> Personal:
+    """The ranker's personal inputs (R4) from the preference row and the first page's
+    pipelined read: the interest profile only under a version that uses it, the
+    session vector and the viewer's controls under every version."""
+    from intel import interests
+
+    _preference_row(request)
+    full = getattr(request, "_feed_pref_full", {}) or {}
+    now = request._feed_now
+    use_interest, _use_session = config.schema.interest_ranking(cfg.params)
+    profile, need = None, False
+    if use_interest:
+        # intel:prof from the pipelined read; a miss is filled from the eligibility
+        # statement's rows by the ranker (no query of its own).
+        profile = interests.Profile.from_bytes(hot_state.prof if hot_state is not None else None)
+        need = profile is None
+    si = session_ctx.si_decode(
+        hot_state.si if hot_state is not None else None, now, cfg.section("session_interest")
+    )
+    personal = Personal(
+        profile=profile,
+        si=si,
+        formats=full.get("formats") or {},
+        discovery_level=full.get("discovery_level", 2),
+        discovery_prefs=full.get("discovery_prefs") or {},
+        languages=_languages(full),
+        need_profile=need,
+        account_id=str(request.user.account_id),
+    )
+    personal.intent = intent.classify(visit, si, cfg)
+    return personal
+
+
+def _languages(full: dict) -> frozenset | None:
+    """E10's content languages: the viewer's chosen ones, else the account language
+    when known (03 section 2.4), else None (no language filter)."""
+    chosen = [x for x in full.get("languages") or [] if x]
+    if not chosen and full.get("account_language"):
+        chosen = [full["account_language"]]
+    return frozenset(chosen) if chosen else None
 
 
 DELIVERY_SURFACES = ("home", "reels", "video")
@@ -515,6 +620,14 @@ class HideView(APIView):
         hide = feedback.hide_post(viewer, post_id, body.validated_data["reason"])
         if not was_hidden:  # a repeat or a new reason is the same hide, not a new action
             menu_signal(viewer, EventType.POST_HIDE, ItemType.POST, post_id, hide.author_id)
+            # R4 (06 section 4.4): a hide subtracts from the session interest vector.
+            from intel.handlers import session_vector_bus
+
+            session_vector_bus(viewer, EventType.POST_HIDE, post_id)
+        # R4 WP 7.4: spam / sexual hides past the threshold reach moderation (no hider named).
+        from intel import integrity_flags
+
+        integrity_flags.check(post_id, hide.author_id, hide.reason)
         return data_response(PostHideSerializer(hide).data, status=status.HTTP_201_CREATED)
 
 

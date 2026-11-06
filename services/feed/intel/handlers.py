@@ -46,6 +46,10 @@ def _record(
     if not account_id or not item_id:
         logger.warning("bus signal without ids; skipped", extra={"event_type": event.event_type})
         return False
+    from . import preferences
+
+    if preferences.personalization_off(account_id):
+        return False  # R4: no bus row under personalization_off (decision 24)
     resolution = origin.resolve(account_id)
     if resolution.refused:
         return False
@@ -63,6 +67,11 @@ def _record(
                 received_at=timezone.now(),
             )
         )
+    if item_type == ItemType.POST and event_type in _SI_BUS:
+        try:
+            session_vector_bus(account_id, event_type, item_id)
+        except Exception:  # noqa: BLE001 - the vector is best-effort
+            logger.warning("session vector update failed", exc_info=True)
     return True
 
 
@@ -260,6 +269,135 @@ def intel_on_account_deleted(event: EventEnvelope) -> None:
     account_id = event.payload.get("account_id") or event.subject_id
     counts = deletion.erase_account(account_id)
     logger.info("intel erased account", extra={"account_id": str(account_id), **counts})
+
+
+# ---- R4 consumers (04 WP 5.5, 6.6/6.7, 7.2; 07 WP 6.5-B2, 8.7-B2) -----------------------
+
+_SI_BUS = {
+    EventType.POST_LIKE: "explicit_weight",
+    EventType.POST_COMMENT: "explicit_weight",
+    EventType.POST_SHARE: "explicit_weight",
+    EventType.POST_SAVE: "explicit_weight",
+    EventType.POST_REPORT: "negative_weight",
+    EventType.POST_HIDE: "negative_weight",
+}
+
+
+def session_vector_bus(account_id, event_type: str, post_id, now=None) -> bool:
+    """06 section 4.4: a bus consumption (like, comment, share, save) adds
+    ``explicit_weight`` to the account's ``feed:si``; a report or a hide subtracts
+    ``negative_weight``. One read of the item's topic, format and author (the bus has
+    no serve token). Nothing for ``personalization_off``; a sensitive topic is not
+    counted without the opt-in."""
+    from django.db import connection
+
+    from . import config, preferences, session_ctx
+    from .ranking import serve_tokens
+    from .topics import classify
+
+    key = _SI_BUS.get(event_type)
+    if key is None or not account_id or not post_id:
+        return False
+    pref = preferences.get(account_id)
+    if pref.personalization_off:
+        return False
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT c.type, c.author_id, (SELECT topic_id FROM intel_content_topic t "
+            "WHERE t.post_id = c.post_id ORDER BY confidence DESC, topic_id LIMIT 1) "
+            "FROM intel_content_ref c WHERE c.post_id = %s",
+            [str(post_id)],
+        )
+        row = cur.fetchone()
+    if row is None:
+        return False
+    kind, author, topic_id = row
+    block = config.for_surface("home").section("session_interest")
+    topics = classify.load_aliases().topics
+    sensitive = bool(topic_id and topics.get(int(topic_id), {}).get("sensitive"))
+    deltas = session_ctx.si_deltas(
+        topic_id=topic_id,
+        fmt=kind,
+        author_prefix=serve_tokens.author_prefix(author) if author else None,
+        weight=block[key],
+        sensitive=sensitive and not pref.sensitive_inference,
+    )
+    return session_ctx.si_update(account_id, deltas, 1, now or timezone.now(), block)
+
+
+@on_event("account.updated")
+def intel_on_account_updated(event: EventEnvelope) -> None:
+    """The account language read model (WP 6.6/6.7): the cold-start language of
+    recommended items. Newest wins; only ``language`` is read (never DOB or gender)."""
+    from django.db import connection
+
+    p = event.payload
+    account = p.get("account_id") or event.subject_id
+    language = p.get("language")
+    if not account or "language" not in (p.get("changed") or []) or language not in ("ar", "en"):
+        return
+    with connection.cursor() as cur:
+        cur.execute(
+            "INSERT INTO intel_account_language (account_id, language, event_at) "
+            "VALUES (%s, %s, %s) ON CONFLICT (account_id) DO UPDATE SET "
+            "language = EXCLUDED.language, event_at = EXCLUDED.event_at "
+            "WHERE intel_account_language.event_at <= EXCLUDED.event_at",
+            [str(account), language, _when(event)],
+        )
+
+
+@on_event("intel.experiment.exposed")
+def intel_on_experiment_exposed(event: EventEnvelope) -> None:
+    """WP 5.5: another service served an account an experiment variant for the first
+    time; one ``intel_experiment_exposure`` row (idempotent)."""
+    from . import experiments
+
+    p = event.payload
+    if not p.get("experiment_key") or not p.get("account_id") or not p.get("variant"):
+        return
+    from feed.services import occurred_at
+
+    experiments.record_exposure(
+        p["experiment_key"],
+        p["account_id"],
+        p["variant"],
+        str(p.get("surface") or ""),
+        when=occurred_at(p.get("exposed_at")) if p.get("exposed_at") else _when(event),
+    )
+
+
+@on_event("search.queried")
+def intel_on_search_queried(event: EventEnvelope) -> None:
+    """WP 8.7-B2 (decision 7): only while the account's own ``search_signal`` is on (and
+    personalization is not off), the hashed terms are matched to topic ids through the
+    keyword and hashtag aliases; the topics of the last ``search_queries`` searches go
+    into ``feed:si`` for the current visit. No digest and no text is stored."""
+    from . import config, preferences, search_signal
+
+    p = event.payload
+    account = p.get("account_id")
+    if not account:
+        return
+    pref = preferences.get(account)
+    if not pref.search_signal or pref.personalization_off:
+        return
+    search_signal.record(account, p.get("term_keys") or [], config.for_surface("home"))
+
+
+@on_event("reel.hidden")
+def intel_on_reel_hidden(event: EventEnvelope) -> None:
+    """WP 7.2: hiding a reel is "Not interested" on it (topics -4, creator -2)."""
+    from . import feedback
+
+    p = event.payload
+    viewer, post_id = p.get("viewer_id"), p.get("post_id")
+    if not viewer or not post_id:
+        return
+    item = feedback.item_for_system("reel", post_id, p.get("author_id"))
+    try:
+        feedback.act(viewer, item, "not_interested", surface="reels")
+    except feedback.FeedbackError:
+        logger.warning("reel.hidden not applied", extra={"post_id": str(post_id)})
 
 
 # Phase 3 read models (WP 3.1): registered with this module, so the consumer's

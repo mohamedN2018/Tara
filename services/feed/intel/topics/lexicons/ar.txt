@@ -1,0 +1,285 @@
+# Arabic topic lexicon (04 WP 6.1/6.2). One term per line: term<TAB>topic slug[<TAB>strong].
+# Terms are normalized at load time (tara_common.text.normalize_ar + normalize_key), so
+# spelling variants of alef, yeh and taa marbuta meet. A topic needs 2 distinct hits,
+# or 1 hit of a term marked strong (02 section 14). Two-word terms match adjacent tokens.
+# Curated by hand; no model generated these lists.
+برمجة	programming	strong
+برمجه	programming	strong
+مبرمج	programming	strong
+بايثون	programming	strong
+جافاسكريبت	programming	strong
+كود	programming
+الكود	programming
+سيرفر	programming
+داتابيز	programming
+فرونت	programming
+باك اند	programming	strong
+api	programming
+ذكاء اصطناعي	ai	strong
+الذكاء الاصطناعي	ai	strong
+شات جي بي تي	ai	strong
+موديل	ai
+تكنولوجيا	technology	strong
+التكنولوجيا	technology	strong
+تقنية	technology
+تقنيه	technology
+لابتوب	technology
+كمبيوتر	technology
+الكمبيوتر	technology
+انترنت	technology
+تطبيق	technology
+التطبيق	technology
+درون	technology	strong
+طيارة درون	technology	strong
+معالج	technology
+شاشة	technology
+موبايل	mobiles
+الموبايل	mobiles
+موبايلات	mobiles	strong
+ايفون	mobiles	strong
+سامسونج	mobiles	strong
+شاومي	mobiles	strong
+اندرويد	mobiles	strong
+بطارية	mobiles
+الشحن	mobiles
+كاميرا الموبايل	mobiles	strong
+بلايستيشن	gaming	strong
+جيمز	gaming	strong
+جيم	gaming
+لعبة	gaming
+لعبه	gaming
+العاب	gaming
+فورتنايت	gaming	strong
+ببجي	gaming	strong
+تصميم	design	strong
+مصمم	design	strong
+فوتوشوب	design	strong
+لوجو	design	strong
+جرافيك	design	strong
+الوان	design
+تصوير	photography	strong
+مصور	photography	strong
+لقطة	photography
+لقطه	photography
+عدسة	photography
+الكاميرا	photography
+صورة	photography
+صوره	photography
+بزنس	business	strong
+شركة	business
+شركه	business
+عميل	business
+العملاء	business
+مبيعات	business
+مشروع	entrepreneurship
+مشروعي	entrepreneurship	strong
+ريادة اعمال	entrepreneurship	strong
+ستارت اب	entrepreneurship	strong
+فكرة مشروع	entrepreneurship	strong
+راس مال	entrepreneurship
+تسويق	marketing	strong
+اعلان	marketing
+اعلانات	marketing
+سوشيال ميديا	marketing	strong
+براند	marketing
+استثمار	finance	strong
+البورصة	finance	strong
+اسهم	finance
+فلوس	finance
+الدولار	finance
+ادخار	finance	strong
+مرتب	finance
+تعليم	education	strong
+مذاكرة	education	strong
+مذاكره	education	strong
+امتحان	education	strong
+امتحانات	education	strong
+الجامعة	education
+الجامعه	education
+مدرسة	education
+مدرسه	education
+كورس	education	strong
+درس	education
+ثانوية عامة	education	strong
+علوم	science	strong
+علمي	science
+الفضاء	science	strong
+فيزياء	science	strong
+كيمياء	science	strong
+تجربة علمية	science	strong
+كوكب	science
+تاريخ	history	strong
+التاريخ	history	strong
+الفراعنة	history	strong
+اثار	history	strong
+حضارة	history
+قديما	history
+كتاب	books
+كتب	books	strong
+رواية	books	strong
+روايه	books	strong
+قراءة	books	strong
+قراءه	books	strong
+مكتبة	books
+الكاتب	books
+اكل	food
+الاكل	food
+مطعم	food	strong
+مطاعم	food	strong
+اكلة	food	strong
+اكله	food	strong
+جعان	food
+حلويات	food	strong
+مخبز	food	strong
+عيش	food
+كشري	food	strong
+فول	food
+طبخ	cooking	strong
+وصفة	cooking	strong
+وصفه	cooking	strong
+وصفات	cooking	strong
+طريقة عمل	cooking	strong
+مكونات	cooking
+فرن	cooking
+ملعقة	cooking
+سفر	travel	strong
+سافرت	travel	strong
+رحلة	travel	strong
+رحله	travel	strong
+فندق	travel	strong
+شاطئ	travel
+الساحل	travel
+تذكرة طيران	travel	strong
+رياضة	sports	strong
+رياضه	sports	strong
+ماتش	sports	strong
+مباراة	sports	strong
+مباراه	sports	strong
+بطولة	sports
+بطوله	sports
+تمرين	fitness	strong
+الجيم	fitness	strong
+لياقة	fitness	strong
+لياقه	fitness	strong
+كورة	football	strong
+كوره	football	strong
+الاهلي	football	strong
+الزمالك	football	strong
+الدوري	football	strong
+جول	football	strong
+صحة	health	strong
+صحه	health	strong
+دكتور	health
+مرض	health
+علاج	health
+دوا	health
+مستشفى	health	strong
+ولادي	parenting
+اطفال	parenting
+الاطفال	parenting
+تربية	parenting	strong
+تربيه	parenting	strong
+ماما	parenting
+بيبي	parenting	strong
+رسم	arts	strong
+لوحة	arts	strong
+لوحه	arts	strong
+فنان	arts
+فن	arts
+اغنية	music	strong
+اغنيه	music	strong
+موسيقى	music	strong
+مزيكا	music	strong
+مطرب	music	strong
+فيلم	movies	strong
+افلام	movies	strong
+مسلسل	movies	strong
+مسلسلات	movies	strong
+السينما	movies	strong
+حلقة	movies
+ضحك	entertainment
+كوميدي	entertainment	strong
+نكتة	entertainment	strong
+ميمز	entertainment	strong
+موضة	fashion	strong
+موضه	fashion	strong
+لبس	fashion
+فستان	fashion	strong
+هدوم	fashion
+ستايل	fashion
+ميكب	beauty	strong
+ميكاب	beauty	strong
+بشرة	beauty	strong
+بشره	beauty	strong
+شعر	beauty
+عناية	beauty
+عربية	cars
+عربيه	cars
+عربيات	cars	strong
+موتور	cars	strong
+بنزين	cars	strong
+سواقة	cars	strong
+شقة	property	strong
+شقه	property	strong
+للايجار	property	strong
+للبيع	shopping
+عقار	property	strong
+عقارات	property	strong
+فيلا	property	strong
+جنينة	home_garden	strong
+جنينه	home_garden	strong
+نباتات	home_garden	strong
+ديكور	home_garden	strong
+اثاث	home_garden	strong
+مطبخ	home_garden
+صيانة	services	strong
+صيانه	services	strong
+سباك	services	strong
+كهربائي	services	strong
+توصيل	services
+خدمة	services
+عرض	shopping
+عروض	shopping	strong
+خصم	shopping	strong
+سعر	shopping
+السعر	shopping
+اشتريت	shopping
+منتج	shopping
+منتجات	shopping	strong
+هواية	hobbies	strong
+هوايه	hobbies	strong
+هوايتي	hobbies	strong
+خبر	news
+اخبار	news	strong
+عاجل	news	strong
+النهاردة	news
+حكاية	stories	strong
+حكايه	stories	strong
+ذكريات	stories	strong
+زمان	stories
+فاكرين	stories	strong
+ايام زمان	stories	strong
+سياسة	politics	strong
+سياسه	politics	strong
+انتخابات	politics	strong
+الحكومة	politics	strong
+الحكومه	politics	strong
+البرلمان	politics	strong
+رئيس	politics
+وزير	politics
+قران	quran	strong
+القران	quran	strong
+سورة	quran	strong
+سوره	quran	strong
+تلاوة	quran	strong
+تلاوه	quran	strong
+اية	quran
+ايه	quran
+تفسير	quran	strong
+الله	religion
+صلاة	religion	strong
+صلاه	religion	strong
+رمضان	religion	strong
+دعاء	religion	strong
+مسجد	religion	strong
+الجمعة	religion

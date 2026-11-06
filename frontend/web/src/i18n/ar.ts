@@ -24,6 +24,7 @@ import socialShellAr from "./socialShell.ar";
 import suggestedAr from "./suggested.ar";
 import deliveryAr from "./delivery.ar";
 import homeRefreshAr from "./homeRefresh.ar";
+import myAlgorithmAr from "./myAlgorithm.ar";
 
 export default {
   app: { name: "Tara", tagline: "تواصل. شارك. انتمِ.", promise: "أكثر من شبكة اجتماعية… مكان تنتمي إليه." },
@@ -1477,6 +1478,7 @@ export default {
   suggested: suggestedAr,
   delivery: deliveryAr,
   homeRefresh: homeRefreshAr,
+  myAlgorithm: myAlgorithmAr,
   landing: {
     getStarted: "ابدأ الآن",
     headline: "مكانك بين",

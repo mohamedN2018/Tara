@@ -3,7 +3,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { type Page, expect, request, test } from "@playwright/test";
 
-import { API, fillRegisterForm, PASSWORD, sharedAccounts, unique, verificationToken } from "./helpers";
+import { API, fillRegisterForm, PASSWORD, sharedAccounts, skipTopicPicker, unique, verificationToken } from "./helpers";
 
 async function seriousA11y(page: Page): Promise<string[]> {
   const result = await new AxeBuilder({ page }).include("main").withTags(["wcag2a", "wcag2aa"]).analyze();
@@ -67,6 +67,7 @@ test("a full Arabic registration with the new fields, then the profile photo ste
   await page.getByLabel("البريد الإلكتروني").first().fill(email);
   await page.getByLabel("كلمة المرور", { exact: true }).fill(PASSWORD);
   await page.getByRole("button", { name: "دخول", exact: true }).click();
+  await skipTopicPicker(page); // R4: the optional topic picker comes first
   await expect(page).toHaveURL(/\/home$/);
 
   // The display name is built from the first and last names.

@@ -196,6 +196,29 @@ def emit_presence_changed(account: Account, *, correlation_id: str | None = None
     )
 
 
+def emit_account_updated(account: Account, *, correlation_id: str | None = None) -> None:
+    """``account.updated`` with ``changed=["language"]`` (Tara Intelligence WP 6.7).
+
+    Inside the caller's transaction, only when the language changed. Carries the
+    language and nothing else: never the date of birth, gender or a contact detail.
+    """
+    if not getattr(settings, "IDENTITY_EMIT_ACCOUNT_UPDATED", True):
+        return
+    if account.language not in ("ar", "en"):
+        return
+    emit_domain_event(
+        "account.updated",
+        subject_id=str(account.id),
+        payload={
+            "account_id": str(account.id),
+            "changed": ["language"],
+            "language": account.language,
+        },
+        actor_id=str(account.id),
+        correlation_id=correlation_id,
+    )
+
+
 DEACTIVATE_CONFIRMATION = "DEACTIVATE"
 
 

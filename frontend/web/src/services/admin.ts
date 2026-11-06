@@ -26,6 +26,8 @@ export interface ModerationCase {
   report_count: number;
   assigned_to: string | null;
   owner_id?: string | null;
+  /** Tara Intelligence WP 7.4: the automatic signal behind the case (`spam_hides` …); "" when none. */
+  system_signal?: string;
   created_at: string;
   updated_at: string;
 }
@@ -33,12 +35,23 @@ export interface ModerationCase {
 /** One raw report behind a case (moderation.case.view). */
 export interface ModerationReport {
   id: string;
-  reporter_id: string;
+  /** Null for a system-sourced report (WP 7.4): no person filed it. */
+  reporter_id: string | null;
+  /** `system`: feed's integrity signal, not a user report. Absent from older servers (= user). */
+  source?: "user" | "system";
   target_type: string;
   target_id: string;
   reason: string;
   /** What the reporter saw when the target is private (a chat message): text only. */
-  evidence?: { type?: string; body?: string; created_at?: string; attachment_count?: number };
+  evidence?: {
+    type?: string;
+    body?: string;
+    created_at?: string;
+    attachment_count?: number;
+    /** System reports (WP 7.4): the signal and how many distinct accounts it came from. */
+    signal?: string;
+    distinct_accounts?: number;
+  };
   created_at: string;
 }
 

@@ -40,6 +40,8 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.middleware.common.CommonMiddleware",
     "tara_common.middleware.RequestIDMiddleware",
+    # Tara Intelligence WP 4b.14 graph part: the caller's own age class (E9b).
+    "graph.age.AgeClassMiddleware",
     "django_prometheus.middleware.PrometheusAfterMiddleware",
 ]
 
@@ -105,6 +107,8 @@ TARA_EVENT_QUEUE = "graph.events"
 # so feed (and later post) bind the new event types first.
 GRAPH_EMIT_MUTE_FAVORITE_EVENTS = env_bool("GRAPH_EMIT_MUTE_FAVORITE_EVENTS", True)
 GRAPH_EMIT_RESTRICT_EVENTS = env_bool("GRAPH_EMIT_RESTRICT_EVENTS", True)
+# intel.experiment.exposed once per account and experiment (Tara Intelligence WP 5.5).
+INTEL_EMIT_EXPOSURE_EVENTS = env_bool("INTEL_EMIT_EXPOSURE_EVENTS", True)
 # Profile's page export, for `manage.py backfill_page_refs`.
 PROFILE_INTERNAL_URL = os.getenv("PROFILE_INTERNAL_URL", "http://profile:8000")
 # Identity's account lifecycle export, for `manage.py intel_backfill_accounts`

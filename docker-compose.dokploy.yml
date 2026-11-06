@@ -123,6 +123,8 @@ x-identity-env: &identity-env
   IDENTITY_EMIT_AUDIT_EVENTS: ${IDENTITY_EMIT_AUDIT_EVENTS:-true}
   # account.suspended/unsuspended, account.signed_out, account.verification.resent (8.4, 8.6).
   IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS: ${IDENTITY_EMIT_ACCOUNT_ACTION_EVENTS:-true}
+  # account.updated on a language change (Tara Intelligence WP 6.7).
+  IDENTITY_EMIT_ACCOUNT_UPDATED: ${IDENTITY_EMIT_ACCOUNT_UPDATED:-true}
   REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-2592000}
   REFRESH_REUSE_GRACE_SECONDS: ${REFRESH_REUSE_GRACE_SECONDS:-20}
   # Empty: no mail is sent (set EMAIL_VERIFICATION_REQUIRED=false then).
@@ -161,6 +163,8 @@ x-profile-env: &profile-env
   PROFILE_EMIT_PAGE_UPDATED: ${PROFILE_EMIT_PAGE_UPDATED:-true}
   # group.* events (1.11). Upgrading: deploy once with false, consumers first.
   PROFILE_EMIT_GROUP_EVENTS: ${PROFILE_EMIT_GROUP_EVENTS:-true}
+  # intel.experiment.exposed (WP 5.5); one alias for profile, graph and marketplace.
+  INTEL_EMIT_EXPOSURE_EVENTS: &intel-exposure ${INTEL_EMIT_EXPOSURE_EVENTS:-true}
   GROUP_REPORT_RATE: ${GROUP_REPORT_RATE:-20/hour}
   # Sign-up's public handle check, per client address (track 1D).
   PROFILE_HANDLE_CHECK_RATE: ${PROFILE_HANDLE_CHECK_RATE:-30/min}
@@ -180,6 +184,7 @@ x-graph-env: &graph-env
   # relationship.* events (plan 08 track 2D). Upgrading: deploy once with false, consumers first.
   GRAPH_EMIT_MUTE_FAVORITE_EVENTS: ${GRAPH_EMIT_MUTE_FAVORITE_EVENTS:-true}
   GRAPH_EMIT_RESTRICT_EVENTS: ${GRAPH_EMIT_RESTRICT_EVENTS:-true}
+  INTEL_EMIT_EXPOSURE_EVENTS: *intel-exposure
 
 x-media-env: &media-env
   <<: *common-env
@@ -295,6 +300,7 @@ x-feed-env: &feed-env
   INTEL_SIGNAL_RETENTION_DAYS: ${INTEL_SIGNAL_RETENTION_DAYS:-30}
   INTEL_ENGAGEMENT_RETENTION_DAYS: ${INTEL_ENGAGEMENT_RETENTION_DAYS:-30}
   INTEL_EMIT_CONFIG_CHANGED: ${INTEL_EMIT_CONFIG_CHANGED:-true}
+  INTEL_EMIT_R4_EVENTS: ${INTEL_EMIT_R4_EVENTS:-true}
   INTEL_TEST_CLOCK_ENABLED: "false"
 
 x-chat-env: &chat-env
@@ -344,6 +350,7 @@ x-marketplace-env: &marketplace-env
   MARKET_DB_USER: ${MARKET_DB_USER:-market}
   MARKETPLACE_REVIEW_MIN_INQUIRY_AGE_SECONDS: ${MARKETPLACE_REVIEW_MIN_INQUIRY_AGE_SECONDS:-86400}
   MARKETPLACE_REVIEW_SELLER_WINDOW_DAYS: ${MARKETPLACE_REVIEW_SELLER_WINDOW_DAYS:-30}
+  INTEL_EMIT_EXPOSURE_EVENTS: *intel-exposure
 
 x-notification-env: &notification-env
   <<: *common-env
@@ -374,6 +381,8 @@ x-search-env: &search-env
   SEARCH_DEBUG: ${SEARCH_DEBUG:-false}
   SEARCH_SECRET_KEY: ${SEARCH_SECRET_KEY:?}
   SEARCH_INTERNAL_TIMEOUT: ${SEARCH_INTERNAL_TIMEOUT:-1.5}
+  # search.queried, hashed terms, opted-in accounts only (WP 8.7-B2).
+  SEARCH_EMIT_QUERY_SIGNALS: ${SEARCH_EMIT_QUERY_SIGNALS:-true}
 
 x-moderation-env: &moderation-env
   <<: *common-env
@@ -798,6 +807,16 @@ services:
     environment: *graph-env
     depends_on: {graph: {condition: service_healthy}}
     mem_limit: 256m
+
+  # Search's outbox relay: search.queried (Tara Intelligence WP 8.7-B2), nothing else.
+  search-worker:
+    <<: *app
+    image: tara/search
+    pull_policy: never   # built by the service of the same image
+    command: ["celery", "-A", "config", "worker", "-B", "-s", "/tmp/celerybeat-schedule", "-l", "info", "--concurrency", "1"]
+    environment: *search-env
+    depends_on: {search: {condition: service_healthy}}
+    mem_limit: 192m
 
   media-worker:
     <<: *app

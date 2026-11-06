@@ -28,7 +28,7 @@ export default {
     favoriteHint: "شاهد منشوراته أولًا في خلاصة المفضلة.",
     block: "حظر {name}",
     blockHint: "لن يرى ملفك الشخصي ولن يراسلك.",
-    blocked: "تم حظر {name}.",
+    blocked: "{name} مش هيقدر يشوفك أو يكلمك، وانت كمان",
     unfavorite: "إزالة {name} من المفضلة",
     favorited: "تمت إضافة {name} إلى المفضلة.",
     unfavorited: "تمت إزالة {name} من المفضلة.",

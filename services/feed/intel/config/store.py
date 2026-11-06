@@ -40,6 +40,15 @@ EVENT = "intel.config.changed"
 
 _lock = threading.Lock()
 _active: dict[str, tuple[float, int, dict]] = {}  # surface -> (expires, version, params)
+# R4 (WP 5.4): the surface's running experiment, read in the same statement as the
+# active version and cached with it (no extra query on a feed request).
+_running: dict[str, dict | None] = {}
+_ACTIVE_SQL = """
+SELECT c.version, c.params,
+       (SELECT json_build_object('key', e.key, 'salt', e.salt, 'variants', e.variants)
+          FROM intel_experiment e WHERE e.surface = c.surface AND e.status = 'running' LIMIT 1)
+FROM intel_ranking_config c WHERE c.surface = %s AND c.status = 'active'
+"""
 
 
 class ConfigError(Exception):
@@ -101,11 +110,26 @@ def diff(old: Any, new: Any, path: str = "") -> list[dict]:
 def clear_cache() -> None:
     with _lock:
         _active.clear()
+        _running.clear()
 
 
-def _load_active(surface: str) -> tuple[int, dict] | None:
+def _json(value):
+    # Django's raw cursor returns json / jsonb as text.
+    return json.loads(value) if isinstance(value, str) else value
+
+
+def _load_active(surface: str, with_experiment: bool = False):
+    """``(version, params)`` of the active row, or None. ``with_experiment``: one
+    statement that also returns the running experiment (``(version, params, exp)``)."""
     from ..models import RankingConfig
 
+    if with_experiment:
+        from django.db import connection
+
+        with connection.cursor() as cur:
+            cur.execute(_ACTIVE_SQL, [surface])
+            row = cur.fetchone()
+        return (row[0], _json(row[1]), _json(row[2])) if row else None
     row = (
         RankingConfig.objects.filter(surface=surface, status=RankingConfig.Status.ACTIVE)
         .values_list("version", "params")
@@ -122,7 +146,7 @@ def resolve(surface: str) -> tuple[int, dict]:
     if hit and hit[0] > now:
         return hit[1], hit[2]
     try:
-        found = _load_active(surface)
+        found = _load_active(surface, with_experiment=True)
     except Exception:  # noqa: BLE001 - a config read never breaks a feed request
         if hit:
             logger.warning("ranking config unreadable; keeping %s@%s", surface, hit[1])
@@ -132,12 +156,22 @@ def resolve(surface: str) -> tuple[int, dict]:
         return int(base["version"]), base
     base = defaults(surface)
     if found is None:
-        version, params = int(base["version"]), base
+        version, params, experiment = int(base["version"]), base, None
     else:
         version, params = found[0], merge(base, found[1])
+        experiment = found[2] if len(found) > 2 else None
     with _lock:
         _active[surface] = (now + ACTIVE_TTL_S, version, params)
+        _running[surface] = experiment
     return version, params
+
+
+def running_experiment(surface: str) -> dict | None:
+    """The surface's running experiment ``{key, salt, variants}`` (cached with the
+    active version, ``ACTIVE_TTL_S``), or None."""
+    resolve(surface)
+    with _lock:
+        return _running.get(surface)
 
 
 def load(surface: str, version: int) -> dict:
@@ -153,7 +187,9 @@ def load(surface: str, version: int) -> dict:
 # ---- writes -----------------------------------------------------------------------------
 
 
-def _emit(surface: str, action: str, from_v, to_v, *, actor_id, reason: str) -> None:
+def emit_changed(
+    surface: str, action: str, from_v, to_v, *, actor_id, reason: str, experiment=None
+) -> None:
     if not getattr(settings, "INTEL_EMIT_CONFIG_CHANGED", True):
         return
     from feed.events import PRODUCER
@@ -171,8 +207,8 @@ def _emit(surface: str, action: str, from_v, to_v, *, actor_id, reason: str) -> 
                 "action": action,
                 "from_version": from_v,
                 "to_version": to_v,
-                "experiment": None,
-                "reason_present": bool(reason.strip()),
+                "experiment": experiment,
+                "reason_present": bool((reason or "").strip()),
             },
             subject_id=f"{surface}@{to_v}",
             producer=PRODUCER,
@@ -194,7 +230,7 @@ def _log(surface, action, from_v, to_v, *, diff_rows, actor_id, reason) -> None:
         reason=(reason or "")[:500],
         actor_id=actor_id,
     )
-    _emit(surface, action, from_v, to_v, actor_id=actor_id, reason=reason or "")
+    emit_changed(surface, action, from_v, to_v, actor_id=actor_id, reason=reason or "")
 
 
 def _after_commit_clear() -> None:
@@ -293,6 +329,11 @@ def _switch(surface: str, version: int, *, action: str, actor_id, reason: str) -
             actor_id=actor_id,
             reason=reason,
         )
+        # WP 5.5: consumers outside feed get the new active params (and the running
+        # experiment's variants) in the same transaction.
+        from .. import experiments
+
+        experiments.publish(surface)
         _after_commit_clear()
         return from_v
 

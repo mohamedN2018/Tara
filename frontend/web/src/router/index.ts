@@ -80,6 +80,9 @@ const routes: RouteRecordRaw[] = [
   },
   // The activity log: the signed-in account's own posts, comments, reactions, saves and searches.
   { path: "/settings/activity-log", name: "activity-log", component: () => import("@/views/ActivityLogView.vue"), meta: { auth: true } },
+  // Tara Intelligence R4 (04 WP 8.2): My Algorithm, and the optional topic picker after sign-up (6.6).
+  { path: "/settings/my-algorithm", name: "my-algorithm", component: () => import("@/views/MyAlgorithmView.vue"), meta: { auth: true } },
+  { path: "/welcome/topics", name: "welcome-topics", component: () => import("@/views/OnboardingTopicsView.vue"), meta: { auth: true } },
   // The privacy center (T2's profile and field visibility included) is the settings centre's Privacy section.
   // The mobile menu (the fifth bottom tab): the categorised main menu as a page.
   { path: "/menu", name: "menu", component: () => import("@/views/MobileMenuView.vue"), meta: { auth: true } },

@@ -12,7 +12,12 @@ opens on 25 served items):
 - the ledger size at ``cap`` items compacted (<= 2.6 KB) and the largest size ever
   stored while 5 x cap items stream in (never above 5.2 KB);
 - the delay between a displayed item's batch and ``fold()`` seeing it (<= 1 s);
-- Redis round trips per batch without a compaction (1).
+- Redis round trips per batch without a compaction: 1 for the ledger, plus 1 (R4 WP
+  6.5-B2) for the session-interest vector when the batch carries consumption-grade
+  events (these opens and dwells do): 2.
+
+R4: the tokens carry a primary topic, so the vector update folds topic, format and
+creator from the token (no read).
 """
 
 import socket
@@ -44,7 +49,7 @@ def _batch_of_50(me, session):
         token = st.issue(
             me, "post", item, "home", position=i, reason="for_you", fmt="text",
             length_bucket=1 + i % 3, author_id=uuid.uuid4(), visit_ord=3,
-            now=time.time() - 300,
+            now=time.time() - 300, topic_id=1 + i % 5,
         )  # fmt: skip
         events.append(ev("feed_impression", f"post:{item}", st=token))
         if i % 2:
@@ -115,5 +120,5 @@ def test_ingest_with_ledger(redis_hot, monkeypatch):
     assert _p95(samples) <= BUDGET_MS
     assert max(sizes) <= th.max_bytes
     assert len(compacted) <= th.cap * exposure.RECORD_BYTES
-    assert statistics.median(round_trips) == 1
+    assert statistics.median(round_trips) == 2  # ledger + session vector (R4)
     assert max(visible) <= 1.0

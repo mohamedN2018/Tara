@@ -42,7 +42,7 @@ import {
 } from "@/lib/feedPosition";
 import { atScrollTop, createHomeRefresh, pageEntry, retryAfterMs, timersFrom } from "@/lib/homeRefresh";
 import { attachPullToRefresh, keepAnchor } from "@/lib/pullToRefresh";
-import { itemKey, noteServed, signalSessionId } from "@/lib/signals";
+import { itemKey, noteServed, setPersonalizationOff, signalSessionId } from "@/lib/signals";
 import { realtime } from "@/lib/ws";
 import {
   DEFAULT_AD_SLOTS,
@@ -55,6 +55,7 @@ import {
   type HideReason,
   hydrateFeed,
   isFeedMode,
+  type ItemTopic,
 } from "@/services/feed";
 import { graphService } from "@/services/graph";
 import { mediaService } from "@/services/media";
@@ -162,6 +163,18 @@ const mode = ref<FeedMode>(queryMode() ?? storedMode() ?? DEFAULT_MODE);
 let modeResolved = queryMode() !== null;
 // Why each post reached this feed (feed's reason): "Why am I seeing this post?".
 const reasons = ref<Record<string, FeedReason>>({});
+// R4: each item's topics (for "Mute topic"), and the items a feedback action took out
+// of the list (Not interested, Don't recommend): hidden at once, shown again on undo.
+const itemTopics = ref<Record<string, ItemTopic[]>>({});
+const feedbackGone = ref<Record<string, true>>({});
+function onFeedbackGone(post: Post) {
+  feedbackGone.value = { ...feedbackGone.value, [post.id]: true };
+}
+function onFeedbackBack(post: Post) {
+  const next = { ...feedbackGone.value };
+  delete next[post.id];
+  feedbackGone.value = next;
+}
 const modesSupported = ref(false);
 // `remember`: a pick in the switcher is the viewer's default, kept for the account
 // so a new browser opens on it (WP 4.6); following a `?mode=` link is not.
@@ -294,7 +307,11 @@ async function load(initial = false, entry?: FeedEntry, opts: { silent?: boolean
     // Signals (WP 2.8): each served item's token and feed position, for its impression.
     fresh.forEach((p, i) => noteServed(itemKey("post", p.id), { st: page.serveTokens?.[p.id], pos: offset + i, surface: "home" }));
     reasons.value = initial ? { ...page.reasons } : { ...reasons.value, ...page.reasons };
+    itemTopics.value = initial ? { ...(page.topics ?? {}) } : { ...itemTopics.value, ...(page.topics ?? {}) };
     if (initial) {
+      // R4 (decisions 8 and 24): the server says personalization is off; nothing is collected.
+      if (typeof page.personalizationOff === "boolean") setPersonalizationOff(page.personalizationOff);
+      feedbackGone.value = {};
       sponsored.value = page.sponsored;
       adSlots.value = page.adSlots ?? [...DEFAULT_AD_SLOTS];
       asOf.value = page.asOf;
@@ -652,6 +669,8 @@ async function insertFresh(entry: FeedEntry): Promise<number> {
     posts.value = [...fresh, ...posts.value];
     fresh.forEach((p, i) => noteServed(itemKey("post", p.id), { st: page.serveTokens?.[p.id], pos: i, surface: "home" }));
     reasons.value = { ...reasons.value, ...page.reasons };
+    itemTopics.value = { ...itemTopics.value, ...(page.topics ?? {}) };
+    if (typeof page.personalizationOff === "boolean") setPersonalizationOff(page.personalizationOff);
     const added = new Set(fresh.map((p) => p.id));
     pending.value = pending.value.filter((p) => !added.has(p.id));
     return fresh.length;
@@ -1037,7 +1056,7 @@ onUnmounted(() => {
         <template v-for="(post, i) in posts" :key="post.id">
           <!-- Far from the screen after many cards: a placeholder of the card's measured height (08 §7.10). -->
           <div
-            v-if="post.id in parked && !hidden[post.id] && !menuSnoozed[post.id]"
+            v-if="post.id in parked && !hidden[post.id] && !menuSnoozed[post.id] && !feedbackGone[post.id]"
             :data-feed-item="post.id"
             data-feed-parked
             :style="{ height: `${parked[post.id]}px` }"
@@ -1045,6 +1064,7 @@ onUnmounted(() => {
           />
           <div
             v-else-if="hidden[post.id] || menuSnoozed[post.id] || !snoozedAuthors.has(post.author_id)"
+            v-show="!feedbackGone[post.id]"
             :data-feed-item="post.id"
             :data-feed-state="post.id in snapshots ? 'snapshot' : 'live'"
           >
@@ -1094,11 +1114,14 @@ onUnmounted(() => {
               snoozable
               :feed-reason="reasons[post.id] ?? null"
               :feed-mode="modesSupported ? mode : null"
+              :feed-topics="itemTopics[post.id] ?? []"
               @removed="onRemoved"
               @shared="onCreated"
               @hide="onHide"
               @snooze="onMenuSnooze"
               @author-gone="onAuthorGone"
+              @feedback-gone="onFeedbackGone"
+              @feedback-back="onFeedbackBack"
             />
           </div>
           <!-- 4b.7: where the rows newer than the last visit end, and the caught-up line
@@ -1147,5 +1170,12 @@ onUnmounted(() => {
 }
 [data-feed-item][data-feed-parked] {
   content-visibility: visible;
+}
+/* An open post menu (R4 made it longer) may run past its card: `content-visibility`
+   would clip it, and the next card would paint over it. */
+[data-feed-item]:has([data-testid="post-menu-panel"]) {
+  content-visibility: visible;
+  position: relative;
+  z-index: 30;
 }
 </style>

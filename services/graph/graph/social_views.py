@@ -17,7 +17,7 @@ from rest_framework.views import APIView
 
 from tara_common.responses import data_response
 
-from . import preferences, services, suggestions
+from . import age, intel_config, preferences, services, suggestions
 from .serializers import DismissSerializer, RelationshipSettingsSerializer
 
 
@@ -84,13 +84,31 @@ class SocialCountsView(APIView):
         return data_response(body)
 
 
+def _suggestions_response(body: dict, cfg: intel_config.Served) -> Response:
+    """``{data}``, plus ``meta.variant`` while an experiment serves this viewer (5.5)."""
+    response = data_response(body)
+    if cfg.variant:
+        response.data["meta"] = cfg.meta()
+    return response
+
+
 class PeopleSuggestionsView(APIView):
     permission_classes = [IsAuthenticated]
 
     @extend_schema(responses={200: None}, tags=["suggestions"])
     def get(self, request: Request) -> Response:
-        limit = suggestions._limit(request.query_params.get("limit"), 10)
-        return data_response({"results": suggestions.people(_me(request), limit)})
+        claims = getattr(request.user, "claims", None)
+        if age.is_minor_viewer(claims):  # owner decision 9(a); no experiment exposure
+            return data_response({"results": []})
+        cfg = intel_config.served(_me(request))
+        limit = suggestions._limit(
+            request.query_params.get("limit"),
+            cfg.get("people.default_limit"),
+            cfg.get("people.max_limit"),
+        )
+        return _suggestions_response(
+            {"results": suggestions.people(_me(request), limit, cfg=cfg)}, cfg
+        )
 
 
 class PageSuggestionsView(APIView):
@@ -98,8 +116,13 @@ class PageSuggestionsView(APIView):
 
     @extend_schema(responses={200: None}, tags=["suggestions"])
     def get(self, request: Request) -> Response:
-        limit = suggestions._limit(request.query_params.get("limit"), 5)
-        return data_response({"results": suggestions.pages(_me(request), limit)})
+        cfg = intel_config.served(_me(request))
+        limit = suggestions._limit(
+            request.query_params.get("limit"),
+            cfg.get("pages.default_limit"),
+            cfg.get("people.max_limit"),
+        )
+        return _suggestions_response({"results": suggestions.pages(_me(request), limit)}, cfg)
 
 
 class DismissSuggestionView(APIView):

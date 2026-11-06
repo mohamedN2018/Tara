@@ -17,3 +17,5 @@ data:
   LOG_FORMAT: "json"
   SEARCH_USE_OPENSEARCH: "true"
   OPENSEARCH_URL: "https://opensearch.internal:9200"
+  # Tara Intelligence R4 (track B)
+  SEARCH_EMIT_QUERY_SIGNALS: "true"

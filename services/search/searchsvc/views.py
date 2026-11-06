@@ -24,7 +24,7 @@ from rest_framework.views import APIView
 from tara_common.exceptions import TaraAPIError
 from tara_common.responses import data_response
 
-from . import backend, engine, history, results
+from . import backend, engine, history, results, signals
 
 MAX_LIMIT = 50
 DEFAULT_LIMIT = 20
@@ -71,6 +71,9 @@ class SearchView(APIView):
         viewer = request.user.account_id
         degraded = False
         cursor = params.get("cursor") or None
+        if q and not cursor:
+            # Opt-in only (owner decision 7): hashed terms, never the text (WP 8.7-B2).
+            signals.record_query(viewer, q)
         if backend.opensearch_enabled() and tab == "all" and not cursor:
             # The optional accelerator only serves the first unfiltered page.
             hits, degraded = backend.query(q, viewer_id=viewer, limit=limit)

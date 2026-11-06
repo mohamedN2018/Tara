@@ -16,3 +16,5 @@ data:
   LOG_LEVEL: "INFO"
   LOG_FORMAT: "json"
   MARKETPLACE_AUTO_APPROVE: "false"
+  # Tara Intelligence R4 (track B)
+  INTEL_EMIT_EXPOSURE_EVENTS: "true"

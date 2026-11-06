@@ -27,7 +27,7 @@ export default {
     favoriteHint: "See their posts first in Favorites.",
     block: "Block {name}",
     blockHint: "They won't see your profile or message you.",
-    blocked: "{name} is blocked.",
+    blocked: "{name} can't see or contact you, and you won't see them.",
     unfavorite: "Remove {name} from Favorites",
     favorited: "{name} was added to your Favorites.",
     unfavorited: "{name} was removed from your Favorites.",

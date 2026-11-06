@@ -6,17 +6,26 @@ from .models import Appeal, ModerationAction, ModerationCase, Report
 
 
 class ReportSerializer(serializers.ModelSerializer):
+    # A system-sourced report (WP 7.4) has no reporter: the reserved id stays inside.
+    reporter_id = serializers.SerializerMethodField()
+
     class Meta:
         model = Report
         fields = [
             "id",
             "reporter_id",
+            "source",
             "target_type",
             "target_id",
             "reason",
             "evidence",
             "created_at",
         ]
+
+    def get_reporter_id(self, obj) -> str | None:
+        if obj.source == Report.Source.SYSTEM:
+            return None
+        return str(obj.reporter_id)
 
 
 class CaseSerializer(serializers.ModelSerializer):
@@ -31,6 +40,7 @@ class CaseSerializer(serializers.ModelSerializer):
             "report_count",
             "assigned_to",
             "owner_id",
+            "system_signal",
             "created_at",
             "updated_at",
         ]

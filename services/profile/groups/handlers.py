@@ -15,3 +15,11 @@ def on_moderation_actioned_group(event: EventEnvelope) -> None:
     p = event.payload
     if p.get("target_type") == "group" and p.get("target_id"):
         services.apply_moderation(str(p["target_id"]), p.get("action", ""))
+
+
+@on_event("intel.config.published")
+def on_intel_config_published(e: EventEnvelope) -> None:
+    """Keep the newest published config of each surface (Tara Intelligence WP 5.5)."""
+    from . import intel_config
+
+    intel_config.apply_published(e.payload)

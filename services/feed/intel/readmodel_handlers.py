@@ -32,14 +32,33 @@ def _when(event: EventEnvelope):
 # ---- content (intel_content_ref) ----------------------------------------------------
 
 
+def _classify(p: dict) -> None:
+    """R4 WP 6.2: the post's topics from the event's excerpt (never stored), its
+    hashtags, its page or group category and its original's topics."""
+    from .topics import classify
+
+    post_id = readmodels.uid(p.get("post_id"))
+    if post_id is None:
+        return
+    excerpt = p.get("excerpt") if "excerpt" in p else None
+    if excerpt is None and "hashtags" not in p:
+        return  # nothing the classifier reads changed
+    try:
+        classify.classify_post(post_id, excerpt)
+    except Exception:  # noqa: BLE001 - topics are derived data; never fail the read model
+        logger.exception("topic classification failed", extra={"post_id": post_id})
+
+
 @on_event("post.created")
 def intel_rm_post_created(event: EventEnvelope) -> None:
     readmodels.content_created(event.payload, _when(event))
+    _classify({**event.payload, "excerpt": event.payload.get("excerpt") or ""})
 
 
 @on_event("post.updated")
 def intel_rm_post_updated(event: EventEnvelope) -> None:
     readmodels.content_updated(event.payload, _when(event))
+    _classify(event.payload)
 
 
 @on_event("post.deleted")  # also a moderator's removal
@@ -133,6 +152,19 @@ def intel_rm_group_deleted(event: EventEnvelope) -> None:
 @on_event("group.member.changed")
 def intel_rm_group_member_changed(event: EventEnvelope) -> None:
     readmodels.set_membership(event.payload, _when(event))
+    # R4 (06 section 7): joining or leaving is an interest signal on the group's
+    # category (event_weights group_join / group_leave), one bus row per change.
+    p = event.payload
+    state, previous = p.get("state"), p.get("previous_state")
+    kind = None
+    if state == "active" and previous != "active":
+        kind = "group_join"
+    elif previous == "active" and state != "active":
+        kind = "group_leave"
+    if kind:
+        from . import handlers
+
+        handlers._record(event, kind, p.get("account_id"), "group", p.get("group_id"))  # noqa: SLF001
 
 
 @on_event("page.created")

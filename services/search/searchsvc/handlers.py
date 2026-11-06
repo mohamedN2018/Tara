@@ -279,3 +279,13 @@ def on_moderation_actioned(e: EventEnvelope) -> None:
     if action not in (restrictions.RESTRICTING_ACTIONS | {restrictions.REINSTATE}):
         return
     restrictions.set_restriction(p.get("target_id"), action, p.get("case_id"), indexing.occurred(e))
+
+
+# ---- the opt-in search signal (Tara Intelligence WP 8.7-B2) ---------------------
+
+
+@on_event("intel.search_signal.changed")
+def on_search_signal_changed(e: EventEnvelope) -> None:
+    from . import signals
+
+    signals.apply_changed(e.payload)

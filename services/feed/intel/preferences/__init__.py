@@ -1,0 +1,31 @@
+"""My Algorithm preferences (04 WP 8.1). The implementation is ``service``; this
+package keeps the ``intel.preferences`` import path of WP 4.6 working."""
+
+from .service import (  # noqa: F401
+    DISCOVERY_PREFS,
+    FIELDS,
+    FORMATS,
+    MODES,
+    RESET_KEEPS,
+    RESET_SCOPE,
+    PreferenceError,
+    StaleVersion,
+    active_consent,
+    body,
+    get,
+    grant_consent,
+    onboard,
+    patch,
+    personalization_off,
+    purge_behaviour,
+    remembered_mode,
+    reset_confirm,
+    reset_request,
+    resolve_mode,
+    revoke_consent,
+    run_reset,
+    set_default_mode,
+    state,
+    undo,
+    validate,
+)

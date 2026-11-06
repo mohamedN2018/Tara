@@ -280,6 +280,8 @@ MODERATION_EMIT_AUDIT_EVENTS=true
 MODERATION_EMIT_REINSTATE=true
 # Feed: ranking config changes to admin's audit log (Tara Intelligence WP 4.1).
 INTEL_EMIT_CONFIG_CHANGED=true
+# Feed R4 events (config published, integrity flags, reset, hidden creator, search signal).
+INTEL_EMIT_R4_EVENTS=true
 # INTEL_TEST_CLOCK_ENABLED is pinned to false in docker-compose.dokploy.yml (WP 4b.15).
 # Post: reels watched in the last N hours go after unwatched ones (WP 4b.9).
 REELS_SEEN_WINDOW_H=72
@@ -294,6 +296,10 @@ POST_EMIT_HIDE_EVENTS=true
 POST_EMIT_SAVE_EVENTS=true
 GRAPH_EMIT_MUTE_FAVORITE_EVENTS=true
 GRAPH_EMIT_RESTRICT_EVENTS=true
+# Tara Intelligence R4: account.updated (6.7), experiment exposures (5.5), search signal (8.7-B2).
+IDENTITY_EMIT_ACCOUNT_UPDATED=true
+INTEL_EMIT_EXPOSURE_EVENTS=true
+SEARCH_EMIT_QUERY_SIGNALS=true
 ADMIN_EMIT_SYSTEM_NOTICES=true
 CHAT_MESSAGE_REQUESTS=true
 CHAT_EMIT_MESSAGE_REPORTED=true

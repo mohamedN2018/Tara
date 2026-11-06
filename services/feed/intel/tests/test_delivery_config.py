@@ -44,7 +44,7 @@ def test_schema_version_3_and_every_delivery_default_is_valid():
     for surface in schema.DELIVERY_SURFACES:
         params = store.defaults(surface)
         # Home is schema 4 since R3 (exposure, rotation, revisit); the others stay 3.
-        assert params["schema_version"] == (4 if surface == "home" else 3)
+        assert params["schema_version"] == (5 if surface == "home" else 3)
         assert set(params["delivery"]) == KEYS, surface
         assert schema.validate(surface, params) == [], surface
 

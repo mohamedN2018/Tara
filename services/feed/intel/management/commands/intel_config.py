@@ -5,6 +5,7 @@
     manage.py intel_config create home params.json --note "..." --actor <staff uuid>
     manage.py intel_config activate home 2 --reason "..." --actor <staff uuid>
     manage.py intel_config rollback home --reason "..." --actor <staff uuid>
+    manage.py intel_config publish --surface discovery   # re-emit intel.config.published
 
 Every create, activation and rollback is logged in ``intel_ranking_config_change``
 and emits ``intel.config.changed`` (admin's audit log). Active versions are
@@ -35,16 +36,32 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument(
-            "action", choices=["show", "validate", "create", "activate", "rollback"]
+            "action", choices=["show", "validate", "create", "activate", "rollback", "publish"]
         )
-        parser.add_argument("surface", choices=SURFACES)
+        parser.add_argument("surface", nargs="?", choices=SURFACES)
         parser.add_argument("arg", nargs="?", help="params file (validate/create) or version")
+        parser.add_argument("--surface", dest="surface_opt", choices=SURFACES)
         parser.add_argument("--note", default="")
         parser.add_argument("--reason", default="")
         parser.add_argument("--actor", default="")
 
-    def handle(self, action, surface, arg=None, **opts):
+    def handle(self, action, surface=None, arg=None, **opts):
+        surface = surface or opts.get("surface_opt")
+        if not surface:
+            raise CommandError("a surface is required")
         try:
+            if action == "publish":
+                # WP 5.5: re-emit the current state so a consumer can bootstrap.
+                from django.db import transaction
+
+                from intel import experiments
+
+                with transaction.atomic():
+                    sent = experiments.publish(surface)
+                self.stdout.write(
+                    f"published {surface}" if sent else "INTEL_EMIT_R4_EVENTS is off: nothing sent"
+                )
+                return
             if action == "show":
                 version, params = store.resolve(surface)
                 self.stdout.write(json.dumps({"active": version, "params": params}, indent=1))

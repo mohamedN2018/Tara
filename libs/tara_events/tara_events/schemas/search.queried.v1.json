@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/search.queried.v1.json",
+  "title": "search.queried v1 payload",
+  "description": "An opted-in account ran a search (Tara Intelligence WP 8.7-B2). Carries only sha256 hex digests of the normalized query tokens (tara_common.signal_terms.term_keys, at most 8); the query text never leaves search. Emitted by search only while feed's intel.search_signal.changed says enabled, behind SEARCH_EMIT_QUERY_SIGNALS (default on). Consumer: feed (maps the digests to topic ids and keeps the topics of the last 3 queries in the current visit; stores no digest).",
+  "type": "object",
+  "properties": {
+    "account_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "term_keys": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    },
+    "queried_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "account_id",
+    "term_keys",
+    "queried_at"
+  ],
+  "additionalProperties": false
+}

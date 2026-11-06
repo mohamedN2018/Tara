@@ -204,6 +204,19 @@ def encode_cursor(data: dict) -> str:
     return signing.dumps(data, salt=_SALT, compress=True)
 
 
+def is_ranked_cursor(token: str | None) -> bool:
+    """Whether ``token`` is a cursor this module issued (a ranked or latest-order
+    "for you" cursor); a chronological keyset cursor is not (R4: personalization off
+    serves "for you" chronologically)."""
+    if not token:
+        return False
+    try:
+        decode_cursor(token)
+    except InvalidCursor:
+        return False
+    return True
+
+
 def decode_cursor(token: str) -> dict:
     try:
         data = signing.loads(token, salt=_SALT)
@@ -257,6 +270,10 @@ class Page:
     reused: bool = False
     ranking: object = None
     offset: int = 0
+    # R4: ``{post_id: [(topic_id, confidence)]}`` of the page's items and their labels,
+    # when the eligibility read already had them (no extra query for ``topics``).
+    topics: dict = field(default_factory=dict)
+    topic_labels: dict = field(default_factory=dict)
 
     @property
     def has_more(self) -> bool:
@@ -358,14 +375,16 @@ def first_page(
     ctx=None,
     pools: list | None = None,
     since: datetime | None = None,
+    cfg=None,
+    personal=None,
 ) -> Page:
     """Rank, store the frozen list, serve its head. When redis-hot refuses the session
     (``noeviction`` OOM), the ranked head is still served with ``fallback: true`` and
     the cursor continues chronologically below the head's oldest row (08 section 7.3):
     0 duplicates by construction, and the unserved ranked items come back as carry-over
     at the next first page."""
-    cfg = home_config()
-    ranking = home_ranker.rank(_viewer(viewer_id, claims), now, cfg, ctx, pools)
+    cfg = cfg or home_config()
+    ranking = home_ranker.rank(_viewer(viewer_id, claims), now, cfg, ctx, pools, personal)
     sid, as_of = uuid.uuid4().hex, now.isoformat()
     entries = [
         rank_session.Entry(
@@ -404,6 +423,8 @@ def first_page(
         new_count=new_count,
         anchor_index=anchor,
         ranking=ranking,
+        topics=ranking.topics,
+        topic_labels=ranking.topic_labels,
     )
     if rank_session.save(SURFACE, viewer_id, session, cfg.get("session.ttl_s"), _hot()):
         page.next_cursor = _after_slice(session, sid, size, as_of, oldest)
@@ -442,13 +463,15 @@ def _session_page(
     n = session["n"]
     served: list[tuple[FeedItem, str, int]] = []
     dropped: Counter = Counter()
+    topics: dict = {}
+    labels: dict = {}
     cursor = offset
     # Over-read once (most pages drop nothing), then at most one more read.
     for chunk in (2 * size, 4 * size):
         if len(served) >= size or cursor >= n:
             break
         entries = rank_session.unpack(session["items"], cursor, cursor + chunk)
-        outcome = _recheck_entries(viewer_id, viewer, entries, cfg)
+        outcome = _recheck_entries(viewer_id, viewer, entries, cfg, topics, labels)
         for k, e in enumerate(entries):
             position = cursor + k
             result = outcome[e.post_id]
@@ -478,10 +501,12 @@ def _session_page(
         sid=sid,
         dropped=dict(dropped),
         offset=offset,
+        topics=topics,
+        topic_labels=labels,
     )
 
 
-def _recheck_entries(viewer_id, viewer: Viewer, entries, cfg) -> dict:
+def _recheck_entries(viewer_id, viewer: Viewer, entries, cfg, topics=None, labels=None) -> dict:
     """``{post_id: FeedItem to serve | the name of the rule that dropped it}``."""
     conn = [e.post_id for e in entries if e.source == CONNECTIONS]
     rows = {str(i.post_id): i for i in visible_items(viewer_id).filter(post_id__in=conn)}
@@ -502,6 +527,10 @@ def _recheck_entries(viewer_id, viewer: Viewer, entries, cfg) -> dict:
         return out
     # Fail closed between pages: E1 to E5, E1b, E1c, E6b and E9b again (WP 4.10).
     ctx = recheck_context(viewer, candidates, cfg)
+    if topics is not None:
+        topics.update(ctx.topic_conf)
+    if labels is not None:
+        labels.update(ctx.topic_labels)
     for c in candidates:
         rule = None
         if c.source not in ELIGIBLE_SOURCES:

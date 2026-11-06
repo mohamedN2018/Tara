@@ -60,7 +60,9 @@ def my_cases(account_id):
 
 def my_reports(reporter_id):
     """The reports ``reporter_id`` filed, newest first."""
-    return Report.objects.filter(reporter_id=reporter_id).order_by("-created_at", "-id")
+    return Report.objects.filter(reporter_id=reporter_id, source=Report.Source.USER).order_by(
+        "-created_at", "-id"
+    )
 
 
 def report_outcomes(reports) -> dict:

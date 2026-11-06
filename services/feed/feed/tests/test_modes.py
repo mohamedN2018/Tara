@@ -180,7 +180,11 @@ def test_default_is_most_recent_without_preference_or_hint(client_for, world):
 def test_preferences_get_before_any_choice(client_for):
     resp = client_for(_acct()).get(reverse("intel:preferences"))
     assert resp.status_code == 200
-    assert resp.json()["data"] == {"default_mode": None, "version": 0}
+    data = resp.json()["data"]
+    # R4 (04 WP 8.1): the whole My Algorithm body, at its documented defaults.
+    assert {k: data[k] for k in ("default_mode", "version")} == {"default_mode": None, "version": 0}
+    assert data["discovery_level"] == 2 and data["personalization_off"] is False
+    assert data["search_signal"] is False and data["sensitive_inference"] is False
 
 
 def test_patch_remembers_the_mode_and_a_new_browser_gets_it(client_for, world):
@@ -219,7 +223,7 @@ def test_patch_validates_and_versions(client_for):
     second = client.patch(
         url, {"default_mode": "recent", "version": first["version"]}, format="json"
     ).json()["data"]
-    assert second == {"default_mode": "recent", "version": first["version"] + 1}
+    assert (second["default_mode"], second["version"]) == ("recent", first["version"] + 1)
     stale = client.patch(
         url, {"default_mode": "friends", "version": first["version"]}, format="json"
     )

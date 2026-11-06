@@ -100,6 +100,9 @@ MEDIA_CALL_TIMEOUT = float(os.getenv("MEDIA_CALL_TIMEOUT", "2.0"))
 
 # Until the Moderation service is live (Phase 6), dev auto-approves listings.
 MARKETPLACE_AUTO_APPROVE = env_bool("MARKETPLACE_AUTO_APPROVE", True)
+# intel.experiment.exposed once per account and experiment (Tara Intelligence WP 5.5);
+# marketplace has no ranked surface yet, so nothing reads it today.
+INTEL_EMIT_EXPOSURE_EVENTS = env_bool("INTEL_EMIT_EXPOSURE_EVENTS", True)
 
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")
 TARA_EVENT_PUBLISHER = "rabbitmq" if RABBITMQ_URL else "null"

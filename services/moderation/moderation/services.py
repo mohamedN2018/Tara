@@ -12,7 +12,14 @@ from django.db.models import F
 from tara_common.exceptions import Conflict, TaraAPIError
 
 from . import events
-from .models import Appeal, ModerationAction, ModerationAuditLog, ModerationCase, Report
+from .models import (
+    SYSTEM_REPORTER_ID,
+    Appeal,
+    ModerationAction,
+    ModerationAuditLog,
+    ModerationCase,
+    Report,
+)
 
 logger = logging.getLogger("tara.moderation")
 
@@ -447,6 +454,60 @@ def ingest_report_event(event_type: str, payload: dict) -> None:
         owner_id=payload.get("owner_id"),  # absent on events from before 1.2
         evidence=_evidence(payload.get("snapshot")),
     )
+
+
+SYSTEM_SIGNALS = ("spam_hides", "sexual_hides")
+
+
+def ingest_system_flag(payload: dict) -> ModerationCase | None:
+    """Open or join the post's case from ``intel.integrity.flagged`` (WP 7.4).
+
+    The report is ``source=system`` under the reserved reporter id: it does not
+    count in ``report_count``, names no hider and is in nobody's "My reports". A
+    redelivery (or a second flag while the case is open) adds nothing. A later
+    user report joins the same open case through ``ingest_report``.
+    """
+    post_id = _as_uuid(payload.get("post_id"))
+    signal = payload.get("signal")
+    if post_id is None or signal not in SYSTEM_SIGNALS:
+        logger.warning("integrity flag without post or known signal skipped")
+        return None
+    target_id = str(post_id)
+    owner = _as_uuid(payload.get("author_id"))
+    evidence: dict = {"signal": signal}
+    rate = payload.get("rate")
+    if isinstance(rate, int | float) and not isinstance(rate, bool):
+        evidence["rate"] = round(float(rate), 4)
+    distinct = payload.get("distinct_accounts")
+    if isinstance(distinct, int) and not isinstance(distinct, bool):
+        evidence["distinct_accounts"] = distinct
+    with transaction.atomic():
+        case, created = _open_case_for_update("post", target_id)
+        fields = []
+        if owner is not None and case.owner_id is None:
+            case.owner_id = owner
+            fields.append("owner_id")
+        if not case.system_signal:
+            case.system_signal = signal
+            fields.append("system_signal")
+        if fields:
+            case.save(update_fields=[*fields, "updated_at"])
+        already = Report.objects.filter(
+            source=Report.Source.SYSTEM,
+            target_type="post",
+            target_id=target_id,
+            created_at__gte=case.created_at,
+        ).exists()
+        if created or not already:
+            Report.objects.create(
+                reporter_id=SYSTEM_REPORTER_ID,
+                source=Report.Source.SYSTEM,
+                target_type="post",
+                target_id=target_id,
+                reason=signal,
+                evidence=evidence,
+            )
+    return case
 
 
 _EVIDENCE_KEYS = {"type": str, "body": str, "created_at": str, "attachment_count": int}

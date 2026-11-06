@@ -10,7 +10,7 @@ from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 
 from tara_events.envelope import uuid7
-from tara_events.models import AbstractProcessedEvent
+from tara_events.models import AbstractOutboxEvent, AbstractProcessedEvent
 
 
 class SearchDocument(models.Model):
@@ -172,6 +172,28 @@ class SearchAccountRestriction(models.Model):
 
     class Meta:
         db_table = "search_account_restriction"
+
+
+class SearchSignalOptIn(models.Model):
+    """Whether search may send hashed query terms for an account (Tara Intelligence
+    WP 8.7-B2, owner decision 7). Fed by feed's ``intel.search_signal.changed``; no
+    row means off. ``event_at`` keeps the newest choice."""
+
+    account_id = models.UUIDField(primary_key=True)
+    enabled = models.BooleanField(default=False)
+    event_at = models.DateTimeField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "search_signal_optin"
+
+
+class OutboxEvent(AbstractOutboxEvent):
+    """Search's only produced event: ``search.queried`` (opt-in, WP 8.7-B2)."""
+
+    class Meta(AbstractOutboxEvent.Meta):
+        abstract = False
+        db_table = "outbox_event"
 
 
 class ProcessedEvent(AbstractProcessedEvent):

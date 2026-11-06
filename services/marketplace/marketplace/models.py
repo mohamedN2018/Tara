@@ -274,3 +274,36 @@ class IdempotencyRecord(AbstractIdempotencyRecord):
     class Meta(AbstractIdempotencyRecord.Meta):
         abstract = False
         db_table = "idempotency_record"
+
+
+# ---- Tara Intelligence read models (R4, WP 5.5) ----
+class IntelConfig(models.Model):
+    """The last published config of a surface (``intel.config.published``)."""
+
+    surface = models.CharField(max_length=20, primary_key=True)
+    version = models.PositiveIntegerField()
+    params = models.JSONField(default=dict)
+    experiment = models.JSONField(null=True, blank=True)
+    published_at = models.DateTimeField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "intel_config"
+
+
+class IntelExposureSeen(models.Model):
+    """One row per (account, experiment) once its exposure was emitted."""
+
+    id = models.BigAutoField(primary_key=True)
+    account_id = models.UUIDField()
+    experiment_key = models.CharField(max_length=60)
+    variant = models.CharField(max_length=40)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "intel_exposure_seen"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["account_id", "experiment_key"], name="intel_exposure_seen_uniq"
+            ),
+        ]

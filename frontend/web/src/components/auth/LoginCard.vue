@@ -11,6 +11,7 @@ import ResendVerification from "@/components/auth/ResendVerification.vue";
 import SuspendedNotice from "@/components/moderation/SuspendedNotice.vue";
 import { apiError } from "@/lib/api";
 import { errorMessage } from "@/lib/errors";
+import { afterSignIn } from "@/lib/onboarding";
 import { safeRedirect } from "@/lib/redirect";
 import { securityErrorKey } from "@/lib/securityErrors";
 import { type Suspension, suspensionFrom } from "@/services/moderation";
@@ -50,7 +51,8 @@ async function submit() {
   const typed = identifier.value.trim();
   try {
     await auth.login(typed, password.value, remember.value, twoFactor.value ? otp.value.trim() : "");
-    await router.push(target.value);
+    // A new account's first sign-in offers the optional topic picker (WP 6.6).
+    await router.push(afterSignIn(auth.account?.id, target.value));
   } catch (e) {
     if (onTwoFactor(e, { kind: "password" })) return;
     suspended.value = suspensionFrom(e);

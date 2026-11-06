@@ -16,6 +16,8 @@ from graph import handlers, services
 from graph.models import AccountRef
 from tara_events.envelope import EventEnvelope
 
+from .ages import adult
+
 pytestmark = pytest.mark.django_db
 
 T0 = datetime(2026, 11, 1, 12, 0, tzinfo=UTC)
@@ -81,6 +83,7 @@ def pymk():
     _befriend(me, bridge)
     _befriend(fof, bridge)
     services.follow(fan, me)
+    adult(fof, fan)  # E9b: only adults are suggested (R4)
     return me, fof, fan
 
 

@@ -6,6 +6,7 @@ import { useRoute } from "vue-router";
 import CallOverlay from "@/components/calls/CallOverlay.vue";
 import OfflineState from "@/components/states/OfflineState.vue";
 import Toaster from "@/components/common/Toaster.vue";
+import { syncPersonalization } from "@/lib/personalization";
 import { realtime } from "@/lib/ws";
 import { useAuthStore } from "@/stores/auth";
 import { useCallStore } from "@/stores/calls";
@@ -88,6 +89,8 @@ watch(
   (id, previous) => {
     if (previous && id !== previous) void calls.reset();
     if (id) calls.bind();
+    // R4 (decisions 8 and 24): with personalization off this tab collects nothing.
+    if (id) void syncPersonalization();
   },
   { immediate: true },
 );

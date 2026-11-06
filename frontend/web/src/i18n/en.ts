@@ -24,6 +24,7 @@ import socialShellEn from "./socialShell.en";
 import suggestedEn from "./suggested.en";
 import deliveryEn from "./delivery.en";
 import homeRefreshEn from "./homeRefresh.en";
+import myAlgorithmEn from "./myAlgorithm.en";
 
 export default {
   app: { name: "Tara", tagline: "Connect. Share. Belong.", promise: "More than a social network… a place to belong." },
@@ -1462,6 +1463,7 @@ export default {
   suggested: suggestedEn,
   delivery: deliveryEn,
   homeRefresh: homeRefreshEn,
+  myAlgorithm: myAlgorithmEn,
   landing: {
     getStarted: "Get started",
     headline: "Your place among",

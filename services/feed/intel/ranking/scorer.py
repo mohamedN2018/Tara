@@ -91,6 +91,8 @@ class Scorer:
         if p.score_complete is not None:
             add("s_complete", w["s_complete"] * p.score_complete)
         add("interest", w["interest"] * p.interest_rel)
+        if "session" in w:  # schema 5 only (home@3*): absent elsewhere, so no term at all
+            add("session", w["session"] * f.session_rel)
         if f.media_quality is not None:
             add("quality", w["quality"] * f.media_quality)
         add("originality", w["originality"] * self.orig["reshare" if f.is_reshare else "original"])

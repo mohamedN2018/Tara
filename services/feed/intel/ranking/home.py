@@ -41,15 +41,18 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
-from .. import discovery, eligibility
-from ..config import SurfaceConfig
+from .. import discovery, eligibility, interests, session_ctx
+from .. import intent as intent_rules
+from ..config import SurfaceConfig, schema
 from ..predictions import for_config
 from ..retrieval import sources as src
 from ..retrieval.sources import Candidate
 from . import diversity, explain, exposure_rank, features
+from .personal import DEFAULT as NO_PERSONAL
+from .personal import Personal
 from .scorer import Scored, Scorer
 
 DISCOVERY = discovery.SOURCE
@@ -80,6 +83,9 @@ class Ranking:
     share: float = 0.0
     # R3: what the exposure pass changed (None when the version has no ``rotation``).
     exposure: exposure_rank.Stats | None = None
+    # R4: the items' topics (for the API's ``topics`` and the serve tokens).
+    topics: dict = field(default_factory=dict)
+    topic_labels: dict = field(default_factory=dict)
 
     def factors(self, s: Scored) -> list[tuple[int, int]]:
         return explain.top(s.contributions)
@@ -94,6 +100,10 @@ class Inventory:
     content: dict
     dropped: dict
     edge: tuple[str, str] | None
+    topics: dict = field(default_factory=dict)  # R4: {post_id: [(topic_id, conf)]}
+    muted_topics: frozenset = frozenset()
+    topic_labels: dict = field(default_factory=dict)
+    profile_rows: list | None = None
 
 
 def inventory(viewer_id, cfg: SurfaceConfig, now: datetime, pools: list | None = None):
@@ -152,19 +162,78 @@ def eligible_inventory(
                 ref.get("type") or "",
             )
         )
-    return Inventory(conn, pools, allowed.content, dict(allowed.dropped), edge)
+    return Inventory(
+        conn,
+        pools,
+        allowed.content,
+        dict(allowed.dropped),
+        edge,
+        topics=allowed.topics,
+        muted_topics=allowed.muted_topics,
+        topic_labels=allowed.topic_labels,
+        profile_rows=allowed.profile_rows,
+    )
+
+
+def _personalize(feats: list, cfg: SurfaceConfig, personal: Personal, topics: dict) -> list:
+    """R4: each item's topics, and ``interest_rel`` / ``session_rel`` under a version
+    that carries ``interest_rank`` (02 section 13; 06 section 4.4). The creator's own
+    profile score (the "not interested" author effect, 04 WP 7.2) joins
+    ``interest_rel``, clamped to [-1, 1]."""
+    use_interest, use_session = schema.interest_ranking(cfg.params)
+    profile = personal.profile if use_interest else None
+    si = personal.si if use_session else None
+    si_block = cfg.section("session_interest") if si is not None else None
+    out = []
+    for f in feats:
+        item_topics = tuple(topics.get(f.post_id, ()))
+        changes = {"topics": item_topics}
+        if profile is not None:
+            rel = interests.interest_rel(item_topics, profile)
+            rel += profile.creator.get(f.author_id or "", 0.0)
+            changes["interest_rel"] = max(-1.0, min(1.0, rel))
+        if si is not None:
+            changes["session_rel"] = session_ctx.session_rel(item_topics, si, si_block)
+        out.append(replace(f, **changes))
+    return out
+
+
+def _preference_multipliers(s: Scored, cfg: SurfaceConfig, personal: Personal, muted) -> None:
+    """The viewer's explicit controls on one scored item (every version): the format
+    preference, and a muted topic that is a connected item's primary topic."""
+    mults = []
+    fmt = personal.format_multiplier(s.feats.type, cfg)
+    if fmt != 1.0:
+        mults.append(("format_pref", fmt))
+    if muted and s.feats.source != DISCOVERY and s.feats.topics:
+        primary, conf = s.feats.topics[0]
+        if primary in muted and conf >= cfg.get("feedback_effects.mute_primary_min_confidence"):
+            mults.append(("muted_topic", cfg.get("feedback_effects.mute_primary_multiplier")))
+    for name, mult in mults:
+        s.contributions.append((name, s.value * (mult - 1.0)))
+        s.value *= mult
 
 
 def _score(
-    viewer_id, cands: list[Candidate], cfg: SurfaceConfig, now, exposure: dict | None = None
+    viewer_id,
+    cands: list[Candidate],
+    cfg: SurfaceConfig,
+    now,
+    exposure: dict | None = None,
+    personal: Personal = NO_PERSONAL,
+    topics: dict | None = None,
+    muted: frozenset = frozenset(),
 ) -> list[Scored]:
     feats = features.build(viewer_id, cands, cfg, now, exposure)
+    if topics or personal is not NO_PERSONAL:
+        feats = _personalize(feats, cfg, personal, topics or {})
     preds = for_config(cfg).predict(viewer_id, feats, cfg)
     scorer = Scorer(cfg)
-    return sorted(
-        (scorer.score(f, p) for f, p in zip(feats, preds, strict=True)),
-        key=Scored.sort_key,
-    )
+    scored = [scorer.score(f, p) for f, p in zip(feats, preds, strict=True)]
+    if personal.formats or muted:
+        for s in scored:
+            _preference_multipliers(s, cfg, personal, muted)
+    return sorted(scored, key=Scored.sort_key)
 
 
 def _items(scored: list[Scored], scores=None) -> list[diversity.Item]:
@@ -317,15 +386,26 @@ def rank(
     cfg: SurfaceConfig,
     ctx: exposure_rank.Context | None = None,
     pools: list | None = None,
+    personal: Personal | None = None,
 ) -> Ranking:
+    personal = personal or NO_PERSONAL
+    viewer = personal.viewer(viewer)
     inv = eligible_inventory(viewer, cfg, now, pools)
+    if personal.need_profile and personal.profile is None and inv.profile_rows is not None:
+        # The intel:prof miss of this first page: built from the rows the eligibility
+        # statement carried, then cached (fail-soft).
+        block_i = cfg.section("interests")
+        personal.profile = interests.profile_from_rows(inv.profile_rows, now, block_i)
+        interests.store_profile(viewer.id, personal.profile, block_i)
     share = discovery.share_for(cfg, len(inv.connections)) if inv.pools else 0.0
+    # 02 section 10.1 / 04 WP 8.3: the viewer's recommendation frequency scales it.
+    share = personal.share(share, cfg)
     # One feature pass for both kinds: pools add no query (the same IN reads).
     cands = inv.connections + (inv.pools if share > 0 else [])
     exposed = ctx is not None and exposure_rank.applies(cfg)
     # R3: the durable exposure is read in the same per-post statement (+0 queries).
     hot_min = exposure_rank.hot_minutes(cands, ctx.folds) if exposed else None
-    everything = _score(viewer.id, cands, cfg, now, hot_min)
+    everything = _score(viewer.id, cands, cfg, now, hot_min, personal, inv.topics, inv.muted_topics)
     stats = None
     if exposed:
         # score' = score x m (+ the new-since boost), before the mix and diversity.
@@ -333,6 +413,9 @@ def rank(
     conn = [s for s in everything if s.feats.source != DISCOVERY]
     recs = [s for s in everything if s.feats.source == DISCOVERY]
     block = cfg.section("diversity")
+    # 06 section 4.5 (WP 6.8-B2): intent overlays at ``intent.overlay_weight`` (0 in
+    # every shipped version: share and block come back unchanged).
+    share, block = intent_rules.overlay(personal.intent, cfg, share=share, diversity=block)
     scored = conn
     if block["enabled"] and conn and share <= 0:
         scored = [i.key for i in diversity.rerank(_items(conn), block)]
@@ -363,4 +446,6 @@ def rank(
         connection_candidates=len(inv.connections),
         share=share,
         exposure=stats,
+        topics=inv.topics,
+        topic_labels=inv.topic_labels,
     )

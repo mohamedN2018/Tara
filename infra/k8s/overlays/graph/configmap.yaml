@@ -15,3 +15,5 @@ data:
   TARA_JWKS_URL: "https://api.tara.example/.well-known/jwks.json"
   LOG_LEVEL: "INFO"
   LOG_FORMAT: "json"
+  # Tara Intelligence R4 (track B)
+  INTEL_EMIT_EXPOSURE_EVENTS: "true"

@@ -245,3 +245,16 @@ export async function useLocale(page: Page, lang: "ar" | "en") {
     await route.fulfill({ response: res, json: { ...body, data: { ...body.data, language: lang } } });
   });
 }
+
+/**
+ * A new account's first sign-in passes the optional topic picker (Tara Intelligence
+ * WP 6.6) when the server says it has not onboarded: skip it and land on Home.
+ */
+export async function skipTopicPicker(page: Page) {
+  await page.waitForURL(/\/(home|welcome\/topics)(\?.*)?$/);
+  if (!/\/welcome\/topics/.test(page.url())) return;
+  const skip = page.getByTestId("onboarding-skip");
+  // The view leaves on its own when the server has no onboarding to offer.
+  await Promise.race([skip.waitFor({ state: "visible" }).catch(() => undefined), page.waitForURL(/\/home$/).catch(() => undefined)]);
+  if (await skip.isVisible()) await skip.click();
+}

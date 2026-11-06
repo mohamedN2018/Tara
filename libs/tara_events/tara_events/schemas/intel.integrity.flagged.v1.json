@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/intel.integrity.flagged.v1.json",
+  "title": "intel.integrity.flagged v1 payload",
+  "description": "Spam or sexual-content hides of one post crossed integrity.spam_flag_rate_threshold (Tara Intelligence WP 7.4). Emitted by feed at most once per post per 24 h, in the transaction that records the flag. No hider is named: only the rate and the number of distinct accounts. Behind INTEL_EMIT_R4_EVENTS (default on). Consumer: moderation (a system-sourced case, never attributed to a user).",
+  "type": "object",
+  "properties": {
+    "post_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "author_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "signal": {
+      "type": "string",
+      "enum": [
+        "spam_hides",
+        "sexual_hides"
+      ]
+    },
+    "rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "distinct_accounts": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "required": [
+    "post_id",
+    "author_id",
+    "signal",
+    "rate",
+    "distinct_accounts"
+  ],
+  "additionalProperties": false
+}

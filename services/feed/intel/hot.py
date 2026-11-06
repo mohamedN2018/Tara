@@ -143,6 +143,28 @@ def pool_keys() -> list[str]:
     return [k.decode() if isinstance(k, bytes) else k for k in client.scan_iter(match=pattern)]
 
 
+def behaviour_keys(account_id) -> list[str]:
+    """The account's behavioural keys (R4: personalization off and Reset): ranking
+    sessions ``feed:rank:*``, the profile cache ``intel:prof``, the visit hash
+    ``feed:sess``, the ledger ``feed:exp``, the session vector ``feed:si`` and the
+    first-page heads ``feed:head:*``. The age-class memo stays (safety data, WP 4b.14)."""
+    raw = [k for k in raw_keys(account_id) if k != age_key(account_id)]
+    return session_keys(account_id) + [profile_key(account_id)] + raw
+
+
+def purge_behaviour(account_id, reason: str) -> bool:
+    """Delete ``behaviour_keys`` now. Fail-soft: a redis-hot outage is counted in
+    ``intel_hot_purge_failed_total{reason}`` and the keys expire on their own TTL."""
+    from . import metrics
+
+    try:
+        hot().delete_many(behaviour_keys(account_id))
+        return True
+    except Exception:  # noqa: BLE001 - never fail the user's request on redis-hot
+        metrics.hot_purge_failed(reason)
+        return False
+
+
 def forget_account(account_id, post_ids) -> dict:
     """Drop the account's sessions, profile and raw keys, and its posts from every
     pool now."""

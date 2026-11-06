@@ -521,6 +521,7 @@ const menuItem =
           :name="displayName"
           :self="isSelf"
           :is-friend="friendState === 'friends'"
+          :hide-creator="!isSelf"
           copy-link
           privacy-link
           button-class="btn-soft px-3 py-2"

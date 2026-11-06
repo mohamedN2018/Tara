@@ -35,8 +35,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-SCHEMA_VERSION = 4
-SURFACES = ("home", "reels", "video", "groups")
+SCHEMA_VERSION = 5
+SURFACES = ("home", "reels", "video", "groups", "discovery")
 # The surfaces that carry a ``delivery`` block (WP 4c.2-B3).
 DELIVERY_SURFACES = ("home", "reels", "video")
 POST_TYPES = ("text", "image", "video", "link", "share", "poll", "reel")
@@ -311,9 +311,15 @@ INTEGRITY = Section(
         # 0 turns the rule off (home@1: today's rates count every reaction).
         "suspect_account_age_hours": Int(0, 24 * 30),
         "suspect_burst_per_min": Int(0, 10_000),
+        # R4 WP 7.4: ``intel.integrity.flagged`` at most once per post per this many
+        # hours, and only from this many distinct hiding accounts (schema 5).
+        "flag_cooldown_h": Int(1, 24 * 30),
+        "flag_min_accounts": Int(1, 1_000),
     },
     optional=frozenset(
         {
+            "flag_cooldown_h",
+            "flag_min_accounts",
             "pending_report_multiplier",
             "duplicate_multiplier",
             "simhash_max_distance",
@@ -351,7 +357,10 @@ WEIGHTS = Section(
         "quality": WEIGHT,
         "originality": WEIGHT,
         "negative": WEIGHT,
-    }
+        # R4 (06 section 4.4, WP 6.5-B2): the session-interest term, schema 5 only.
+        "session": WEIGHT,
+    },
+    optional=frozenset({"session"}),
 )
 # Today's raw engagement term: log1p(r·reactions + c·comments + s·shares) − f·log1p(flags).
 ENGAGEMENT = Section(
@@ -560,6 +569,191 @@ DELIVERY = Section(
     }
 )
 
+# ---- R4, schema version 5 (04 phases 6 to 8; 06 sections 4.4, 4.5, 7, 10) -----------
+# Classifier thresholds (02 section 14): hashtag 0.9, page or group category 0.6,
+# lexicon 0.4 + 0.1 per extra distinct hit capped at 0.7 (or one ``strong`` hit), a
+# shared post inherits x 0.8, topics below ``min_confidence`` are not stored, at most
+# ``max_topics`` per post.
+TOPICS = Section(
+    {
+        "hashtag_confidence": UNIT,
+        "category_confidence": UNIT,
+        "lexicon_base": UNIT,
+        "lexicon_step": UNIT,
+        "lexicon_cap": UNIT,
+        "lexicon_min_hits": Int(1, 10),
+        "inherit_factor": UNIT,
+        "min_confidence": UNIT,
+        "max_topics": Int(1, 10),
+    }
+)
+# The interest profile (02 section 13, 06 section 7). ``event_weights``: the delta per
+# signal type (02 section 8.3 plus group_join, group_leave and topic_explore of 06);
+# three lazily decayed tiers, mixed by ``tiers_mix`` into ``interest_rel``.
+INTEREST_EVENTS = (
+    "feed_impression",
+    "post_open",
+    "feed_dwell_consumed",
+    "post_like",
+    "post_comment",
+    "post_share",
+    "post_save",
+    "video_progress",
+    "video_complete",
+    "video_rewatch",
+    "video_skip",
+    "reel_view",
+    "profile_visit",
+    "follow",
+    "unfollow",
+    "mute",
+    "block",
+    "interested",
+    "more_like_this",
+    "less_like_this",
+    "not_interested",
+    "post_hide",
+    "post_report",
+    "group_join",
+    "group_leave",
+    "topic_explore",
+)
+POSITIVE = Num(0.0, 1_000.0, gt=True)
+INTERESTS = Section(
+    {
+        "event_weights": Map(WEIGHT, keys=INTEREST_EVENTS),
+        "half_life_d": Section({"short": HALF_LIFE_H, "mid": HALF_LIFE_H, "long": HALF_LIFE_H}),
+        "tiers_mix": Section(
+            {"short": UNIT, "mid": UNIT, "long": UNIT}, sums_to_one=("short", "mid", "long")
+        ),
+        "tanh_k": POSITIVE,
+        "explicit": Map(Num(-1.0, 1.0), keys=("like", "more", "less", "dislike")),
+        "explicit_multiplier": Num(0.0, 10.0),
+        "emerging": Section(
+            {"ratio": POSITIVE, "floor": Num(0.0, 1_000.0), "min_events": Int(1, 1_000)}
+        ),
+        "prune_below": Num(0.0, 1.0),
+        "profile_ttl_s": Int(10, 24 * 3600),
+        "profile_top_n": Int(1, 500),
+        "max_tier_rows": Int(1, 500),
+    }
+)
+# The session interest vector (06 section 4.4): consumption-grade events only.
+SESSION_INTEREST = Section(
+    {
+        "half_life_min": Num(0.0, 24 * 60.0, gt=True),
+        "max_keys": Int(1, 100),
+        "min_events": Int(1, 100),
+        "explicit_weight": Num(0.0, 10.0),
+        "dwell_only_weight": Num(0.0, 10.0),
+        "skip_weight": Num(-10.0, 0.0),
+        "negative_weight": Num(-10.0, 0.0),
+        "tanh_k": POSITIVE,
+        "ttl_s": Int(60, 24 * 3600),
+        "search_queries": Int(0, 10),
+        "search_weight": Num(0.0, 10.0),
+    }
+)
+# Explicit feedback effects (04 WP 7.2, 06 section 10).
+FEEDBACK_EFFECTS = Section(
+    {
+        "interested": WEIGHT,
+        "more_like_this": WEIGHT,
+        "less_like_this": WEIGHT,
+        "not_interested_topic": WEIGHT,
+        "not_interested_author": WEIGHT,
+        "mute_primary_multiplier": MULTIPLIER,
+        "mute_primary_min_confidence": UNIT,
+    }
+)
+RESET = Section({"min_interval_h": Int(1, 24 * 30), "confirm_ttl_s": Int(30, 3_600)})
+# Intent v0 (06 section 4.5): rules in shadow; ``overlay_weight`` 0 changes nothing.
+INTENT = Section(
+    {
+        "browse_video_min": Int(1, 20),
+        "browse_video_window": Int(1, 50),
+        "topic_focus_share": UNIT,
+        "topic_focus_min_events": Int(1, 100),
+        "explore_min_recommended": Int(1, 100),
+        "overlay_weight": UNIT,
+        "overlays": Section(
+            {
+                "catch_up_connected": Num(-1.0, 1.0),
+                "browse_video_run": Int(1, 10),
+                "topic_focus_share": UNIT,
+                "explore_recommended": Num(-1.0, 1.0),
+            }
+        ),
+    }
+)
+COLD_START = Section({"max_topics": Int(1, 50), "explicit_polarity": Str(("like", "more"))})
+RETENTION = Section(
+    {
+        "preference_change_d": Int(1, 3_650),
+        "feedback_d": Int(1, 3_650),
+        "debug_consent_d": Int(1, 3_650),
+        "debug_consent_ttl_h": Int(1, 24 * 7),
+    }
+)
+# My Algorithm effects in ranking (02 sections 10.1 and 19; 04 WP 8.3): the
+# recommended share per ``discovery_level``, capped; format more/less multipliers.
+PREFERENCE_EFFECTS = Section(
+    {
+        "discovery_scale": Section(dict.fromkeys(("0", "1", "2", "3"), Num(0.0, 5.0))),
+        "discovery_cap": UNIT,
+        "format_more": Num(1.0, 10.0),
+        "format_less": MULTIPLIER,
+    }
+)
+# The nightly creator aggregates (03 section 2.5, WP 6.3): windows, Beta priors and
+# the weights of the quality score.
+CREATOR_QUALITY = Section(
+    {
+        "window_d": Int(1, 365),
+        "report_window_d": Int(1, 365),
+        "prior_events": Num(0.0, 1_000.0),
+        "prior_reach": POSITIVE,
+        "prior_posts": POSITIVE,
+        "w_depth": WEIGHT,
+        "w_originality": WEIGHT,
+        "w_hide": Num(0.0, 1_000.0),
+        "w_report": Num(0.0, 1_000.0),
+        "w_removal": Num(0.0, 1_000.0),
+        "new_account_days": Int(0, 3_650),
+    }
+)
+# R4 ranking switches: only a version that itself carries this block computes
+# ``interest_rel`` / ``session_rel`` (package defaults never carry it, like ``rotation``).
+INTEREST_RANK = Section({"interest": Bool(), "session": Bool()})
+V5_SECTIONS = (
+    "topics",
+    "interests",
+    "session_interest",
+    "feedback_effects",
+    "reset",
+    "intent",
+    "cold_start",
+    "retention",
+    "preference_effects",
+    "interest_rank",
+    "creator_quality",
+)
+
+# The discovery surface (WP 5.5): graph's people suggestions and profile's page and
+# group suggestions read it through ``intel.config.published``. ``discovery@1``
+# reproduces the constants those services use today exactly.
+DISCOVERY_PEOPLE = Section(
+    {
+        "default_limit": Int(1, 100),
+        "max_limit": Int(1, 200),
+        "max_bridges": Int(1, 100_000),
+        "max_candidates": Int(1, 1_000_000),
+        "follower_fill": Bool(),
+    }
+)
+DISCOVERY_PAGES = Section({"default_limit": Int(1, 100)})
+DISCOVERY_GROUPS = Section({"max_suggestions": Int(1, 200), "friend_preview": Int(0, 50)})
+
 _HEADER = {
     "schema_version": Int(1, SCHEMA_VERSION),
     "surface": Str(SURFACES),
@@ -607,9 +801,21 @@ SCHEMAS: dict[str, Section] = {
             "exposure": EXPOSURE,
             "rotation": ROTATION,
             "revisit": REVISIT,
+            "topics": TOPICS,
+            "interests": INTERESTS,
+            "session_interest": SESSION_INTEREST,
+            "feedback_effects": FEEDBACK_EFFECTS,
+            "reset": RESET,
+            "intent": INTENT,
+            "cold_start": COLD_START,
+            "retention": RETENTION,
+            "preference_effects": PREFERENCE_EFFECTS,
+            "interest_rank": INTEREST_RANK,
+            "creator_quality": CREATOR_QUALITY,
         },
         optional=frozenset(
             {
+                *V5_SECTIONS,
                 "retrieval",
                 "pools",
                 "modes",
@@ -640,6 +846,14 @@ SCHEMAS: dict[str, Section] = {
         )
         for s in ("reels", "video", "groups")
     },
+    "discovery": Section(
+        {
+            **_HEADER,
+            "people": DISCOVERY_PEOPLE,
+            "pages": DISCOVERY_PAGES,
+            "groups": DISCOVERY_GROUPS,
+        }
+    ),
 }
 
 
@@ -673,8 +887,37 @@ def exposure_ranking(params: dict) -> bool:
     return isinstance(params.get("rotation"), dict) and isinstance(params.get("exposure"), dict)
 
 
-def _version_rules(params: dict) -> list[str]:
+def interest_ranking(params: dict) -> tuple[bool, bool]:
+    """``(interest_rel, session_rel)`` switches of a version (R4): on only for a version
+    that itself carries ``interest_rank`` (the home@3 drafts). Package defaults never
+    carry it, so home@1 and the home@2* versions keep ``interest_rel = 0``."""
+    block = params.get("interest_rank")
+    if not isinstance(block, dict):
+        return False, False
+    return bool(block.get("interest")), bool(block.get("session"))
+
+
+def _v5_rules(params: dict) -> list[str]:
     out = []
+    version = params.get("schema_version")
+    if not isinstance(version, int) or isinstance(version, bool) or version >= 5:
+        return out
+    for name in V5_SECTIONS:
+        if name in params:
+            out.append(f"{name}: needs schema_version 5")
+    if isinstance(params.get("weights"), dict) and "session" in params["weights"]:
+        out.append("weights.session: needs schema_version 5")
+    integ = params.get("integrity")
+    if isinstance(integ, dict):
+        for key in sorted({"flag_cooldown_h", "flag_min_accounts"} & set(integ)):
+            out.append(f"integrity.{key}: needs schema_version 5")
+    return out
+
+
+def _version_rules(params: dict) -> list[str]:
+    if params.get("surface") == "discovery":
+        return []
+    out = _v5_rules(params)
     version = params.get("schema_version")
     if isinstance(version, int) and not isinstance(version, bool) and version < 4:
         for name in V4_SECTIONS:

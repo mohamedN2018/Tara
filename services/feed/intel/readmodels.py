@@ -469,13 +469,24 @@ def set_membership(p: dict, when: datetime, joined_at: datetime | None = None) -
 
 
 _PAGE_SQL = """
-INSERT INTO intel_page_ref (page_id, owner_id, status, deleted, event_at)
-VALUES (%s, %s, %s, %s, %s)
+INSERT INTO intel_page_ref (page_id, owner_id, status, deleted, event_at, category_norm)
+VALUES (%s, %s, %s, %s, %s, COALESCE(%s, ''))
 ON CONFLICT (page_id) DO UPDATE SET
     owner_id = COALESCE(EXCLUDED.owner_id, intel_page_ref.owner_id),
-    status = EXCLUDED.status, deleted = EXCLUDED.deleted, event_at = EXCLUDED.event_at
+    status = EXCLUDED.status, deleted = EXCLUDED.deleted, event_at = EXCLUDED.event_at,
+    category_norm = CASE WHEN %s::text IS NULL THEN intel_page_ref.category_norm
+                         ELSE EXCLUDED.category_norm END
 WHERE intel_page_ref.event_at <= EXCLUDED.event_at
 """
+
+
+def _category(p: dict) -> str | None:
+    """R4 WP 6.2: the page category in the alias key form, None when not in ``p``."""
+    if "category" not in p:
+        return None
+    from .topics.taxonomy import norm
+
+    return norm(p.get("category"))[:80]
 
 
 def set_page(page_id, p: dict, when: datetime) -> int:
@@ -493,6 +504,8 @@ def set_page(page_id, p: dict, when: datetime) -> int:
                 _enum(p.get("status"), PAGE_STATUS, "draft"),  # unknown: not published
                 bool(p.get("deleted")),
                 when,
+                _category(p),
+                _category(p),
             ],
         )
         ports.mark_page_author(page_id)

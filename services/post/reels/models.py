@@ -90,6 +90,42 @@ class ReelView(models.Model):
         indexes = [models.Index(fields=["viewer_id", "-viewed_at"], name="reel_view_viewer_idx")]
 
 
+class ReelsReset(models.Model):
+    """The viewer's last "Reset recommendations" (Tara Intelligence WP 8.4-B2).
+
+    Fed by feed's ``feed.recommendations.reset``: the reels seen order ignores the
+    viewer's ``ReelView`` rows before ``reset_at``. The views stay (they are view
+    counts, not preferences)."""
+
+    account_id = models.UUIDField(primary_key=True)
+    reset_at = models.DateTimeField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "reels_reset"
+
+
+class ReelsHiddenCreator(models.Model):
+    """ "Don't recommend this creator" (Tara Intelligence WP 7.5-B2), from feed's
+    ``intel.creator.hidden``: the creator's reels leave the viewer's for_you tab unless
+    they are friends or followed. The Following tab is untouched. ``hidden`` false is
+    the undo; ``event_at`` keeps the newest choice."""
+
+    id = models.BigAutoField(primary_key=True)
+    account_id = models.UUIDField()
+    creator_id = models.UUIDField()
+    hidden = models.BooleanField(default=True)
+    event_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "reels_hidden_creator"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["account_id", "creator_id"], name="reels_hidden_creator_uniq"
+            ),
+        ]
+
+
 class ReelHide(models.Model):
     """A "not interested" mark: the reel leaves this viewer's reels feeds. Undo deletes the row."""
 

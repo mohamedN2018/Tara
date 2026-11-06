@@ -73,10 +73,21 @@ class HotState:
     head: bytes | None = None
     pools: list | None = None
     ok: bool = True
+    # R4: the interest profile cache ``intel:prof`` and the session vector ``feed:si``.
+    prof: bytes | None = None
+    si: dict | None = None
 
 
 def prefetch(
-    viewer_id, cfg: SurfaceConfig, *, visit: bool, ledger: bool, head: bool, pools: bool
+    viewer_id,
+    cfg: SurfaceConfig,
+    *,
+    visit: bool,
+    ledger: bool,
+    head: bool,
+    pools: bool,
+    prof: bool = False,
+    si: bool = False,
 ) -> HotState:
     """``HGETALL feed:sess``, ``GET feed:exp``, ``GET feed:head:home`` and the pool
     ``ZREVRANGE``s in **one** pipelined round trip (07 "Query and Redis budget")."""
@@ -84,7 +95,7 @@ def prefetch(
 
     state = HotState()
     client = hot.raw_client()
-    if client is None or not (visit or ledger or head or pools):
+    if client is None or not (visit or ledger or head or pools or prof or si):
         state.ok = client is not None
         return state
     backend = hot.hot()
@@ -102,6 +113,12 @@ def prefetch(
             plan.append(("head", 1))
         if pools:
             plan.append(("pools", discovery.queue_reads(pipe, cfg)))
+        if prof:
+            pipe.get(backend.make_key(hot.profile_key(viewer_id)))
+            plan.append(("prof", 1))
+        if si:
+            pipe.hgetall(backend.make_key(hot.session_interest_key(viewer_id)))
+            plan.append(("si", 1))
         results = pipe.execute()
     except Exception:  # noqa: BLE001 - redis-hot down: rank without the hot state
         state.ok = False
@@ -116,6 +133,10 @@ def prefetch(
             state.ledger = chunk[0]
         elif name == "head":
             state.head = chunk[0]
+        elif name == "prof":
+            state.prof = chunk[0]
+        elif name == "si":
+            state.si = chunk[0] or {}
         else:
             state.pools = discovery.parse_reads(chunk)
     return state

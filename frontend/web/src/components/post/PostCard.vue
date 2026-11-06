@@ -20,9 +20,15 @@ import {
   Sparkles,
   Star,
   StarOff,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
+  TrendingDown,
+  TrendingUp,
   UserMinus,
+  UserX,
   Users,
+  VolumeX,
   X,
 } from "lucide-vue-next";
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from "vue";
@@ -45,14 +51,15 @@ import NameHoverCard from "@/components/social/NameHoverCard.vue";
 import { AUDIENCE_ICON, audienceLabel } from "@/lib/audiences";
 import { downloadMedia } from "@/lib/downloadMedia";
 import { relativeTime } from "@/lib/format";
-import { itemKey, surfaceForRoute, track } from "@/lib/signals";
+import { REMOVING_ACTIONS, sendFeedback } from "@/lib/feedFeedback";
+import { itemKey, servedToken, surfaceForRoute, track } from "@/lib/signals";
 import { applyReactionChange } from "@/lib/reactionCounts";
 import { hasLink } from "@/lib/richText";
 import { useEscapeKey } from "@/lib/useEscapeKey";
 import { useImpression } from "@/lib/useImpression";
 import { useMediaViewer } from "@/lib/useMediaViewer";
 import { useRelationshipPrefs } from "@/lib/useRelationshipPrefs";
-import { type FeedReason, isSuggestedReason } from "@/services/feed";
+import { type FeedbackAction, type FeedReason, isSuggestedReason, type ItemTopic } from "@/services/feed";
 import { graphService } from "@/services/graph";
 import { groupPostsService } from "@/services/groups";
 import { type Comment, COMMENT_POLICIES, type CommentPolicy, postService, REPORT_ERRORS } from "@/services/post";
@@ -103,6 +110,8 @@ const props = withDefaults(
     feedMode?: string | null;
     /** The first card of a feed: its first image loads eagerly at high priority (08 §7.4). */
     eagerMedia?: boolean;
+    /** In the home feed (R4): the item's topics, for "Mute topic" (none: the entry is hidden). */
+    feedTopics?: ItemTopic[];
   }>(),
   {
     startCommentsOpen: false,
@@ -117,6 +126,7 @@ const props = withDefaults(
     feedReason: null,
     feedMode: null,
     eagerMedia: false,
+    feedTopics: () => [],
   },
 );
 const emit = defineEmits<{
@@ -129,9 +139,12 @@ const emit = defineEmits<{
   "author-gone": [post: Post];
   /** The viewer unsaved the post (the Saved page drops it). */
   unsaved: [id: string];
+  /** R4 feedback: Not interested / Don't recommend left the list at once (`back` undoes it). */
+  "feedback-gone": [post: Post];
+  "feedback-back": [post: Post];
 }>();
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const auth = useAuthStore();
 const directory = useDirectoryStore();
 // Posts published as a page (T3): the author is the page, named from the pages directory.
@@ -177,6 +190,45 @@ const canUnfollow = computed(() => !isAuthor.value && props.feedReason === "foll
 // 4b.6: a post from the popular or fresh pools, outside the viewer's circle.
 const suggested = computed(() => isSuggestedReason(props.feedReason));
 const canPeoplePrefs = computed(() => !isAuthor.value && isUserAuthor.value && !!auth.account);
+// R4 feedback (04 WP 7.3, 07 WP 7.5-B2): only on items the feed served this viewer.
+// "Don't recommend this creator" is offered on suggestions (06 §10), "Mute topic" only
+// when the server named the item's topics.
+const canFeedback = computed(() => !!props.feedReason && !isAuthor.value && !!auth.account);
+const canHideCreator = computed(() => canFeedback.value && suggested.value);
+const topicLabel = (tp: ItemTopic) => (locale.value === "ar" ? tp.label_ar : tp.label_en) || tp.slug;
+const feedbackBusy = ref(false);
+const FEEDBACK_TOAST: Record<FeedbackAction, string> = {
+  interested: "myAlgorithm.toast.interested",
+  not_interested: "myAlgorithm.toast.notInterested",
+  more_like_this: "myAlgorithm.toast.more",
+  less_like_this: "myAlgorithm.toast.less",
+  mute_topic: "myAlgorithm.toast.muteTopic",
+  hide_creator: "myAlgorithm.toast.hideCreator",
+};
+async function giveFeedback(action: FeedbackAction, topic?: ItemTopic) {
+  closeMenu();
+  if (feedbackBusy.value) return;
+  feedbackBusy.value = true;
+  const removes = REMOVING_ACTIONS.includes(action);
+  const post = props.post;
+  try {
+    await sendFeedback({
+      action,
+      itemType: "post",
+      itemId: post.id,
+      surface: signalSurface.value,
+      topic: topic?.slug,
+      st: servedToken(itemKey("post", post.id)),
+      text: t(FEEDBACK_TOAST[action], { topic: topic ? topicLabel(topic) : "", name: authorDisplay.value }),
+      undoLabel: t("myAlgorithm.toast.undo"),
+      undoneText: t("myAlgorithm.toast.undone"),
+      onGone: removes ? () => emit("feedback-gone", post) : undefined,
+      onBack: removes ? () => emit("feedback-back", post) : undefined,
+    });
+  } finally {
+    feedbackBusy.value = false;
+  }
+}
 
 function closeMenu() {
   menuOpen.value = false;
@@ -766,6 +818,53 @@ const iconCls = "h-5 w-5 shrink-0 text-gray-600 dark:text-gray-300";
               <button v-if="feedReason" :class="item" data-testid="menu-why" @click="closeMenu(); showWhy = true">
                 <Info :class="iconCls" aria-hidden="true" /> {{ t("postsFeed.menu.why") }}
               </button>
+
+              <!-- R4: tune the feed (04 WP 7.3, 07 WP 7.5-B2). Each action has an undo toast. -->
+              <div v-if="canFeedback" role="group" :aria-label="t('myAlgorithm.menu.group')" data-testid="menu-feedback">
+                <div class="my-1 border-t border-gray-100 dark:border-gray-800" />
+                <button :class="item" :disabled="feedbackBusy" data-testid="menu-interested" @click="giveFeedback('interested')">
+                  <ThumbsUp :class="iconCls" aria-hidden="true" />
+                  <span class="min-w-0">
+                    <span class="block">{{ t("myAlgorithm.menu.interested") }}</span>
+                    <span class="block text-xs font-normal text-gray-600 dark:text-gray-300">{{ t("myAlgorithm.menu.interestedHint") }}</span>
+                  </span>
+                </button>
+                <button :class="item" :disabled="feedbackBusy" data-testid="menu-not-interested" @click="giveFeedback('not_interested')">
+                  <ThumbsDown :class="iconCls" aria-hidden="true" />
+                  <span class="min-w-0">
+                    <span class="block">{{ t("myAlgorithm.menu.notInterested") }}</span>
+                    <span class="block text-xs font-normal text-gray-600 dark:text-gray-300">{{ t("myAlgorithm.menu.notInterestedHint") }}</span>
+                  </span>
+                </button>
+                <button :class="item" :disabled="feedbackBusy" data-testid="menu-more-like" @click="giveFeedback('more_like_this')">
+                  <TrendingUp :class="iconCls" aria-hidden="true" /> {{ t("myAlgorithm.menu.more") }}
+                </button>
+                <button :class="item" :disabled="feedbackBusy" data-testid="menu-less-like" @click="giveFeedback('less_like_this')">
+                  <TrendingDown :class="iconCls" aria-hidden="true" /> {{ t("myAlgorithm.menu.less") }}
+                </button>
+                <div v-if="feedTopics.length" role="group" :aria-label="t('myAlgorithm.menu.muteTopic')" data-testid="menu-mute-topics">
+                  <p class="flex items-center gap-2 px-3 pb-0.5 pt-1.5 text-[11px] font-semibold text-gray-600 dark:text-gray-300">
+                    <VolumeX class="h-4 w-4" aria-hidden="true" /> {{ t("myAlgorithm.menu.muteTopic") }}
+                  </p>
+                  <button
+                    v-for="tp in feedTopics"
+                    :key="tp.slug"
+                    class="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 ps-9 text-start text-sm transition hover:bg-gray-100 dark:hover:bg-gray-800"
+                    :disabled="feedbackBusy"
+                    :data-testid="`menu-mute-topic-${tp.slug}`"
+                    @click="giveFeedback('mute_topic', tp)"
+                  >
+                    <span dir="auto">{{ t("myAlgorithm.menu.muteTopicItem", { topic: topicLabel(tp) }) }}</span>
+                  </button>
+                </div>
+                <button v-if="canHideCreator" :class="item" :disabled="feedbackBusy" data-testid="menu-hide-creator" @click="giveFeedback('hide_creator')">
+                  <UserX :class="iconCls" aria-hidden="true" />
+                  <span class="min-w-0">
+                    <span class="block" dir="auto">{{ t("myAlgorithm.menu.hideCreator", { name: authorDisplay }) }}</span>
+                    <span class="block text-xs font-normal text-gray-600 dark:text-gray-300">{{ t("myAlgorithm.menu.hideCreatorHint") }}</span>
+                  </span>
+                </button>
+              </div>
 
               <template v-if="canHide || canSnooze || canUnfollow || canPeoplePrefs">
                 <div class="my-1 border-t border-gray-100 dark:border-gray-800" />

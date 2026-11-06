@@ -127,7 +127,13 @@ SEARCH_TRENDING_COUNT_FLOORS = (20, 50, 100, 500, 1000, 5000, 10000)
 SEARCH_TRENDING_CACHE_S = 300
 
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "")
-TARA_EVENT_PUBLISHER = "null"  # Search is read-only-derived; it does not publish events
+# Search publishes one event: ``search.queried`` (hashed terms, opt-in only, Tara
+# Intelligence WP 8.7-B2), through its outbox and the search-worker relay.
+TARA_EVENT_PUBLISHER = "rabbitmq" if RABBITMQ_URL else "null"
+TARA_OUTBOX_MODEL = "searchsvc.OutboxEvent"
+# Emit search.queried for accounts that opted in (feed decides; the opt-in itself is
+# off by default). Its consumer (feed) ships first.
+SEARCH_EMIT_QUERY_SIGNALS = env_bool("SEARCH_EMIT_QUERY_SIGNALS", True)
 TARA_EVENT_BROKER_URL = RABBITMQ_URL
 TARA_EVENT_EXCHANGE = os.getenv("TARA_EVENT_EXCHANGE", "tara.events")
 TARA_EVENT_QUEUE = "search.events"
@@ -135,6 +141,11 @@ TARA_EVENT_QUEUE = "search.events"
 CELERY_BROKER_URL = RABBITMQ_URL or "memory://"
 CELERY_TASK_DEFAULT_QUEUE = f"{SERVICE_NAME}.tasks"
 CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", not bool(RABBITMQ_URL))
+CELERY_BEAT_SCHEDULE = {
+    "purge-events": {"task": "tara_events.purge_events", "schedule": 3600.0},
+    "drain-outbox": {"task": "tara_events.publish_outbox", "schedule": 2.0},
+    "warm-signal-optins": {"task": "searchsvc.warm_signal_optins", "schedule": 600.0},
+}
 
 CORS_ALLOWED_ORIGINS = env_list("SEARCH_CORS_ORIGINS", "http://localhost:5173")
 CORS_ALLOW_CREDENTIALS = True

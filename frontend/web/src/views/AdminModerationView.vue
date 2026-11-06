@@ -277,6 +277,9 @@ watch(
               <span class="block font-semibold" data-testid="mod-case-title">
                 {{ targetLabel(c.target_type) }}<template v-if="subjectName(c)"> · <bdi>{{ c.target_type === "user" ? subjectName(c) : t("safety.mod.ownedBy", { name: subjectName(c) }) }}</bdi></template>
               </span>
+              <span v-if="c.system_signal" class="mt-0.5 inline-flex rounded-full bg-accent-50 px-2 py-0.5 text-[11px] font-semibold text-accent-800 dark:bg-accent-950/50 dark:text-accent-200" data-testid="mod-case-system">
+                {{ t("myAlgorithm.moderation.systemSignal") }}
+              </span>
               <span class="block text-xs text-gray-500 dark:text-gray-400">
                 {{ t("admin.reportsCount", { count: c.report_count }, c.report_count) }} ·
                 <time :datetime="c.created_at">{{ relativeTime(c.created_at) }}</time>

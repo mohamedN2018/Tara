@@ -19,3 +19,5 @@ data:
   REFRESH_TOKEN_TTL_SECONDS: "2592000"
   LOG_LEVEL: "INFO"
   LOG_FORMAT: "json"
+  # Tara Intelligence R4 (track B)
+  IDENTITY_EMIT_ACCOUNT_UPDATED: "true"

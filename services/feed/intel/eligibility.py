@@ -62,6 +62,10 @@ class Viewer:
     age_band: str | None = None
     languages: frozenset[str] | None = None
     other_languages: bool = False
+    # R4 (02 section 10.1): discovery toggles the viewer turned off (rule E12).
+    discovery_off: frozenset[str] = frozenset()
+    # R4: read the viewer's interest rows with the relations (an ``intel:prof`` miss).
+    want_profile: bool = False
 
     @classmethod
     def from_claims(cls, claims: dict, **kw) -> Viewer:
@@ -92,7 +96,13 @@ class Context:
     authors: dict[str, dict]
     restricted: set[str]
     exclusions: dict[str, set[str]]
-    topics: dict[str, set[int]] = field(default_factory=dict)  # phase 6
+    topics: dict[str, set[int]] = field(default_factory=dict)  # phase 6 (R4)
+    # R4: each post's ``(topic_id, confidence)``, best first (``intel_content_topic``),
+    # the labels of those topics, and (``Viewer.want_profile``) the viewer's interest
+    # rows, read in the same relations statement (no query for a profile-cache miss).
+    topic_conf: dict[str, list[tuple[int, float]]] = field(default_factory=dict)
+    topic_labels: dict[int, dict] = field(default_factory=dict)
+    profile_rows: list | None = None
 
     def ref(self, c: Candidate) -> dict | None:
         return self.content.get(c.post_id)
@@ -262,8 +272,15 @@ def e7_pending_integrity(c: Candidate, ctx: Context) -> bool:
 
 
 def e8_dislikes(c: Candidate, ctx: Context) -> bool:
-    """A creator the viewer said they dislike (topics join in phase 6)."""
-    return (ctx.author(c) or "") not in ctx.exclusions["disliked"]
+    """A creator the viewer said they dislike, or chose "Don't recommend this creator"
+    for, and (R4, 07 WP 7.5-B2) an item carrying a topic the viewer muted or
+    explicitly disliked: never recommended. Connected items are not filtered here
+    (a muted primary topic demotes them, ``intel.ranking.home``)."""
+    author = ctx.author(c) or ""
+    if author in ctx.exclusions["disliked"] or author in ctx.exclusions.get("hidden_creators", ()):
+        return False
+    blocked = ctx.exclusions.get("excluded_topics")
+    return not (blocked and ctx.topics.get(c.post_id, set()) & blocked)
 
 
 def e9_age(c: Candidate, ctx: Context) -> bool:
@@ -302,6 +319,24 @@ def e10_language(c: Candidate, ctx: Context) -> bool:
     return ref is not None and ref["lang"] in (set(v.languages) | {"und"})
 
 
+# R4 rule E12: the sources and pool buckets each discovery toggle removes (02 section
+# 10.1). ``trending`` also covers Home's ``rec_popular`` bucket (what spreads now);
+# ``new_creators`` the WP 9.1 source of that name (none feeds Home before R5).
+TOGGLE_REASONS = {
+    "trending": frozenset({"trending", "rec_popular"}),
+    "new_creators": frozenset({"new_creators"}),
+}
+
+
+def e12_discovery_toggles(c: Candidate, ctx: Context) -> bool:
+    """A recommended item from a source or bucket the viewer turned off."""
+    for toggle in ctx.viewer.discovery_off:
+        names = TOGGLE_REASONS.get(toggle, frozenset())
+        if c.source in names or c.reason in names:
+            return False
+    return True
+
+
 def e11_restriction(c: Candidate, ctx: Context) -> bool:
     """An account under ``restrict`` or ``shadow`` (or the page it owns) reaches no
     stranger. Its connection and pull rows are untouched: it must not notice."""
@@ -332,6 +367,7 @@ RULES: tuple[tuple[str, frozenset[str], Rule], ...] = (
     ("E9b", DISCOVERY, e9b_author_age),
     ("E10", DISCOVERY, e10_language),
     ("E11", DISCOVERY, e11_restriction),
+    ("E12", DISCOVERY, e12_discovery_toggles),
 )
 RULE_NAMES = tuple(name for name, _, _ in RULES)
 
@@ -412,12 +448,48 @@ WHERE actor_id = %(v)s AND kind = 'mute' AND active AND target_id = ANY(%(author
 UNION ALL
 SELECT 'disliked', author_id::text, NULL, NULL, NULL, NULL FROM post_hide
 WHERE account_id = %(v)s AND reason = 'dislike_creator' AND author_id = ANY(%(authors)s::uuid[])
+UNION ALL
+SELECT 'pref_' || polarity, key, dim, NULL, NULL, NULL FROM intel_user_interest
+WHERE account_id = %(v)s AND source = 'explicit'
+  AND ((dim = 'creator' AND polarity = 'hidden' AND key = ANY(%(author_keys)s::text[]))
+    OR (dim = 'topic' AND polarity IN ('muted', 'dislike')))
+UNION ALL
+SELECT 'ctopic', ct.post_id::text, ct.topic_id::text, ct.confidence::text,
+       t.slug || '|' || t.label_ar || '|' || t.label_en, NULL
+FROM intel_content_topic ct JOIN intel_topic t ON t.id = ct.topic_id AND t.status = 'active'
+WHERE ct.post_id = ANY(%(posts)s::uuid[])
+UNION ALL
+SELECT 'prof', dim, key, source || ':' || coalesce(polarity, ''),
+       short_v || '|' || coalesce(extract(epoch FROM short_at), 0) || '|' || mid_v || '|'
+       || coalesce(extract(epoch FROM mid_at), 0) || '|' || long_v || '|'
+       || coalesce(extract(epoch FROM long_at), 0), NULL
+FROM intel_user_interest WHERE %(want_profile)s AND account_id = %(v)s
 """
 _GROUP_KEYS = ("g_privacy", "g_status", "m_state")
+# A block either way between two accounts (R4 feedback on a profile): params
+# (viewer, other, other, viewer).
+_BLOCKED_ONE_SQL = (
+    "SELECT 1 FROM intel_block_pair WHERE (low_blocks OR high_blocks) AND "
+    "((low = %s AND high = %s) OR (low = %s AND high = %s))"
+)
 
 
 def _bool(value) -> bool:
     return value in ("true", "t", True)
+
+
+def _pref(kind: str, key: str, dim, prefs: dict) -> None:
+    """One explicit preference row of the relations statement (R4, rule E8)."""
+    if dim == "creator" and kind == "pref_hidden":
+        prefs["hidden_creators"].add(key)
+    elif dim == "topic" and kind in ("pref_muted", "pref_dislike"):
+        try:
+            topic_id = int(key)
+        except ValueError:
+            return
+        prefs["excluded_topics"].add(topic_id)
+        if kind == "pref_muted":
+            prefs["muted"].add(topic_id)
 
 
 def load_context(viewer: Viewer, candidates: list[Candidate], cfg: SurfaceConfig) -> Context:
@@ -456,18 +528,42 @@ def load_context(viewer: Viewer, candidates: list[Candidate], cfg: SurfaceConfig
             "disliked",
         )
     }
+    topics: dict[str, set[int]] = {}
+    topic_conf: dict[str, list[tuple[int, float]]] = {}
+    topic_labels: dict[int, dict] = {}
+    profile_rows: list[tuple] = []
+    prefs: dict[str, set] = {"hidden_creators": set(), "excluded_topics": set(), "muted": set()}
     with connection.cursor() as cur:
         cur.execute(
             _CONTEXT_RELATIONS_SQL,
             {
                 "v": viewer.id,
                 "authors": authors,
+                "author_keys": authors,
                 "groups": group_ids,
                 "posts": post_ids,
                 "now": timezone.now(),
+                "want_profile": bool(viewer.want_profile),
             },
         )
         for kind, key, a, b, c, d in cur.fetchall():
+            if kind == "ctopic":
+                topics.setdefault(key, set()).add(int(a))
+                topic_conf.setdefault(key, []).append((int(a), float(b)))
+                if c:
+                    slug, label_ar, label_en = (c.split("|") + ["", "", ""])[:3]
+                    topic_labels[int(a)] = {
+                        "slug": slug,
+                        "label_ar": label_ar,
+                        "label_en": label_en,
+                    }
+                continue
+            if kind == "prof":
+                profile_rows.append((key, a, b, c))
+                continue
+            if kind.startswith("pref_"):
+                _pref(kind, key, a, prefs)
+                continue
             if kind == "page":
                 pages[key] = {"page_id": key, "owner_id": a, "status": b, "deleted": _bool(c)}
             elif kind == "owner":
@@ -500,7 +596,14 @@ def load_context(viewer: Viewer, candidates: list[Candidate], cfg: SurfaceConfig
             "snoozed": sets["snoozed"],
             "muted": sets["muted"],
             "disliked": sets["disliked"],
+            "hidden_creators": prefs["hidden_creators"],
+            "excluded_topics": prefs["excluded_topics"],
+            "muted_topics": prefs["muted"],
         },
+        topics=topics,
+        topic_conf={k: sorted(v, key=lambda t: (-t[1], t[0])) for k, v in topic_conf.items()},
+        topic_labels=topic_labels,
+        profile_rows=profile_rows if viewer.want_profile else None,
     )
 
 
@@ -512,6 +615,12 @@ class Result:
     kept: list[Candidate]
     dropped: Counter = field(default_factory=Counter)  # {rule: n}
     content: dict = field(default_factory=dict)  # the content rows the rules read
+    # R4: ``{post_id: [(topic_id, confidence)]}`` best first, and the viewer's muted
+    # topic ids (a connected item with one as primary is demoted, not dropped).
+    topics: dict = field(default_factory=dict)
+    muted_topics: frozenset = frozenset()
+    topic_labels: dict = field(default_factory=dict)
+    profile_rows: list | None = None
 
 
 def evaluate(c: Candidate, ctx: Context) -> str | None:
@@ -532,7 +641,14 @@ def filter(  # noqa: A001 - the stage's name in 02 section 6
     if not items:
         return Result([])
     ctx = load_context(viewer, items, cfg)
-    result = Result([], content=ctx.content)
+    result = Result(
+        [],
+        content=ctx.content,
+        topics=ctx.topic_conf,
+        muted_topics=frozenset(ctx.exclusions.get("muted_topics", ())),
+        topic_labels=ctx.topic_labels,
+        profile_rows=ctx.profile_rows,
+    )
     for c in items:
         rule = evaluate(c, ctx)
         if rule is None:
@@ -551,7 +667,9 @@ def filter(  # noqa: A001 - the stage's name in 02 section 6
 # blocks, the viewer's hides, snoozes and mutes, and page status.
 # E9b (WP 4b.14) too: an author's age class only ever leaves ``unknown``, and a
 # discovery item is re-checked fail closed like every other rule here.
-RECHECK = frozenset({"E1", "E1b", "E1c", "E2", "E2b", "E3", "E4", "E5", "E6b", "E9b"})
+# E8 (R4): a creator hidden or a topic muted after the first page is honoured on the
+# frozen list's later pages too (its data rides in the same relations statement).
+RECHECK = frozenset({"E1", "E1b", "E1c", "E2", "E2b", "E3", "E4", "E5", "E6b", "E8", "E9b"})
 
 _RECHECK_CONTENT_SQL = """
 SELECT c.post_id, c.author_id, c.author_type, c.type, c.audience, c.group_id,
@@ -603,6 +721,16 @@ WHERE actor_id = %(v)s AND kind = 'mute' AND active AND target_id = ANY(%(author
 UNION ALL
 SELECT 'author', account_id::text, kind || ':' || age_class FROM author_ref
 WHERE account_id = ANY(%(authors)s::uuid[])
+UNION ALL
+SELECT 'pref_' || polarity, key, dim FROM intel_user_interest
+WHERE account_id = %(v)s AND source = 'explicit'
+  AND ((dim = 'creator' AND polarity = 'hidden' AND key = ANY(%(author_keys)s::text[]))
+    OR (dim = 'topic' AND polarity IN ('muted', 'dislike')))
+UNION ALL
+SELECT 'ctopic', ct.post_id::text, ct.topic_id::text || ':' || ct.confidence::text
+       || ':' || t.slug || '|' || t.label_ar || '|' || t.label_en
+FROM intel_content_topic ct JOIN intel_topic t ON t.id = ct.topic_id AND t.status = 'active'
+WHERE ct.post_id = ANY(%(posts)s::uuid[])
 """
 
 
@@ -633,12 +761,35 @@ def recheck_context(viewer: Viewer, candidates: list[Candidate], cfg: SurfaceCon
         k: set() for k in ("blocked", "friend", "follow", "hidden", "snoozed", "muted")
     }
     kinds: dict[str, dict] = {}
+    topics: dict[str, set[int]] = {}
+    topic_conf: dict[str, list[tuple[int, float]]] = {}
+    topic_labels: dict[int, dict] = {}
+    prefs: dict[str, set] = {"hidden_creators": set(), "excluded_topics": set(), "muted": set()}
     with connection.cursor() as cur:
         cur.execute(
             _RECHECK_RELATIONS_SQL,
-            {"v": viewer.id, "authors": authors, "groups": group_ids, "posts": posts},
+            {
+                "v": viewer.id,
+                "authors": authors,
+                "author_keys": authors,
+                "groups": group_ids,
+                "posts": posts,
+            },
         )
         for kind, key, value in cur.fetchall():
+            if kind == "ctopic":
+                topic_id, conf, label = ((value or "").split(":", 2) + ["", ""])[:3]
+                topics.setdefault(key, set()).add(int(topic_id))
+                topic_conf.setdefault(key, []).append((int(topic_id), float(conf or 0)))
+                if label:
+                    slug, label_ar, label_en = (label.split("|") + ["", "", ""])[:3]
+                    topic_labels[int(topic_id)] = {
+                        "slug": slug, "label_ar": label_ar, "label_en": label_en
+                    }  # fmt: skip
+                continue
+            if kind.startswith("pref_"):
+                _pref(kind, key, value, prefs)
+                continue
             if kind == "owner":
                 group_owners.setdefault(key, set()).add(value)
             elif kind == "author":
@@ -669,7 +820,13 @@ def recheck_context(viewer: Viewer, candidates: list[Candidate], cfg: SurfaceCon
             "snoozed": sets["snoozed"],
             "muted": sets["muted"],
             "disliked": set(),
+            "hidden_creators": prefs["hidden_creators"],
+            "excluded_topics": prefs["excluded_topics"],
+            "muted_topics": prefs["muted"],
         },
+        topics=topics,
+        topic_conf={k: sorted(v, key=lambda t: (-t[1], t[0])) for k, v in topic_conf.items()},
+        topic_labels=topic_labels,
     )
 
 

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tara.local/events/feed.recommendations.reset.v1.json",
+  "title": "feed.recommendations.reset v1 payload",
+  "description": "An account reset its recommendations in My Algorithm (Tara Intelligence WP 8.4-B2). Ids and a timestamp only. Emitted by feed in the transaction that sets the preference's reset_at, behind INTEL_EMIT_R4_EVENTS (default on). Consumer: post (reel_view rows before reset_at are ignored for the reels seen order).",
+  "type": "object",
+  "properties": {
+    "account_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "reset_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "account_id",
+    "reset_at"
+  ],
+  "additionalProperties": false
+}

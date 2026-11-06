@@ -134,3 +134,61 @@ def test_ingest_queries_per_batch(client_for):
     assert len([s for s in sqls if "intel_signal_batch" in s]) == 1
     assert len([s for s in sqls if "COPY" in s.upper()]) == 1
     assert not [s for s in reads if "intel_signal_event" in s]
+
+
+def test_switching_personalization_off_purges_and_then_stores_nothing(
+    redis_hot, client_for, monkeypatch, django_capture_on_commit_callbacks
+):
+    """R4 (R3 open item 4): turning personalization off in My Algorithm purges the
+    account's behavioural keys and visit rows in the same request flow, and from then
+    on a first page, a later page, a telemetry batch and the bus write 0 SQL rows, 0
+    Redis keys and no bus rows (the age-class memo, safety data, is the only key)."""
+    from feed.models import FeedItem
+
+    from intel.handlers import intel_on_post_reacted
+    from intel.models import FeedSession
+    from tara_events.envelope import EventEnvelope
+
+    from . import world as w
+
+    monkeypatch.setattr("feed.ads_client.feed_sponsored", lambda viewer: None)
+    me = acct()
+    for _i in range(12):
+        friend = acct()
+        w.feed_row(me, w.post(friend), friend)
+    client = client_for(me)
+    client.get("/api/v1/feed/", {"mode": "for_you"})  # a visit, a session, a head
+    assert FeedSession.objects.filter(account_id=me).exists()
+    with django_capture_on_commit_callbacks(execute=True):
+        resp = client.patch(
+            "/api/v1/feed/preferences/", {"personalization_off": True}, format="json"
+        )
+    assert resp.status_code == 200
+    keys = lambda: [  # noqa: E731
+        k for k in hot.behaviour_keys(me) if hot.raw_client().exists(redis_hot.make_key(k))
+    ]
+    assert keys() == [] and not FeedSession.objects.filter(account_id=me).exists()
+    signal_before = len(signal_rows(account_id=me))
+    first = client.get("/api/v1/feed/", {"mode": "for_you", "limit": 5}).json()
+    assert first["meta"]["personalization_off"] is True and first["meta"]["visit"] is None
+    client.get(
+        "/api/v1/feed/", {"mode": "for_you", "limit": 5, "cursor": first["page"]["next_cursor"]}
+    )
+    client.post(
+        URL,
+        data=json.dumps(batch(ev("post_open", f"post:{first['data'][0]['post_id']}"))),
+        content_type="application/json",
+    )
+    post_id = str(FeedItem.objects.filter(recipient_id=me).first().post_id)
+    intel_on_post_reacted(
+        EventEnvelope(
+            event_type="post.reacted",
+            subject_id=post_id,
+            producer="test",
+            payload={"post_id": post_id, "reactor": me, "author_id": acct()},
+        )
+    )
+    client.post("/api/v1/feed/hide/", {"post_id": post_id, "reason": "not_interested"})
+    assert keys() == []
+    assert len(signal_rows(account_id=me)) == signal_before
+    assert not FeedSession.objects.filter(account_id=me).exists()

@@ -151,6 +151,8 @@ export interface FeedItem {
   st?: string;
   /** Candidate source, when feed names one (Tara Intelligence retrieval); else `reason` is it. */
   source?: string;
+  /** The item's topics (R4, at most 3): what "Mute topic" offers. Labels from feed's taxonomy. */
+  topics?: { slug: string; label_ar: string; label_en: string }[];
 }
 
 export interface SponsoredSlot {

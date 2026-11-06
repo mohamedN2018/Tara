@@ -65,6 +65,81 @@ SESSION_FACTOR_CODES = {
 }
 _AUTHOR_FACTORS = frozenset({"favorite", "interacted_author", "shared_groups", "conversation"})
 
+# R4 (07 WP 7.6-B2, 06 section 10): the new reason codes. ``continue_watching`` is
+# defined for the Continue Watching section (R6) and is not emitted before it exists.
+NEW_CODES = (
+    "rec_community_popular",
+    "rec_similar_watched",
+    "new_since_visit",
+    "continue_watching",
+    "rec_new_activity",
+    "rec_adjacent_topic",
+    "rec_generic",
+)
+# Codes that reveal watching or reading history on the Home screen: for an item in a
+# sensitive topic without the decision-12 opt-in they become ``rec_generic``.
+HISTORY_CODES = frozenset({"rec_similar_watched", "continue_watching", "rec_new_activity"})
+CODES = (
+    "self",
+    "friend",
+    "follow",
+    "page_follow",
+    "group_member",
+    "rec_popular",
+    "rec_fresh",
+    "public_pool",
+    "favorite",
+    "interacted_author",
+    "demoted_feedback",
+    "shared_groups",
+    "conversation",
+    "rec_topic",
+    "rec_topic_sensitive",
+    *NEW_CODES,
+)
+_VIDEO_KINDS = frozenset({"video", "reel"})
+
+
+def _interest_factor(viewer_id, item_topics, kind: str, sensitive_ids: set, opted: bool):
+    """The factor an ``interest`` / ``session`` term gives (R4): a video or reel the
+    viewer's watching resembles is ``rec_similar_watched``; else the item's primary
+    topic (``rec_topic``, sensitive ones masked) when the viewer's profile likes it,
+    else ``rec_adjacent_topic`` when a sibling topic (same parent) is liked."""
+    from . import config, interests
+    from .topics import classify
+
+    if kind in _VIDEO_KINDS:
+        return {"code": "rec_similar_watched"}
+    if not item_topics:
+        return {"code": "rec_generic"}
+    profile = interests.build_profile(
+        viewer_id, timezone.now(), config.for_surface("home").section("interests")
+    )
+    topics = classify.load_aliases().topics
+    primary = item_topics[0][0]
+    t = topics.get(primary, {})
+    if profile.topic.get(primary, 0.0) > 0:
+        return topic_factor(t.get("slug", ""), sensitive=primary in sensitive_ids)
+    parent = t.get("parent_id") or primary
+    for other, score in profile.topic.items():
+        o = topics.get(other, {})
+        if score > 0 and other != primary and (o.get("parent_id") or other) == parent:
+            return {"code": "rec_adjacent_topic"}
+    return {"code": "rec_generic"}
+
+
+def _guard(factors: list[dict], sensitive: bool) -> list[dict]:
+    """No history-revealing code on a sensitive item without the opt-in; no group name
+    anywhere (no factor carries a group id or name)."""
+    out = []
+    for f in factors:
+        if sensitive and f["code"] in HISTORY_CODES:
+            f = {"code": "rec_generic"}
+        f = {k: v for k, v in f.items() if k not in ("group_id", "group", "group_name")}
+        if all(x["code"] != f["code"] for x in out):
+            out.append(f)
+    return out
+
 
 def topic_factor(slug: str, *, sensitive: bool) -> dict:
     """A topic reason. A sensitive topic is only ever "a topic you follow"."""
@@ -115,10 +190,25 @@ def _viewer(claims: dict) -> eligibility.Viewer:
     return eligibility.Viewer.from_claims(claims)
 
 
-def explain(claims: dict, item_type: str, item_id: str, token: str | None) -> dict | None:
+@dataclass(frozen=True)
+class Visible:
+    """An item served to the viewer and still visible to them now."""
+
+    candidate: Candidate
+    author_type: str
+    served: Served
+    home: object  # the Home SurfaceConfig the rules ran with
+
+
+def visible_served(
+    claims: dict, item_type: str, item_id: str, token: str | None, *, require_served: bool = True
+) -> Visible | None:
+    """The proof-of-serving and still-visible check of ``explain`` (also used by the
+    feedback service, R4 WP 7.1). None (one identical 404) when the item is unknown,
+    not visible to the viewer, or, with ``require_served``, never served to them. A
+    connection item the viewer still has needs no proof when ``require_served`` is
+    False (it is on their own feed)."""
     from feed import ranking
-    from feed.models import Affinity, RelationshipFlag
-    from feed.readmodels import flagged_ids
 
     viewer_id = str(claims.get("sub"))
     if item_type not in POST_KINDS:
@@ -128,10 +218,11 @@ def explain(claims: dict, item_type: str, item_id: str, token: str | None) -> di
     except ValueError:
         return None
     served = _served(viewer_id, item_type, item_id, token)
-    if served is None:
-        return None
-
     row = ranking.visible_items(viewer_id).filter(post_id=item_id).first()
+    if served is None:
+        if require_served or row is None:
+            return None
+        served = Served("connections", None, "home", None)
     pulled = served.source in eligibility.NON_CONNECTION
     if row is not None:
         candidate = Candidate(
@@ -160,20 +251,57 @@ def explain(claims: dict, item_type: str, item_id: str, token: str | None) -> di
     ctx = eligibility.load_context(_viewer(claims), [candidate], home)
     if eligibility.evaluate(candidate, ctx) is not None:
         return None
+    return Visible(candidate, author_type, served, home)
 
+
+def explain(claims: dict, item_type: str, item_id: str, token: str | None) -> dict | None:
+    from feed import ranking
+    from feed.models import Affinity, RelationshipFlag
+    from feed.readmodels import flagged_ids
+
+    viewer_id = str(claims.get("sub"))
+    found = visible_served(claims, item_type, item_id, token)
+    if found is None:
+        return None
+    candidate, author_type, served, home = (
+        found.candidate,
+        found.author_type,
+        found.served,
+        found.home,
+    )
+    item_id = candidate.post_id
     author = candidate.author_id
     factors: list[dict] = [_relationship(candidate, author_type, author, viewer_id)]
     mode = served.mode if served.mode in ("for_you", *CHRONOLOGICAL) else None
     block = home.section("why")
+    from . import preferences
+    from .topics import classify
+
+    item_topics = classify.topics_of([item_id]).get(item_id, [])
+    all_topics = classify.load_aliases().topics
+    sensitive_ids = {t for t, _ in item_topics if all_topics.get(t, {}).get("sensitive")}
+    opted = bool(preferences.get(viewer_id).sensitive_inference)
+    sensitive = bool(sensitive_ids) and not opted
     if served.factors is not None and author != viewer_id:
         for name in served.factors:
             code = SESSION_FACTOR_CODES.get(name)
-            if code and all(f["code"] != code for f in factors):
+            if name in ("interest", "session"):
+                entry = _interest_factor(
+                    viewer_id, item_topics, candidate.type, sensitive_ids, opted
+                )
+            elif name in ("new_since_visit", "rec_new_activity"):
+                entry = {"code": name}
+            elif name == "engagement" and candidate.source == GROUPS:
+                entry = {"code": "rec_community_popular"}  # never names the group
+            elif code:
                 entry = {"code": code}
                 if code in _AUTHOR_FACTORS:
                     entry["author_id"] = author
+            else:
+                continue
+            if all(f["code"] != entry["code"] for f in factors):
                 factors.append(entry)
-        factors = factors[: block["max_factors"]]
+        factors = _guard(factors, sensitive)[: block["max_factors"]]
     elif mode == "for_you" and author != viewer_id:
         if author in {
             str(t)
@@ -191,7 +319,7 @@ def explain(claims: dict, item_type: str, item_id: str, token: str | None) -> di
             factors.append({"code": "interacted_author", "author_id": author})
         if ranking.author_penalties(viewer_id, [author]).get(author, 0) > 0:
             factors.append({"code": "demoted_feedback"})
-        factors = factors[: block["max_factors"]]
+        factors = _guard(factors, sensitive)[: block["max_factors"]]
     return {
         "item": f"{item_type}:{item_id}",
         "mode": mode,

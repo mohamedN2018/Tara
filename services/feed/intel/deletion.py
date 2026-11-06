@@ -34,6 +34,11 @@ ACCOUNT_TABLES: tuple[tuple[str, str], ...] = (
     # Phase 3 read models: the account's posts, edges both ways, memberships,
     # blocks either way and any restriction.
     ("intel_fanout_capped", "author_id = %(a)s"),
+    # R4: the topics of the account's posts (before their content rows go).
+    (
+        "intel_content_topic",
+        "post_id IN (SELECT post_id FROM intel_content_ref WHERE author_id = %(a)s)",
+    ),
     ("intel_content_ref", "author_id = %(a)s"),
     ("intel_friend_edge", "account_id = %(a)s OR friend_id = %(a)s"),
     ("intel_group_membership", "account_id = %(a)s"),
@@ -43,6 +48,17 @@ ACCOUNT_TABLES: tuple[tuple[str, str], ...] = (
     ("intel_user_preference", "account_id = %(a)s"),
     # The visit summaries (R3, 06 section 13): no item ids, but the account's visits.
     ("intel_feed_session", "account_id = %(a)s"),
+    # R4: the interest profile (and other viewers' rows naming the account as a
+    # creator), feedback, the My Algorithm logs, consents, experiment exposures, the
+    # language read model and the account's creator aggregates and integrity flags.
+    ("intel_user_interest", "account_id = %(a)s OR (dim = 'creator' AND key = %(a)s::text)"),
+    ("intel_feedback_action", "account_id = %(a)s OR author_id = %(a)s"),
+    ("intel_preference_change", "account_id = %(a)s"),
+    ("intel_debug_consent", "account_id = %(a)s"),
+    ("intel_experiment_exposure", "account_id = %(a)s"),
+    ("intel_account_language", "account_id = %(a)s"),
+    ("intel_creator_quality", "author_id = %(a)s"),
+    ("intel_integrity_flag", "author_id = %(a)s"),
 )
 # Rows that name the account but belong to something else: the id is cleared, the
 # row stays. A page is not its owner's (graph keeps its page refs too); with no
@@ -54,7 +70,17 @@ ACCOUNT_SCRUBS: tuple[tuple[str, str], ...] = (
 # The ranking config and its change log (WP 4.1) name only the staff member who made
 # a change: an audit record kept forever (03 section 2.7), like admin's AuditEntry.
 NOT_ACCOUNT_KEYED: frozenset[str] = frozenset(
-    {"intel_media_ref", "intel_group_ref", "intel_ranking_config", "intel_ranking_config_change"}
+    {
+        "intel_media_ref",
+        "intel_group_ref",
+        "intel_ranking_config",
+        "intel_ranking_config_change",
+        # R4: the taxonomy, experiment definitions and the aggregator watermark.
+        "intel_topic",
+        "intel_topic_alias",
+        "intel_experiment",
+        "intel_aggregate_watermark",
+    }
 )
 
 
